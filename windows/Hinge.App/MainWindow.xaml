@@ -1,0 +1,194 @@
+<Window
+    x:Class="Hinge.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Hinge">
+
+    <Grid
+        x:Name="PageRoot"
+        Background="Transparent"
+        AllowDrop="True"
+        DragEnter="PageRoot_DragOver"
+        DragOver="PageRoot_DragOver"
+        DragLeave="PageRoot_DragLeave"
+        Drop="PageRoot_Drop">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Image
+            x:Name="WindowBackgroundImage"
+            Grid.RowSpan="2"
+            Stretch="UniformToFill"
+            Opacity="0.10"
+            IsHitTestVisible="False"
+            Visibility="Collapsed" />
+
+        <TitleBar
+            x:Name="AppTitleBar"
+            Grid.Row="0"
+            AllowDrop="True"
+            DragEnter="PageRoot_DragOver"
+            DragOver="PageRoot_DragOver"
+            DragLeave="PageRoot_DragLeave"
+            Drop="PageRoot_Drop"
+            Title="Hinge"
+            Subtitle="跨设备办公"
+            IsBackButtonVisible="False"
+            IsPaneToggleButtonVisible="False">
+            <TitleBar.IconSource>
+                <ImageIconSource ImageSource="ms-appx:///Assets/app_icon.png" />
+            </TitleBar.IconSource>
+        </TitleBar>
+
+        <Grid
+            Grid.Row="1"
+            Background="Transparent"
+            AllowDrop="True"
+            DragEnter="PageRoot_DragOver"
+            DragOver="PageRoot_DragOver"
+            DragLeave="PageRoot_DragLeave"
+            Drop="PageRoot_Drop">
+        <NavigationView
+                x:Name="AppNavigation"
+                AllowDrop="True"
+                PaneDisplayMode="Auto"
+                OpenPaneLength="200"
+                CompactPaneLength="48"
+                HorizontalContentAlignment="Stretch"
+                IsBackButtonVisible="Collapsed"
+                IsSettingsVisible="True"
+                Loaded="AppNavigation_Loaded"
+                PaneOpened="AppNavigation_PaneStateChanged"
+                PaneClosed="AppNavigation_PaneStateChanged"
+                SelectionChanged="AppNavigation_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="首页" Tag="home">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Home" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="文件管理" Tag="files">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItemSeparator />
+                <NavigationViewItem Content="笔记" Tag="notes">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Edit" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="待办" Tag="todo">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Accept" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="日历" Tag="calendar">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Calendar" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="相册" Tag="photos">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Pictures" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <NavigationView.Header>
+                <Grid x:Name="NavigationHeader" Visibility="Collapsed" Margin="20,8,20,8" ColumnSpacing="8" HorizontalAlignment="Stretch">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button
+                        x:Name="HeaderBackButton"
+                        Grid.Column="0"
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed"
+                        ToolTipService.ToolTip="返回"
+                        Click="HeaderBackButton_Click">
+                        <SymbolIcon Symbol="Back" />
+                    </Button>
+                    <StackPanel Grid.Column="1" Spacing="2">
+                        <TextBlock x:Name="PageTitle" Text="首页" FontSize="22" FontWeight="SemiBold" />
+                        <TextBlock x:Name="HeaderStatusText" Text="正在启动局域网服务" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                    <TextBlock x:Name="StatusText" Grid.Column="2" Visibility="Collapsed" />
+                </Grid>
+            </NavigationView.Header>
+
+            <NavigationView.Content>
+                <Grid
+                    Background="Transparent"
+                    AllowDrop="True"
+                    DragEnter="PageRoot_DragOver"
+                    DragOver="PageRoot_DragOver"
+                    DragLeave="PageRoot_DragLeave"
+                    Drop="PageRoot_Drop">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <InfoBar
+                        x:Name="DiscoveryInfoBar"
+                        Grid.Row="0"
+                        Margin="24,0,24,10"
+                        IsOpen="False"
+                        Visibility="Collapsed"
+                        IsClosable="False"
+                        Severity="Informational"
+                        Title="正在搜索附近设备"
+                        Message="请确认两台设备位于同一局域网。" />
+                    <Frame
+                        x:Name="ContentFrame"
+                        AllowDrop="True"
+                        DragEnter="ContentFrame_DragOver"
+                        DragOver="ContentFrame_DragOver"
+                        DragLeave="ContentFrame_DragLeave"
+                        Drop="ContentFrame_Drop"
+                        Background="Transparent"
+                        Grid.Row="1"
+                        HorizontalContentAlignment="Stretch"
+                        VerticalContentAlignment="Stretch" />
+                </Grid>
+            </NavigationView.Content>
+            </NavigationView>
+            <Canvas x:Name="PaneResizeCanvas" Canvas.ZIndex="20" IsHitTestVisible="True" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" SizeChanged="PaneResizeCanvas_SizeChanged">
+                <Border
+                    x:Name="PaneResizeHandle"
+                    Width="8"
+                    Background="Transparent"
+                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderThickness="1,0,0,0"
+                    ToolTipService.ToolTip="拖动调整侧边栏宽度"
+                    PointerPressed="PaneResizeHandle_PointerPressed"
+                    PointerMoved="PaneResizeHandle_PointerMoved"
+                    PointerReleased="PaneResizeHandle_PointerReleased"
+                    PointerCaptureLost="PaneResizeHandle_PointerCaptureLost" />
+            </Canvas>
+            <Border
+                x:Name="DragCancelZone"
+                Width="200"
+                Margin="4"
+                Padding="20"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Stretch"
+                Canvas.ZIndex="30"
+                AllowDrop="True"
+                IsHitTestVisible="False"
+                Visibility="Collapsed"
+                CornerRadius="12"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource SystemFillColorCriticalBrush}"
+                BorderThickness="2"
+                DragEnter="DragCancelZone_DragOver"
+                DragOver="DragCancelZone_DragOver"
+                DragLeave="DragCancelZone_DragLeave"
+                Drop="DragCancelZone_Drop">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10">
+                    <FontIcon Glyph="&#xE711;" FontSize="30" HorizontalAlignment="Center" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                    <TextBlock Text="取消发送" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                    <TextBlock Text="松开鼠标取消本次发送" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

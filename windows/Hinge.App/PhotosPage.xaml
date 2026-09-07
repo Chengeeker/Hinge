@@ -1,0 +1,93 @@
+<Page
+    x:Class="Hinge.App.PhotosPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AllowDrop="True"
+    DragEnter="RootGrid_DragOver"
+    DragOver="RootGrid_DragOver"
+    DragLeave="RootGrid_DragLeave"
+    Drop="RootGrid_Drop"
+    Background="Transparent"
+    NavigationCacheMode="Required">
+    <Grid x:Name="RootGrid" Background="Transparent" AllowDrop="True" DragEnter="RootGrid_DragOver" DragOver="RootGrid_DragOver" DragLeave="RootGrid_DragLeave" Drop="RootGrid_Drop">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+            <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="BackButton" Content="返回相册集" Click="BackButton_Click" Visibility="Collapsed" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Spacing="4">
+                        <TextBlock x:Name="PageHeading" Text="相册集" FontSize="28" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PageDescription" Text="先显示相册集，封面使用该相册最新一张图片；进入相册后再读取图片缩略图。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <ComboBox x:Name="PhotoViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120">
+                            <ComboBoxItem Content="相册集" Tag="albums" />
+                            <ComboBoxItem Content="时光轴" Tag="timeline" />
+                        </ComboBox>
+                        <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ComboBox x:Name="PhotoSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" Height="36" SelectionChanged="PhotoSortOptions_SelectionChanged">
+                            <ComboBoxItem Content="名称" Tag="name" />
+                            <ComboBoxItem Content="类型" Tag="type" />
+                            <ComboBoxItem Content="大小（小到大）" Tag="sizeAsc" />
+                            <ComboBoxItem Content="大小（大到小）" Tag="sizeDesc" />
+                            <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
+                            <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
+                        </ComboBox>
+                        <Button x:Name="RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                    </StackPanel>
+                </Grid>
+
+                <InfoBar x:Name="StatusInfoBar" IsOpen="True" IsClosable="False" Severity="Informational" Title="相册" Message="等待连接设备。" />
+
+                <GridView
+                    x:Name="AlbumsGrid"
+                    AllowDrop="True"
+                    IsItemClickEnabled="True"
+                    ItemClick="AlbumsGrid_ItemClick"
+                    SelectionMode="None"
+                    HorizontalAlignment="Stretch">
+                    <GridView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="4" />
+                        </ItemsPanelTemplate>
+                    </GridView.ItemsPanel>
+                </GridView>
+
+                <GridView
+                    x:Name="PhotosGrid"
+                    IsItemClickEnabled="True"
+                    ItemClick="PhotosGrid_ItemClick"
+                    SelectionMode="None"
+                    Visibility="Collapsed"
+                    HorizontalAlignment="Stretch">
+                    <GridView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" />
+                        </ItemsPanelTemplate>
+                    </GridView.ItemsPanel>
+                </GridView>
+            </StackPanel>
+        </ScrollViewer>
+        <Border
+            x:Name="DropHintOverlay"
+            Margin="24,0,24,32"
+            CornerRadius="12"
+            Background="{ThemeResource AccentFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource AccentControlElevationBorderBrush}"
+            BorderThickness="2"
+            Visibility="Collapsed"
+            IsHitTestVisible="False"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                <FontIcon Glyph="&#xE898;" FontSize="42" HorizontalAlignment="Center" />
+                <TextBlock x:Name="DropHintTitle" Text="释放以发送到相册" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                <TextBlock x:Name="DropHintSubtitle" Text="文件将保存到当前相册" FontSize="14" HorizontalAlignment="Center" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Page>

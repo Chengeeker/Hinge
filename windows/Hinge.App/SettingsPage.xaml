@@ -1,0 +1,25 @@
+<Page
+    x:Class="Hinge.App.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="应用设置" FontSize="18" FontWeight="SemiBold" />
+                    <Button x:Name="PersonalizationButton" Content="个性化" HorizontalAlignment="Left" />
+                    <Button x:Name="StorageButton" Content="存储位置" HorizontalAlignment="Left" />
+                    <Button x:Name="AboutButton" Content="关于应用" HorizontalAlignment="Left" />
+                    <ToggleSwitch x:Name="MinimizeToTrayToggle" Header="关闭窗口时最小化到托盘" OnContent="开启" OffContent="关闭" />
+                    <TextBlock Text="开启后点击关闭按钮会隐藏窗口，仍可从系统托盘恢复或退出应用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <ToggleSwitch x:Name="StartWithWindowsToggle" Header="开机启动" OnContent="开启" OffContent="关闭" />
+                    <TextBlock Text="登录 Windows 后自动启动 Hinge。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <ToggleSwitch x:Name="SilentStartupToggle" Header="静默启动" OnContent="开启" OffContent="关闭" />
+                    <TextBlock Text="开机启动时不显示主窗口，应用会在系统托盘中运行。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="SettingsStatusText" Text="当前使用 Windows 系统主题与系统强调色。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

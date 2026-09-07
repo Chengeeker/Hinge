@@ -1,0 +1,52 @@
+<Page
+    x:Class="Hinge.App.PersonalizationPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
+            <Button x:Name="BackToSettingsButton" Content="返回设置" HorizontalAlignment="Left" />
+            <TextBlock Text="调整窗口的显示方式，设置会立即保存。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="窗口主题" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="选择应用窗口使用的浅色或深色外观。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <RadioButtons x:Name="ThemeOptions">
+                        <RadioButton Content="跟随系统" Tag="system" />
+                        <RadioButton Content="浅色模式" Tag="light" />
+                        <RadioButton Content="深色模式" Tag="dark" />
+                    </RadioButtons>
+                </StackPanel>
+            </Border>
+
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="窗口材质" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="使用 Windows App SDK 提供的系统背景材质，窗口会根据系统能力自动回退。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <ComboBox x:Name="MaterialOptions" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="320">
+                        <ComboBoxItem Content="MICA · 柔和云母" Tag="mica" />
+                        <ComboBoxItem Content="MICA Alt · 层次云母" Tag="micaAlt" />
+                        <ComboBoxItem Content="亚克力 · 磨砂玻璃" Tag="acrylic" />
+                        <ComboBoxItem Content="细亚克力 · 更透亮的磨砂" Tag="acrylicThin" />
+                    </ComboBox>
+                </StackPanel>
+            </Border>
+
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="主界面背景图片" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="导入一张本机图片作为窗口背景。图片仅保存在当前电脑，删除文件后会自动回退到纯材质背景。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="BackgroundPathText" Text="未设置背景图片" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="ImportBackgroundButton" Content="导入图片" />
+                        <Button x:Name="ClearBackgroundButton" Content="清除背景" />
+                    </StackPanel>
+                    <Border x:Name="BackgroundPreviewBorder" Height="160" CornerRadius="8" Visibility="Collapsed">
+                        <Image x:Name="BackgroundPreview" Stretch="UniformToFill" />
+                    </Border>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

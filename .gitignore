@@ -1,0 +1,59 @@
+# Miscellaneous
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
+
+# Visual Studio & Windows / .NET
+.vs/
+[Bb]in/
+[Oo]bj/
+[Aa]pp[Pp]ackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_UpgradeReport_Files/
+Backup*/
+upgrade_backup*/
+Generated\ Files/
+[Tt]est[Rr]esults/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.opensdf
+*.sdf
+publish/
+tmp/
+
+# Dart & Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+android/.gradle/
+android/captures/
+android/gradleBuild/
+android/local.properties
+android/GeneratedPluginRegistrant.java
+
+# Android Keystores & sensitive config
+*.keystore
+*.jks
+*.key
+*.p12
+
+# IDEs
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json

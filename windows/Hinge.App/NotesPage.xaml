@@ -1,0 +1,31 @@
+<Page
+    x:Class="Hinge.App.NotesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <Grid x:Name="RootGrid">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="笔记保存在已连接的 Android 设备上，Windows 端提供完整的查看与编辑入口。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button x:Name="RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                    <Button x:Name="NewNoteButton" Content="新建笔记" Click="NewNoteButton_Click" />
+                </StackPanel>
+            </Grid>
+
+            <InfoBar x:Name="StatusInfoBar" IsOpen="True" IsClosable="False" Severity="Informational" Title="笔记" Message="等待连接设备。" />
+
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                <ListView x:Name="NotesList" IsItemClickEnabled="True" SelectionMode="None" ItemClick="NotesList_ItemClick" />
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+    </Grid>
+</Page>

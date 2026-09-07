@@ -1,0 +1,159 @@
+<Page
+    x:Class="Hinge.App.FileManagementPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AllowDrop="True"
+    DragEnter="DropRootGrid_DragOver"
+    DragOver="DropRootGrid_DragOver"
+    DragLeave="DropRootGrid_DragLeave"
+    Drop="DropRootGrid_Drop"
+    Background="Transparent"
+    NavigationCacheMode="Required">
+    <Page.Resources>
+        <Style x:Key="SectionCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="20" />
+        </Style>
+    </Page.Resources>
+    <Grid x:Name="DropRootGrid" Background="Transparent" AllowDrop="True" DragEnter="DropRootGrid_DragOver" DragOver="DropRootGrid_DragOver" DragLeave="DropRootGrid_DragLeave" Drop="DropRootGrid_Drop">
+        <Border Margin="24,0,24,32" Style="{StaticResource SectionCardStyle}" HorizontalAlignment="Stretch">
+            <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="12">
+                <TextBlock Text="浏览手机的文件、媒体和社交相册。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                <ListView x:Name="FileCategoryList" SelectionMode="Single">
+                    <ListViewItem Content="最近文件" Tag="recent" />
+                    <ListViewItem Content="图片" Tag="images" />
+                    <ListViewItem Content="视频" Tag="videos" />
+                    <ListViewItem Content="音频" Tag="audio" />
+                    <ListViewItem Content="文档" Tag="documents" />
+                    <ListViewItem Content="微信" Tag="wechat" />
+                    <ListViewItem Content="QQ" Tag="qq" />
+                    <ListViewItem Content="手机存储" Tag="storage" />
+                </ListView>
+            </StackPanel>
+            <Grid Grid.Column="1" RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button
+                        x:Name="NavigateBackButton"
+                        Grid.Column="0"
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        Visibility="Collapsed"
+                        VerticalAlignment="Center"
+                        ToolTipService.ToolTip="返回上一级文件夹">
+                        <SymbolIcon Symbol="Back" />
+                    </Button>
+                    <StackPanel Grid.Column="1" Spacing="3">
+                        <TextBlock x:Name="FilePathText" Text="最近文件" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock x:Name="FileManagementStatusText" Text="正在检查设备连接…" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button x:Name="SelectFilesButton" Content="选择" Height="36" />
+                        <Button x:Name="ImportFileButton" Content="导入电脑文件" Height="36" />
+                        <ComboBox x:Name="FileViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" Height="36">
+                            <ComboBoxItem Content="宫格" Tag="grid" />
+                            <ComboBoxItem Content="列表" Tag="list" />
+                        </ComboBox>
+                        <Button x:Name="RefreshFilesButton" Width="36" Height="36" Padding="0" ToolTipService.ToolTip="刷新文件">
+                            <SymbolIcon Symbol="Refresh" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+                <StackPanel x:Name="FileFilterBar" Grid.Row="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <TextBlock Text="类型" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <ComboBox x:Name="FileTypeFilterOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" Height="36">
+                        <ComboBoxItem Content="全部类型" Tag="all" />
+                        <ComboBoxItem Content="图片" Tag="images" />
+                        <ComboBoxItem Content="视频" Tag="videos" />
+                        <ComboBoxItem Content="音频" Tag="audio" />
+                        <ComboBoxItem Content="文档" Tag="documents" />
+                        <ComboBoxItem Content="压缩包" Tag="archives" />
+                        <ComboBoxItem Content="安装包" Tag="packages" />
+                        <ComboBoxItem Content="其他" Tag="other" />
+                    </ComboBox>
+                    <ComboBox x:Name="DocumentFilterOptions" Visibility="Collapsed" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" Height="36">
+                        <ComboBoxItem Content="全部文档" Tag="all" />
+                        <ComboBoxItem Content="PDF" Tag="pdf" />
+                        <ComboBoxItem Content="Word" Tag="doc" />
+                        <ComboBoxItem Content="Excel" Tag="xls" />
+                        <ComboBoxItem Content="PowerPoint" Tag="ppt" />
+                        <ComboBoxItem Content="TXT" Tag="txt" />
+                        <ComboBoxItem Content="其他" Tag="other" />
+                    </ComboBox>
+                    <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <ComboBox x:Name="FileSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" Height="36">
+                        <ComboBoxItem Content="名称" Tag="name" />
+                        <ComboBoxItem Content="类型" Tag="type" />
+                        <ComboBoxItem Content="大小（小到大）" Tag="sizeAsc" />
+                        <ComboBoxItem Content="大小（大到小）" Tag="sizeDesc" />
+                        <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
+                        <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel x:Name="SelectionActionBar" Grid.Row="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed">
+                    <TextBlock x:Name="SelectedCountText" Text="已选 0 项" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Button x:Name="SaveSelectedFilesButton" Content="保存到电脑" Height="36" />
+                    <Button x:Name="DeleteSelectedFilesButton" Content="删除" Height="36" />
+                    <Button x:Name="CancelSelectionButton" Content="取消" Height="36" />
+                </StackPanel>
+                <Grid Grid.Row="3">
+                    <ListView
+                        x:Name="FileListView"
+                        IsItemClickEnabled="True"
+                        SelectionMode="None" />
+                    <GridView
+                        x:Name="FileGridView"
+                        IsItemClickEnabled="True"
+                        SelectionMode="None"
+                        Visibility="Collapsed">
+                        <GridView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" />
+                            </ItemsPanelTemplate>
+                        </GridView.ItemsPanel>
+                    </GridView>
+                </Grid>
+            </Grid>
+            </Grid>
+        </Border>
+        <Border
+            x:Name="DropHintOverlay"
+            Margin="24,0,24,32"
+            CornerRadius="12"
+            Background="{ThemeResource AccentFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource AccentControlElevationBorderBrush}"
+            BorderThickness="2"
+            Visibility="Collapsed"
+            IsHitTestVisible="False"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch">
+            <Border.RenderTransform>
+                <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
+            </Border.RenderTransform>
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                <FontIcon Glyph="&#xE898;" FontSize="42" HorizontalAlignment="Center" />
+                <TextBlock x:Name="DropHintTitle" Text="释放以发送到手机" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                <TextBlock x:Name="DropHintSubtitle" Text="自动分类保存到 /Download/Hinge/视频、图片或文件" FontSize="14" HorizontalAlignment="Center" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Page>

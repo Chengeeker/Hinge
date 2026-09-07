@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "deviceId": "c85d7b5f-519b-4e12-8e10-3b0222a7f05a",
+  "name": "Pixel 9 Pro",
+  "platform": "android",
+  "port": 52831,
+  "capabilities": [
+    "file_transfer",
+    "clipboard",
+    "remote_control",
+    "screen_mirror"
+  ],
+  "protocolVersion": "0.1",
+  "timestamp": 1756992000
+}

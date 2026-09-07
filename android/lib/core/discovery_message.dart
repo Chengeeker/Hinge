@@ -11,6 +11,7 @@ class DiscoveryMessage {
   final List<String> capabilities;
   final String protocolVersion;
   final int timestamp;
+  final bool connectionRequested;
 
   const DiscoveryMessage({
     this.version = AppConstants.appVersion,
@@ -28,6 +29,7 @@ class DiscoveryMessage {
     ],
     this.protocolVersion = AppConstants.protocolVersion,
     required this.timestamp,
+    this.connectionRequested = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -41,6 +43,7 @@ class DiscoveryMessage {
     'capabilities': capabilities,
     'protocolVersion': protocolVersion,
     'timestamp': timestamp,
+    'connectionRequested': connectionRequested,
   };
 
   factory DiscoveryMessage.fromJson(Map<String, dynamic> json) {
@@ -56,6 +59,7 @@ class DiscoveryMessage {
       protocolVersion:
           json['protocolVersion'] as String? ?? AppConstants.protocolVersion,
       timestamp: json['timestamp'] as int? ?? 0,
+      connectionRequested: json['connectionRequested'] as bool? ?? false,
     );
   }
 }

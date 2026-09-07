@@ -6,11 +6,15 @@ import '../core/workspace_state.dart';
 class PersonalizationScreen extends StatelessWidget {
   final WorkspaceState state;
   final bool isDesktop;
+  final bool hapticFeedbackEnabled;
+  final Future<void> Function(bool enabled) onHapticFeedbackChanged;
 
   const PersonalizationScreen({
     super.key,
     required this.state,
     required this.isDesktop,
+    required this.hapticFeedbackEnabled,
+    required this.onHapticFeedbackChanged,
   });
 
   static const _presets = <({String name, int color})>[
@@ -54,6 +58,8 @@ class PersonalizationScreen extends StatelessWidget {
                 _buildFontCard(context, scheme),
                 const SizedBox(height: 16),
                 _buildNavigationCard(context, scheme),
+                const SizedBox(height: 16),
+                _buildInteractionCard(context, scheme),
               ],
             ),
           ),
@@ -257,6 +263,35 @@ class PersonalizationScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildInteractionCard(BuildContext context, ColorScheme scheme) {
+    return _sectionCard(
+      context: context,
+      scheme: scheme,
+      title: '交互反馈',
+      child: isDesktop
+          ? ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Symbols.desktop_windows_rounded,
+                color: scheme.primary,
+              ),
+              title: const Text('震动反馈'),
+              subtitle: const Text('Windows 使用系统输入反馈'),
+              trailing: const Text('不适用'),
+            )
+          : SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Symbols.vibration_rounded),
+              title: const Text('震动反馈'),
+              subtitle: const Text('点击按钮、切换页面时提供轻微触感反馈'),
+              value: hapticFeedbackEnabled,
+              onChanged: (value) {
+                onHapticFeedbackChanged(value);
+              },
+            ),
     );
   }
 

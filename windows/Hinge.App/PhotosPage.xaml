@@ -24,7 +24,8 @@
                         <TextBlock x:Name="PageDescription" Text="先显示相册集，封面使用该相册最新一张图片；进入相册后再读取图片缩略图。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <ComboBox x:Name="PhotoViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120">
+                        <Button x:Name="SelectPhotosButton" Content="选择" Height="36" Visibility="Collapsed" />
+                        <ComboBox x:Name="PhotoViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" Height="36" VerticalAlignment="Center">
                             <ComboBoxItem Content="相册集" Tag="albums" />
                             <ComboBoxItem Content="时光轴" Tag="timeline" />
                         </ComboBox>
@@ -37,11 +38,17 @@
                             <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
                             <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
                         </ComboBox>
-                        <Button x:Name="RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                        <Button x:Name="RefreshButton" Content="刷新" Height="36" Click="RefreshButton_Click" />
                     </StackPanel>
                 </Grid>
 
                 <InfoBar x:Name="StatusInfoBar" IsOpen="True" IsClosable="False" Severity="Informational" Title="相册" Message="等待连接设备。" />
+
+                <StackPanel x:Name="PhotoSelectionActionBar" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed">
+                    <TextBlock x:Name="SelectedPhotoCountText" Text="已选 0 张" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Button x:Name="SaveSelectedPhotosButton" Content="保存到电脑" Height="36" />
+                    <Button x:Name="CancelPhotoSelectionButton" Content="取消" Height="36" />
+                </StackPanel>
 
                 <GridView
                     x:Name="AlbumsGrid"

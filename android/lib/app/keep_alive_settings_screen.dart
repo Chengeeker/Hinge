@@ -206,16 +206,57 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
     required VoidCallback onTap,
     String? action,
   }) {
-    return ListTile(
-      minVerticalPadding: 12,
-      leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      isThreeLine: true,
-      trailing: action == null
-          ? Text(status, style: Theme.of(context).textTheme.labelMedium)
-          : FilledButton.tonal(onPressed: onTap, child: Text(action)),
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return InkWell(
       onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(16, 14, 16, 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 48,
+              child: Center(
+                child: Icon(icon, color: colorScheme.primary, size: 28),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(subtitle, style: theme.textTheme.bodyMedium),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 104,
+              child: Center(
+                child: action == null
+                    ? Text(
+                        status,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.labelMedium,
+                      )
+                    : FilledButton.tonal(
+                        onPressed: onTap,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(96, 44),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        child: Text(action),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

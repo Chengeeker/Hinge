@@ -338,16 +338,32 @@ class SessionManager {
       _serverSocket = await ServerSocket.bind(
         InternetAddress.anyIPv4,
         _listenPort,
-        shared: true,
+        shared: false,
       );
       _serverSocket?.listen(_onIncomingSocket);
       _isListening = true;
       _lastError = null;
     } catch (e, st) {
-      _isListening = false;
-      _lastError = '无法监听 TCP $_listenPort：$e';
-      // ignore: avoid_print
-      print('ServerSocket.bind error: $e\n$st');
+      // A stale process or an OEM clone of the app can still own the fixed
+      // port after an update. Use an ephemeral port and advertise it through
+      // discovery instead of leaving the phone unreachable altogether.
+      try {
+        _serverSocket = await ServerSocket.bind(
+          InternetAddress.anyIPv4,
+          0,
+          shared: false,
+        );
+        _serverSocket?.listen(_onIncomingSocket);
+        _isListening = true;
+        _lastError = '标准端口 $_listenPort 被占用，已切换到临时端口 ${_serverSocket?.port}';
+      } catch (fallbackError, fallbackStack) {
+        _isListening = false;
+        _lastError = '无法监听 TCP $_listenPort：$fallbackError';
+        // ignore: avoid_print
+        print(
+          'ServerSocket.bind error: $e\n$st\nFallback error: $fallbackError\n$fallbackStack',
+        );
+      }
     }
   }
 

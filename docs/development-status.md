@@ -1,8 +1,8 @@
 # 当前开发状态
 
-> 更新时间：2026-09-07
-> 发布基线：`v1.0.0`
-> 首版发布：Hinge v1.0.0
+> 更新时间：2026-09-08
+> 当前开发版：`v1.0.17-dev.1`
+> 双端运行版本：Android `1.0.17+18` / Windows `1.0.17.0`
 
 本文只记录已在仓库或构建流程中确认的状态。真实手机、真实局域网和不同厂商系统仍需单独验收。
 
@@ -53,10 +53,10 @@
 ## 自动化验证
 
 - `flutter analyze --no-pub`：通过；
-- `flutter test --no-pub`：47 项通过；
+- `flutter test --no-pub`：49 项通过；
 - `dotnet build windows/Hinge.sln --configuration Release --no-restore`：通过；
-- `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：53 项通过；
-- Windows 本次本地打包的 AppX 版本为 `1.0.0.0`，同时生成 EXE 安装器和便携 ZIP；
+- `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：59 项通过；
+- Windows 本次本地打包的 AppX 版本为 `1.0.17.0`，同时生成 EXE 安装器和便携 ZIP；
 - Android APK V2/V3 签名验证：通过。
 
 ## 仍需真实设备验收
@@ -70,4 +70,4 @@
 
 ## 发布判断
 
-本版本适合作为真实设备试用和问题收集版本，不应宣传为覆盖所有 Android 厂商、所有网络环境或所有实验性模块的生产版。发现问题时请同时记录设备型号、Android 版本、Windows 版本、网络拓扑和对应日志。
+本开发版适合作为真实设备试用和问题收集版本，不应宣传为覆盖所有 Android 厂商、所有网络环境或所有实验性模块的生产版。发现问题时请同时记录设备型号、Android 版本、Windows 版本、网络拓扑和对应日志。

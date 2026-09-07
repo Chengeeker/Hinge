@@ -8,5 +8,6 @@
     <AssemblyName>Hinge-Setup</AssemblyName>
     <RootNamespace>Hinge.Setup</RootNamespace>
     <ApplicationIcon>..\windows\Hinge.App\Assets\app_icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 </Project>

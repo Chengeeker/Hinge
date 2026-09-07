@@ -93,3 +93,10 @@ public class TransferProgress
     public double Percentage => TotalBytes > 0 ? (double)BytesTransferred / TotalBytes * 100.0 : 0.0;
     public TransferState State { get; set; }
 }
+
+public sealed class TransferFailure
+{
+    public string TransferId { get; init; } = string.Empty;
+    public string FileName { get; init; } = string.Empty;
+    public string Error { get; init; } = string.Empty;
+}

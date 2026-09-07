@@ -56,6 +56,9 @@ public class Device
     [JsonPropertyName("protocolVersion")]
     public string ProtocolVersion { get; set; } = Constants.ProtocolVersion;
 
+    [JsonPropertyName("port")]
+    public int SessionPort { get; set; } = Constants.SessionTcpPort;
+
     [JsonPropertyName("capabilities")]
     public List<string> Capabilities { get; set; } = new();
 

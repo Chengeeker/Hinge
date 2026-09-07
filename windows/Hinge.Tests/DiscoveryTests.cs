@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using Hinge.Core;
 using Xunit;
@@ -40,7 +42,8 @@ public class DiscoveryTests
             Name = "Galaxy S24",
             Platform = "android",
             Port = 52831,
-            Capabilities = new List<string> { "file_transfer", "clipboard" }
+            Capabilities = new List<string> { "file_transfer", "clipboard" },
+            ConnectionRequested = true
         };
 
         string json = JsonSerializer.Serialize(msg);
@@ -52,6 +55,40 @@ public class DiscoveryTests
         Assert.Equal("android", parsed.Platform);
         Assert.Equal(52831, parsed.Port);
         Assert.Equal(2, parsed.Capabilities.Count);
+        Assert.True(parsed.ConnectionRequested);
+    }
+
+    [Fact]
+    public async Task DiscoveryService_Raises_ReverseConnectionRequest()
+    {
+        int port;
+        using (var probe = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
+        {
+            port = ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
+        }
+
+        var identity = new DeviceIdentity { DeviceId = "local-device", Name = "Local" };
+        var registry = new DeviceRegistry();
+        using var service = new DiscoveryService(identity, registry, port);
+        var completion = new TaskCompletionSource<DiscoveryConnectionRequestEventArgs>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        service.ConnectionRequested += (_, args) => completion.TrySetResult(args);
+        service.Start();
+
+        var request = new DiscoveryMessage
+        {
+            DeviceId = "remote-device",
+            Name = "Remote",
+            Platform = "android",
+            ConnectionRequested = true
+        };
+        byte[] payload = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request));
+        using var sender = new UdpClient();
+        await sender.SendAsync(payload, payload.Length, new IPEndPoint(IPAddress.Loopback, port));
+
+        var received = await completion.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("remote-device", received.Message.DeviceId);
+        Assert.Equal(IPAddress.Loopback, received.RemoteAddress);
     }
 
     [Fact]
@@ -104,6 +141,95 @@ public class DiscoveryTests
         Assert.True(registry.TryGetDevice(message.DeviceId, out var device));
         Assert.Equal("192.168.1.20", device!.NetworkAddresses[0]);
         Assert.Equal(2, device.NetworkAddresses.Count);
+    }
+
+    [Fact]
+    public void DeviceRegistry_Collapses_Reinstalled_Offline_Identity()
+    {
+        var registry = new DeviceRegistry();
+        var oldMessage = new DiscoveryMessage
+        {
+            DeviceId = "phone-old-id",
+            Name = "vivo X200 Pro mini",
+            Manufacturer = "vivo",
+            Model = "V2419A",
+            Platform = "android"
+        };
+        registry.UpsertDevice(oldMessage, "192.168.3.27");
+        registry.PruneOffline(TimeSpan.Zero);
+
+        var newMessage = oldMessage;
+        newMessage.DeviceId = "phone-new-id";
+        registry.UpsertDevice(newMessage, "192.168.3.27");
+
+        var devices = registry.GetAllDevices();
+        Assert.Single(devices);
+        Assert.Equal("phone-new-id", devices[0].DeviceId);
+        Assert.Equal(ConnectionState.Discovered, devices[0].ConnectionState);
+        Assert.Contains("192.168.3.27", devices[0].NetworkAddresses);
+    }
+
+    [Fact]
+    public void DeviceRegistry_Reconciles_Duplicate_Identities_After_They_Are_Discovered()
+    {
+        var registry = new DeviceRegistry();
+        var first = new DiscoveryMessage
+        {
+            DeviceId = "phone-first-id",
+            Name = "vivo X200 Pro mini",
+            Manufacturer = "vivo",
+            Model = "V2419A",
+            Platform = "android"
+        };
+        var second = new DiscoveryMessage
+        {
+            DeviceId = "phone-second-id",
+            Name = first.Name,
+            Manufacturer = first.Manufacturer,
+            Model = first.Model,
+            Platform = first.Platform
+        };
+
+        // Neither row is offline yet. This is the timing window the old
+        // implementation missed; the second packet must still reconcile them.
+        registry.UpsertDevice(first, "192.168.3.27");
+        registry.UpsertDevice(second, "192.168.3.27");
+
+        var devices = registry.GetAllDevices();
+        Assert.Single(devices);
+        Assert.Equal("phone-second-id", devices[0].DeviceId);
+    }
+
+    [Fact]
+    public void DeviceRegistry_Preserves_Connected_Record_When_Reconciling()
+    {
+        var registry = new DeviceRegistry();
+        var connected = new DiscoveryMessage
+        {
+            DeviceId = "phone-connected-id",
+            Name = "vivo X200 Pro mini",
+            Manufacturer = "vivo",
+            Model = "V2419A",
+            Platform = "android"
+        };
+        registry.UpsertDevice(connected, "192.168.3.27");
+        Assert.True(registry.TryGetDevice(connected.DeviceId, out var connectedDevice));
+        connectedDevice!.ConnectionState = ConnectionState.Connected;
+
+        var duplicate = new DiscoveryMessage
+        {
+            DeviceId = "phone-duplicate-id",
+            Name = connected.Name,
+            Manufacturer = connected.Manufacturer,
+            Model = connected.Model,
+            Platform = connected.Platform
+        };
+        registry.UpsertDevice(duplicate, "192.168.3.27");
+
+        var devices = registry.GetAllDevices();
+        Assert.Single(devices);
+        Assert.Equal("phone-connected-id", devices[0].DeviceId);
+        Assert.Equal(ConnectionState.Connected, devices[0].ConnectionState);
     }
 
     [Fact]

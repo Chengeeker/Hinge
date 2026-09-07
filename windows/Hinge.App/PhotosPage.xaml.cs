@@ -41,13 +41,65 @@ public sealed partial class PhotosPage : Page
 
     public event EventHandler<ComputerFilesDroppedEventArgs>? FilesDropped;
     public event EventHandler? InternalRemoteDragStarted;
+    public event EventHandler? PhotoSelectionStateChanged;
+
+    public Button SelectPhotos => SelectPhotosButton;
+    public Button SaveSelectedPhotos => SaveSelectedPhotosButton;
+    public Button CancelPhotoSelection => CancelPhotoSelectionButton;
+    public bool IsPhotoSelectionMode => PhotosGrid.SelectionMode != ListViewSelectionMode.None;
 
     public PhotosPage()
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
         PhotosGrid.Loaded += (_, _) => AttachPhotoScrollViewer();
+        PhotosGrid.SelectionChanged += (_, _) => UpdatePhotoSelectionSummary();
         Loaded += (_, _) => AttachPhotoScrollViewer();
+    }
+
+    public IReadOnlyList<RemotePhotoItem> GetSelectedPhotos()
+    {
+        return PhotosGrid.SelectedItems
+            .OfType<FrameworkElement>()
+            .Select(item => item.Tag)
+            .OfType<RemotePhotoItem>()
+            .Where(photo => !string.IsNullOrWhiteSpace(photo.Uri))
+            .GroupBy(photo => string.IsNullOrWhiteSpace(photo.Id) ? photo.Uri : photo.Id,
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    public void EnterPhotoSelectionMode()
+    {
+        if (PhotosGrid.Visibility != Visibility.Visible) return;
+        PhotosGrid.SelectionMode = ListViewSelectionMode.Multiple;
+        PhotoSelectionActionBar.Visibility = Visibility.Visible;
+        SelectPhotosButton.Visibility = Visibility.Collapsed;
+        UpdatePhotoSelectionSummary();
+    }
+
+    public void ExitPhotoSelectionMode()
+    {
+        if (PhotosGrid.SelectionMode != ListViewSelectionMode.None)
+        {
+            PhotosGrid.SelectedItems.Clear();
+        }
+
+        PhotosGrid.SelectionMode = ListViewSelectionMode.None;
+        PhotoSelectionActionBar.Visibility = Visibility.Collapsed;
+        SelectPhotosButton.Visibility = PhotosGrid.Visibility == Visibility.Visible
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        UpdatePhotoSelectionSummary();
+    }
+
+    public void UpdatePhotoSelectionSummary()
+    {
+        var count = GetSelectedPhotos().Count;
+        SelectedPhotoCountText.Text = $"已选 {count} 张";
+        SaveSelectedPhotosButton.IsEnabled = count > 0;
+        PhotoSelectionStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void HandleExternalDragOver(DragEventArgs e) =>
@@ -127,6 +179,7 @@ public sealed partial class PhotosPage : Page
     {
         int version = ++_loadVersion;
         CancelPhotoLoading();
+        ExitPhotoSelectionMode();
         _currentAlbum = null;
         _timelineMode = false;
         if (PhotoViewModeOptions.SelectedIndex != 0) PhotoViewModeOptions.SelectedIndex = 0;
@@ -136,6 +189,7 @@ public sealed partial class PhotosPage : Page
         _loadedPhotos.Clear();
         AlbumsGrid.Visibility = Visibility.Visible;
         PhotosGrid.Visibility = Visibility.Collapsed;
+        SelectPhotosButton.Visibility = Visibility.Collapsed;
         BackButton.Visibility = Visibility.Collapsed;
         PageHeading.Text = "相册集";
         PageDescription.Text = "先显示相册集，封面使用该相册最新一张图片；进入相册后再读取图片缩略图。";
@@ -291,12 +345,14 @@ public sealed partial class PhotosPage : Page
         _timelineMode = true;
         _currentAlbum = null;
         int version = ++_loadVersion;
+        ExitPhotoSelectionMode();
         AlbumsGrid.Items.Clear();
         PhotosGrid.Items.Clear();
         _albums.Clear();
         _loadedPhotos.Clear();
         AlbumsGrid.Visibility = Visibility.Collapsed;
         PhotosGrid.Visibility = Visibility.Visible;
+        SelectPhotosButton.Visibility = Visibility.Visible;
         BackButton.Visibility = Visibility.Collapsed;
         PageHeading.Text = "时光轴";
         PageDescription.Text = "按拍摄时间倒序查看手机中的全部图片。";
@@ -327,9 +383,11 @@ public sealed partial class PhotosPage : Page
         }
 
         int version = ++_loadVersion;
+        ExitPhotoSelectionMode();
         _currentAlbum = album;
         AlbumsGrid.Visibility = Visibility.Collapsed;
         PhotosGrid.Visibility = Visibility.Visible;
+        SelectPhotosButton.Visibility = Visibility.Visible;
         BackButton.Visibility = Visibility.Visible;
         PageHeading.Text = album.Name;
         PageDescription.Text = $"{album.Count} 张图片 · 只在进入相册后加载缩略图";
@@ -488,11 +546,22 @@ public sealed partial class PhotosPage : Page
     private async void PhotosGrid_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is not GridViewItem { Tag: RemotePhotoItem photo }) return;
+        if (IsPhotoSelectionMode)
+        {
+            UpdatePhotoSelectionSummary();
+            return;
+        }
         await ShowPhotoPreviewAsync(photo);
     }
 
     private async void PhotoItem_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
+        if (IsPhotoSelectionMode)
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (sender is GridViewItem { Tag: RemotePhotoItem photo })
         {
             e.Handled = true;
@@ -1051,8 +1120,27 @@ public sealed partial class PhotosPage : Page
 
     private async Task RenderPhotoTilesAsync(int version)
     {
+        var selectedKeys = IsPhotoSelectionMode
+            ? GetSelectedPhotos()
+                .Select(photo => string.IsNullOrWhiteSpace(photo.Id) ? photo.Uri : photo.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         PhotosGrid.Items.Clear();
         await AddPhotoTilesAsync(SortPhotos(_loadedPhotos).ToList(), version);
+
+        if (IsPhotoSelectionMode && selectedKeys.Count > 0)
+        {
+            foreach (var item in PhotosGrid.Items.OfType<GridViewItem>())
+            {
+                if (item.Tag is not RemotePhotoItem photo) continue;
+                var key = string.IsNullOrWhiteSpace(photo.Id) ? photo.Uri : photo.Id;
+                if (selectedKeys.Contains(key))
+                {
+                    PhotosGrid.SelectedItems.Add(item);
+                }
+            }
+            UpdatePhotoSelectionSummary();
+        }
     }
 
     private async Task AddPhotoTilesAsync(

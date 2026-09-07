@@ -297,6 +297,7 @@ public class SessionManager : IDisposable
 
     public bool IsListening { get; private set; }
     public string? LastError { get; private set; }
+    public int ListeningPort => (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? _listenPort;
 
     public event EventHandler<SessionConnection>? ClientConnected;
     public event EventHandler<SessionMessageEventArgs>? MessageReceived;
@@ -334,8 +335,30 @@ public class SessionManager : IDisposable
             cancellation.Dispose();
             _listener = null;
             _cts = null;
-            IsListening = false;
-            LastError = $"无法监听 TCP {_listenPort}：{exception.Message}";
+
+            // A stale Hinge process or another local service may still own
+            // the well-known port. Keep the device reachable by binding an
+            // ephemeral port and advertising that actual port over UDP.
+            var fallbackCancellation = new CancellationTokenSource();
+            var fallbackListener = new TcpListener(IPAddress.Any, 0);
+            try
+            {
+                fallbackListener.Start();
+                _cts = fallbackCancellation;
+                _listener = fallbackListener;
+                IsListening = true;
+                LastError = $"标准端口 {_listenPort} 被占用，已切换到临时端口 {ListeningPort}";
+                _ = Task.Run(() => AcceptLoopAsync(fallbackCancellation.Token), fallbackCancellation.Token);
+            }
+            catch (Exception fallbackException)
+            {
+                try { fallbackListener.Stop(); } catch { }
+                fallbackCancellation.Dispose();
+                _listener = null;
+                _cts = null;
+                IsListening = false;
+                LastError = $"无法监听 TCP {_listenPort}：{exception.Message}；临时端口也不可用：{fallbackException.Message}";
+            }
         }
     }
 

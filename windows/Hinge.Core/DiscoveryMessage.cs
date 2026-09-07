@@ -33,4 +33,7 @@ public class DiscoveryMessage
 
     [JsonPropertyName("timestamp")]
     public long Timestamp { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    [JsonPropertyName("connectionRequested")]
+    public bool ConnectionRequested { get; set; }
 }

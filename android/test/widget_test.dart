@@ -8,9 +8,7 @@ import 'package:hinge/core/discovery_service.dart';
 
 void main() {
   group('Workspace UI tests', () {
-    testWidgets('HingeApp renders the new home workspace', (
-      tester,
-    ) async {
+    testWidgets('HingeApp renders the new home workspace', (tester) async {
       const identity = DeviceIdentity(
         deviceId: 'test-device-id',
         name: 'Mock Phone',
@@ -24,7 +22,7 @@ void main() {
         HingeApp(identity: identity, discoveryService: service),
       );
 
-      expect(find.text('Hinge 办公套件'), findsOneWidget);
+      expect(find.text('Hinge Work'), findsOneWidget);
       expect(find.text('没有已连接的机型'), findsOneWidget);
       expect(find.text('工作区'), findsOneWidget);
     });

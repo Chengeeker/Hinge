@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Received files live under the app's private HOME/files directory on
+         Android. The root entry keeps the provider compatible with OEM
+         Flutter layouts while the URI is granted only for the clicked file. -->
+    <root-path name="hinge_private" path="." />
+</paths>

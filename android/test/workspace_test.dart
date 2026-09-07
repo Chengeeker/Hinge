@@ -67,7 +67,7 @@ void main() {
       );
 
       expect(find.text('首页'), findsOneWidget);
-      expect(find.text('Hinge 办公套件'), findsOneWidget);
+      expect(find.text('Hinge Work'), findsOneWidget);
 
       await tester.tap(find.byTooltip('打开导航栏'));
       await tester.pump();

@@ -96,4 +96,69 @@ public class TransferTests
             if (Directory.Exists(downloadDir)) Directory.Delete(downloadDir, true);
         }
     }
+
+    [Fact]
+    public async Task TransferManager_ConcurrentSameNameTransfers_DoNotSharePartialFile()
+    {
+        int port = 52890;
+        var store = new TrustStore(Path.Combine(Path.GetTempPath(), $"ts_{Guid.NewGuid()}.json"));
+        var serverId = new DeviceIdentity { DeviceId = "server-concurrent", Name = "Server" };
+        using var serverSession = new SessionManager(serverId, store, port);
+        serverSession.StartListener();
+
+        string downloadDir = Path.Combine(Path.GetTempPath(), $"dl_{Guid.NewGuid()}");
+        using var receiverTransfer = new TransferManager(downloadDir);
+        var receivedCount = 0;
+        var receivedTcs = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        receiverTransfer.FileReceived += (_, _) =>
+        {
+            if (Interlocked.Increment(ref receivedCount) >= 2)
+            {
+                receivedTcs.TrySetResult(true);
+            }
+        };
+
+        serverSession.MessageReceived += async (_, args) =>
+        {
+            await receiverTransfer.HandleIncomingFrameAsync(args.Connection, args.Frame);
+        };
+
+        var clientId = new DeviceIdentity { DeviceId = "client-concurrent", Name = "Client" };
+        using var clientSession = new SessionManager(clientId, store, port + 1);
+        using var clientConn = await clientSession.ConnectToPeerAsync(IPAddress.Loopback, port);
+        using var senderTransfer = new TransferManager();
+
+        string sourceDirectory = Path.Combine(Path.GetTempPath(), $"src_{Guid.NewGuid()}");
+        string firstFile = Path.Combine(sourceDirectory, "same-name.jpg");
+        string secondFile = Path.Combine(sourceDirectory, "nested", "same-name.jpg");
+        Directory.CreateDirectory(Path.GetDirectoryName(secondFile)!);
+        byte[] firstBytes = new byte[128 * 1024];
+        byte[] secondBytes = new byte[128 * 1024];
+        RandomNumberGenerator.Fill(firstBytes);
+        RandomNumberGenerator.Fill(secondBytes);
+        File.WriteAllBytes(firstFile, firstBytes);
+        File.WriteAllBytes(secondFile, secondBytes);
+
+        try
+        {
+            await Task.WhenAll(
+                senderTransfer.SendFileAsync(clientConn, firstFile),
+                senderTransfer.SendFileAsync(clientConn, secondFile));
+
+            var completed = await Task.WhenAny(receivedTcs.Task, Task.Delay(10000));
+            Assert.Equal(receivedTcs.Task, completed);
+            string receivedPath = Path.Combine(downloadDir, "same-name.jpg");
+            Assert.True(File.Exists(receivedPath));
+            byte[] receivedBytes = File.ReadAllBytes(receivedPath);
+            Assert.True(
+                receivedBytes.SequenceEqual(firstBytes) ||
+                receivedBytes.SequenceEqual(secondBytes));
+        }
+        finally
+        {
+            if (Directory.Exists(sourceDirectory)) Directory.Delete(sourceDirectory, true);
+            if (Directory.Exists(downloadDir)) Directory.Delete(downloadDir, true);
+        }
+    }
 }

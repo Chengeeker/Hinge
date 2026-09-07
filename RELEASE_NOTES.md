@@ -1,33 +1,20 @@
-# Hinge v1.0.0
+# Hinge v1.0.17-dev.1
 
-这是 Hinge 的首个公开版本，面向 Android 与 Windows 的局域网跨设备工作流。发布资产和安装说明见 [GitHub Release v1.0.0](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.0)。
+这是 Hinge 的双端开发版，安装包运行版本为 Android `1.0.17+18`、Windows `1.0.17.0`。
 
-## 交付内容
+## 本版内容
 
-- Android ARM64 Release APK；
-- Windows WinUI 3 自包含 EXE 安装器，可选择安装目录；
-- Windows 便携 ZIP；
-- 可选 MSIX 和对应测试证书。
+- Android 与 Windows 版本号统一推进，保留稳定 Android 签名以支持覆盖更新；
+- Windows 文件管理、相册的分页加载、缩略图缓存、多选保存和自定义接收目录继续按当前实现打包；
+- Android Monet 动态配色、品牌资源、默认应用、保活设置和紧凑悬浮底栏随当前源码发布；
+- 补齐开发文档、构建验证、发布资产和真实设备验收边界说明。
 
-## 主要能力
+## 验证
 
-- 局域网设备发现、会话、文件传输和剪贴板同步；
-- Windows 文件管理、相册、笔记、待办、日历、工具和设置；
-- Android 工作区、Monet 动态取色、预置主题和保活设置；
-- 文件与相册分页加载、缩略图、筛选、排序和目录导航；
-- Windows 系统默认应用打开图片、视频和音频；
-- Windows 文件拖入目标预览，以及应用内文件拖出取消发送；
-- Android 与 Windows 源码、资源、文档、安装脚本和交付文件统一使用 Hinge 品牌。
+- Android Flutter tests：49 项通过；
+- Windows .NET tests：59 项通过；
+- Android APK 签名、Windows EXE 安装器、便携 ZIP 和可用 MSIX 已重新生成。
 
-## 已知限制
+## 已知边界
 
-- 手机投屏、真实通知回复和 OCR 尚未作为本版本的完成能力交付；
-- Android 厂商省电/锁屏策略可能仍会回收连接；
-- 大型媒体库、文档目录、弱网、多网卡和不同 Windows 权限级别需要继续进行真实设备验收。
-
-## 验证基线
-
-- Flutter 静态分析与测试；
-- Windows Release 编译与单元测试；
-- Android APK 签名验证；
-- Windows EXE 安装器和便携包构建验证。
+这是开发版。投屏、通知回复、OCR、完整端到端加密握手，以及不同 Android 厂商后台策略仍不应视为已完成的生产能力；大型媒体库、弱网、多网卡和 Windows 防火墙场景仍需真实设备验收。

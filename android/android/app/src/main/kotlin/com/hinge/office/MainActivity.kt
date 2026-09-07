@@ -6,14 +6,17 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.database.Cursor
 import android.content.Intent
 import android.content.Context
 import android.content.res.Configuration
 import android.content.ContentUris
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.bluetooth.BluetoothAdapter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -24,11 +27,14 @@ import android.os.HandlerThread
 import android.os.PowerManager
 import android.os.StatFs
 import java.io.File
+import java.io.ByteArrayOutputStream
+import android.util.Base64
 import android.util.Size
 import android.provider.CalendarContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.provider.DocumentsContract
+import androidx.core.content.FileProvider
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -93,8 +99,16 @@ class MainActivity : FlutterActivity() {
         // A notification click can create the activity from a cold start.
         // Handle the same deep link path as onNewIntent so the directory
         // shortcut works whether Flutter is already running or not.
-        if (intent?.action == ACTION_OPEN_RECEIVED_DIRECTORY) {
-            openReceivedDirectory(intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH))
+        when (intent?.action) {
+            ACTION_OPEN_RECEIVED_DIRECTORY -> {
+                openReceivedDirectory(intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH))
+            }
+            ACTION_OPEN_RECEIVED_FILE -> {
+                openReceivedFile(
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH),
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_MIME),
+                )
+            }
         }
     }
 
@@ -139,8 +153,16 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.action == ACTION_OPEN_RECEIVED_DIRECTORY) {
-            openReceivedDirectory(intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH))
+        when (intent.action) {
+            ACTION_OPEN_RECEIVED_DIRECTORY -> {
+                openReceivedDirectory(intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH))
+            }
+            ACTION_OPEN_RECEIVED_FILE -> {
+                openReceivedFile(
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH),
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_MIME),
+                )
+            }
         }
     }
 
@@ -168,6 +190,9 @@ class MainActivity : FlutterActivity() {
             "openBackgroundProtectionSettings" -> result.success(openBackgroundProtectionSettings())
             "moveTaskToBack" -> result.success(moveTaskToBack(true))
             "showFileReceivedNotification" -> showFileReceivedNotification(call, result)
+            "defaultAppOptions" -> defaultAppOptions(call, result)
+            "defaultApp" -> result.success(defaultApp(call))
+            "setDefaultApp" -> setDefaultApp(call, result)
             "openAppSettings" -> openAppSettings(result)
             "openProjectUrl" -> result.success(openProjectUrl())
             "startScreenCapture" -> requestScreenCapture(call, result)
@@ -960,13 +985,14 @@ class MainActivity : FlutterActivity() {
         } else {
             Notification.Builder(this)
         }
+        val mimeType = guessMimeType(file.name)
         val notification = builder
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("收到文件")
-            .setContentText("${file.name} · 点击打开所在目录")
+            .setContentText("${file.name} · 点击使用默认应用打开")
             .setCategory(Notification.CATEGORY_PROGRESS)
             .setAutoCancel(true)
-            .setContentIntent(receivedDirectoryIntent(path))
+            .setContentIntent(receivedFileIntent(path, mimeType))
             .build()
         getSystemService(NotificationManager::class.java)
             .notify(path.hashCode(), notification)
@@ -997,6 +1023,191 @@ class MainActivity : FlutterActivity() {
                 0
             }
         return PendingIntent.getActivity(this, path.hashCode(), intent, flags)
+    }
+
+    private fun receivedFileIntent(path: String, mimeType: String): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_OPEN_RECEIVED_FILE
+            putExtra(EXTRA_RECEIVED_FILE_PATH, path)
+            putExtra(EXTRA_RECEIVED_FILE_MIME, mimeType)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
+        return PendingIntent.getActivity(this, path.hashCode(), intent, flags)
+    }
+
+    private fun openReceivedFile(path: String?, mimeType: String?) {
+        if (path.isNullOrBlank()) return
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return
+        try {
+            val resolvedMime = mimeType?.takeIf { it.isNotBlank() } ?: guessMimeType(file.name)
+            val fileUri = FileProvider.getUriForFile(
+                this@MainActivity,
+                "${applicationContext.packageName}.fileprovider",
+                file,
+            )
+            val openIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(fileUri, resolvedMime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val preferredPackage = getSharedPreferences(DEFAULT_APPS_PREFS, MODE_PRIVATE)
+                .getString(defaultAppKey(resolvedMime), null)
+                ?.takeIf { it.isNotBlank() }
+            if (preferredPackage != null) {
+                openIntent.setPackage(preferredPackage)
+            }
+            try {
+                startActivity(openIntent)
+            } catch (_: ActivityNotFoundException) {
+                if (preferredPackage != null) {
+                    val editIntent = Intent(Intent.ACTION_EDIT).apply {
+                        setDataAndType(fileUri, resolvedMime)
+                        setPackage(preferredPackage)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        startActivity(editIntent)
+                        return
+                    } catch (_: ActivityNotFoundException) {
+                        // The selected package may have disappeared between
+                        // listing and notification click; fall back to the
+                        // system chooser below.
+                    }
+                }
+                openIntent.setPackage(null)
+                startActivity(Intent.createChooser(openIntent, "选择打开方式"))
+            }
+        } catch (_: Exception) {
+            // A provider or OEM handler may reject the private URI. Falling
+            // back to the directory keeps the notification useful instead of
+            // leaving a dead click target.
+            openReceivedDirectory(path)
+        }
+    }
+
+    private fun defaultAppKey(mimeType: String): String {
+        return when {
+            mimeType.startsWith("image/") -> "image"
+            mimeType.startsWith("video/") -> "video"
+            else -> "file"
+        }
+    }
+
+    private fun defaultAppMimeType(type: String): String {
+        return when (type.lowercase(Locale.ROOT)) {
+            "image" -> "image/*"
+            "video" -> "video/*"
+            else -> "*/*"
+        }
+    }
+
+    private fun defaultAppOptions(call: MethodCall, result: MethodChannel.Result) {
+        val type = call.argument<String>("type")?.trim().orEmpty().ifBlank { "file" }
+        contentExecutor.execute {
+            try {
+                val mimeType = defaultAppMimeType(type)
+                // A single content-URI query is not enough: file managers and
+                // media tools commonly advertise different combinations of
+                // ACTION_VIEW, ACTION_EDIT, file:// and content://. Query the
+                // same MIME type through those standard shapes, then merge by
+                // package name. This is package visibility, not a user runtime
+                // permission request.
+                val queryUri = when (type.lowercase(Locale.ROOT)) {
+                    "image" -> Uri.parse("content://media/external/images/media/1")
+                    "video" -> Uri.parse("content://media/external/video/media/1")
+                    else -> Uri.parse("content://$packageName.fileprovider/received")
+                }
+                val queryUris = listOf(
+                    queryUri,
+                    Uri.parse("file:///storage/emulated/0/Download/Hinge/placeholder"),
+                )
+                val queryIntents = buildList {
+                    for (action in listOf(Intent.ACTION_VIEW, Intent.ACTION_EDIT)) {
+                        for (uri in queryUris) {
+                            add(Intent(action).apply {
+                                addCategory(Intent.CATEGORY_DEFAULT)
+                                setDataAndType(uri, mimeType)
+                            })
+                        }
+                        add(Intent(action).apply {
+                            addCategory(Intent.CATEGORY_DEFAULT)
+                            setType(mimeType)
+                        })
+                    }
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PackageManager.MATCH_ALL
+                } else {
+                    0
+                }
+                val options = queryIntents
+                    .asSequence()
+                    .flatMap { packageManager.queryIntentActivities(it, flags).asSequence() }
+                    .filter { it.activityInfo.packageName != packageName }
+                    .filter {
+                        it.activityInfo.packageName !in setOf(
+                            "com.android.documentsui",
+                            "com.google.android.documentsui",
+                            "com.android.providers.downloads.ui",
+                        )
+                    }
+                    .distinctBy { it.activityInfo.packageName }
+                    .map { resolveInfo ->
+                        mapOf(
+                            "packageName" to resolveInfo.activityInfo.packageName,
+                            "label" to resolveInfo.loadLabel(packageManager).toString(),
+                            "iconBase64" to (appIconBase64(resolveInfo) ?: ""),
+                        )
+                    }
+                    .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it["label"].toString() })
+                    .toList()
+                runOnUiThread { result.success(options) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("DEFAULT_APP_OPTIONS", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun appIconBase64(resolveInfo: android.content.pm.ResolveInfo): String? {
+        return try {
+            val drawable = resolveInfo.loadIcon(packageManager)
+            val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            drawable.setBounds(0, 0, bitmap.width, bitmap.height)
+            drawable.draw(canvas)
+            val output = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            bitmap.recycle()
+            Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun defaultApp(call: MethodCall): String? {
+        val type = call.argument<String>("type")?.trim().orEmpty().ifBlank { "file" }
+        return getSharedPreferences(DEFAULT_APPS_PREFS, MODE_PRIVATE)
+            .getString(type.lowercase(Locale.ROOT), null)
+    }
+
+    private fun setDefaultApp(call: MethodCall, result: MethodChannel.Result) {
+        val type = call.argument<String>("type")?.trim().orEmpty().ifBlank { "file" }
+        val packageName = call.argument<String>("packageName")?.trim().orEmpty()
+        getSharedPreferences(DEFAULT_APPS_PREFS, MODE_PRIVATE)
+            .edit()
+            .putString(type.lowercase(Locale.ROOT), packageName)
+            .apply()
+        result.success(true)
     }
 
     private fun openReceivedDirectory(path: String?) {
@@ -1115,7 +1326,6 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun hasPhotosPermission(): Boolean {
-        if (hasAllFilesAccess()) return true
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
                 Manifest.permission.READ_MEDIA_IMAGES,
             ) == PackageManager.PERMISSION_GRANTED
@@ -1155,7 +1365,6 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun hasMediaPermission(): Boolean {
-        if (hasAllFilesAccess()) return true
         if (Build.VERSION.SDK_INT >= 33) {
             return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED &&
                 checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED &&
@@ -1414,6 +1623,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun readPhotoBytes(call: MethodCall, result: MethodChannel.Result) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要照片与视频权限", null)
+            return
+        }
         val uriText = call.argument<String>("uri")
         if (uriText.isNullOrBlank()) {
             result.error("invalid_argument", "图片地址为空", null)
@@ -1434,6 +1647,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun readPhotoThumbnailBytes(call: MethodCall, result: MethodChannel.Result) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要照片与视频权限", null)
+            return
+        }
         val uriText = call.argument<String>("uri")
         if (uriText.isNullOrBlank()) {
             result.error("invalid_argument", "图片地址为空", null)
@@ -1464,6 +1681,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun copyUriToCache(call: MethodCall, result: MethodChannel.Result) {
+        if (!hasMediaPermission()) {
+            result.error("permission_required", "需要音乐与音频、照片与视频权限", null)
+            return
+        }
         val uriText = call.argument<String>("uri")?.trim().orEmpty()
         val requestedName = call.argument<String>("fileName")?.trim().orEmpty()
         if (uriText.isBlank()) {
@@ -1496,6 +1717,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun readPhotoPreviewBytes(call: MethodCall, result: MethodChannel.Result) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要照片与视频权限", null)
+            return
+        }
         val uriText = call.argument<String>("uri")
         if (uriText.isNullOrBlank()) {
             result.error("invalid_argument", "图片地址为空", null)
@@ -1535,8 +1760,9 @@ class MainActivity : FlutterActivity() {
             MediaStore.Files.FileColumns.MIME_TYPE,
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.DATA,
         )
-        val cursor = contentResolver.query(
+        val cursor = queryMediaStore(
             collection,
             projection,
             "${MediaStore.Files.FileColumns._ID} IS NOT NULL",
@@ -1552,12 +1778,32 @@ class MainActivity : FlutterActivity() {
             while (it.moveToNext()) {
                 val id = it.getLong(idIndex)
                 val uri = Uri.withAppendedPath(collection, id.toString())
+                val dataIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+                val sourcePath = if (dataIndex >= 0 && !it.isNull(dataIndex)) {
+                    it.getString(dataIndex).orEmpty()
+                } else {
+                    ""
+                }
+                val sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                    it.getLong(sizeIndex)
+                } else {
+                    0L
+                }
+                val mimeType = if (mimeIndex >= 0) {
+                    it.getString(mimeIndex).orEmpty()
+                } else {
+                    ""
+                }
+                if (sizeBytes == 0L && mimeType.isBlank() && isDirectoryPath(sourcePath)) {
+                    continue
+                }
                 files.add(
                     mapOf(
                         "id" to id.toString(),
                         "name" to if (nameIndex >= 0) it.getString(nameIndex).orEmpty() else "未命名文件",
-                        "mimeType" to if (mimeIndex >= 0) it.getString(mimeIndex).orEmpty() else "",
-                        "sizeBytes" to if (sizeIndex >= 0) it.getLong(sizeIndex) else 0L,
+                        "relativePath" to sourcePath,
+                        "mimeType" to mimeType,
+                        "sizeBytes" to sizeBytes,
                         "modifiedAt" to if (dateIndex >= 0) it.getLong(dateIndex) * 1000L else 0L,
                         "uri" to uri.toString(),
                     ),
@@ -1755,6 +2001,9 @@ class MainActivity : FlutterActivity() {
         if (category == "deleted" && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return emptyList()
         }
+        if (category == "images" && !hasPhotosPermission()) return emptyList()
+        if (category == "videos" && !hasMediaPermission()) return emptyList()
+        if (category == "audio" && !hasMediaPermission()) return emptyList()
         // Query the dedicated media collections. Album/photo pages use the
         // Images collection, so the Windows file manager must use the same
         // source for its image category instead of a second Files view.
@@ -1807,9 +2056,14 @@ class MainActivity : FlutterActivity() {
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.DATE_MODIFIED,
             MediaStore.Files.FileColumns.RELATIVE_PATH,
+            // RELATIVE_PATH is empty on several OEM providers. DATA is
+            // deprecated for general app use, but this app already requires
+            // broad file access for its file manager; when available it gives
+            // the recent-file filter the real source path.
+            MediaStore.Files.FileColumns.DATA,
         )
         val entries = ArrayList<Map<String, Any?>>()
-        val cursor = contentResolver.query(
+        val cursor = queryMediaStore(
             collection,
             projection,
             selection,
@@ -1823,6 +2077,7 @@ class MainActivity : FlutterActivity() {
             val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
             val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
             val pathIndex = it.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            val dataIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
             while (it.moveToNext()) {
                 val id = it.getLong(idIndex)
                 val name = if (nameIndex >= 0) {
@@ -1835,21 +2090,39 @@ class MainActivity : FlutterActivity() {
                 } else {
                     name
                 }
+                val sourcePath = if (dataIndex >= 0 && !it.isNull(dataIndex)) {
+                    it.getString(dataIndex).orEmpty()
+                } else {
+                    relativePath
+                }
+                val sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                    it.getLong(sizeIndex)
+                } else {
+                    0L
+                }
+                val rawMimeType = if (mimeIndex >= 0) {
+                    it.getString(mimeIndex).orEmpty()
+                } else {
+                    ""
+                }
+                val mimeType = rawMimeType.ifBlank { guessMimeType(name) }
+                // Directory checks are deliberately limited to zero-byte rows
+                // without a MIME type. Calling File.isDirectory for every
+                // MediaStore item made large recent lists unnecessarily slow.
+                if (category == "recent" && sizeBytes == 0L &&
+                    rawMimeType.isBlank() && isDirectoryPath(sourcePath, relativePath)) {
+                    continue
+                }
+                if (category == "recent" && isRecentCacheNoise(name, sourcePath, sizeBytes)) {
+                    continue
+                }
                 entries.add(
                     storageEntry(
                         id = id.toString(),
                         name = name,
                         relativePath = relativePath,
-                        mimeType = if (mimeIndex >= 0) {
-                            it.getString(mimeIndex).orEmpty().ifBlank { guessMimeType(name) }
-                        } else {
-                            guessMimeType(name)
-                        },
-                        sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
-                            it.getLong(sizeIndex)
-                        } else {
-                            0L
-                        },
+                        mimeType = mimeType,
+                        sizeBytes = sizeBytes,
                         modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
                             it.getLong(dateIndex) * 1000L
                         } else {
@@ -1956,7 +2229,7 @@ class MainActivity : FlutterActivity() {
             pathColumn,
         )
         val entries = ArrayList<Map<String, Any?>>()
-        val cursor = contentResolver.query(
+        val cursor = queryMediaStore(
             collection,
             projection,
             selection,
@@ -1999,6 +2272,27 @@ class MainActivity : FlutterActivity() {
         return entries
     }
 
+    private fun queryMediaStore(
+        collection: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+    ): Cursor? {
+        return try {
+            contentResolver.query(collection, projection, selection, selectionArgs, sortOrder)
+        } catch (error: IllegalArgumentException) {
+            // DATA is deprecated and a few OEM MediaProvider versions reject
+            // it instead of returning a null column. Retry without DATA so a
+            // metadata query cannot turn the whole file page into "读取失败".
+            if (!projection.contains(MediaStore.Files.FileColumns.DATA)) throw error
+            val safeProjection = projection.filterNot {
+                it == MediaStore.Files.FileColumns.DATA
+            }.toTypedArray()
+            contentResolver.query(collection, safeProjection, selection, selectionArgs, sortOrder)
+        }
+    }
+
     private fun storageEntry(
         id: String,
         name: String,
@@ -2028,6 +2322,88 @@ class MainActivity : FlutterActivity() {
         return android.webkit.MimeTypeMap.getSingleton()
             .getMimeTypeFromExtension(extension)
             ?: "application/octet-stream"
+    }
+
+    private fun isRecentCacheNoise(
+        name: String,
+        relativePath: String,
+        sizeBytes: Long,
+    ): Boolean {
+        val normalizedPath = "$relativePath/$name"
+            .replace('\\', '/')
+            .trim('/')
+            .lowercase(Locale.ROOT)
+        val segments = normalizedPath.split('/').filter { it.isNotBlank() }
+        val fileName = name.trim().lowercase(Locale.ROOT)
+        if (segments.any {
+                it == "cache" || it == ".cache" || it == "code_cache" ||
+                    it == "app_webview" || it == ".thumbnails" ||
+                    it == "thumbnails" || it == "tmp" || it == "temp" ||
+                    it == "logs" || it == "log" || it == "databases" ||
+                    it == "shared_prefs" || it == "no_backup" ||
+                    it.startsWith("cache_") || it.startsWith("thumb")
+            }) {
+            return true
+        }
+        if (normalizedPath.contains("/android/data/") ||
+            normalizedPath.contains("/android/obb/")) {
+            return true
+        }
+        if (fileName.startsWith(".")) return true
+        if (fileName == "cache" || fileName == ".nomedia" ||
+            fileName.startsWith(".thumbdata")) {
+            return true
+        }
+        // Web thumbnails from chat/browser providers are often stored as
+        // URL-percent-encoded names. They are implementation artifacts, not
+        // user files, and should not dominate the recent list.
+        if (fileName.contains("%3a%2f%2f") ||
+            fileName.contains("%3a%252f%252f") ||
+            fileName.contains("%2f%2f")) {
+            return true
+        }
+        if (fileName.startsWith("cache_") || fileName.startsWith("thumb_") ||
+            fileName.startsWith("thumbnail_") || fileName.startsWith("temp_") ||
+            fileName.startsWith("tmp_")) {
+            return true
+        }
+        // The recent view is for user-facing content, not diagnostics or
+        // database sidecar files. Keep these hidden only in this view; they
+        // remain available in their original storage directory.
+        if (fileName.endsWith(".log") || fileName.endsWith(".trace") ||
+            fileName.endsWith(".db-shm") || fileName.endsWith(".db-wal") ||
+            fileName.endsWith(".lock") || fileName.endsWith(".lck")) {
+            return true
+        }
+        val appPrivatePath = normalizedPath.contains("/android/data/") ||
+            normalizedPath.contains("/android/obb/") ||
+            normalizedPath.contains("/android/media/")
+        if (appPrivatePath && (fileName.endsWith(".log") ||
+            fileName.endsWith(".json") || fileName.startsWith("log_"))) {
+            return true
+        }
+        // Hide only well-known zero-byte bookkeeping placeholders. Do not use
+        // a general size threshold because small user documents are valid.
+        if (sizeBytes == 0L &&
+            fileName in setOf("file", "文件", "thumb", "thumbnail")) {
+            return true
+        }
+        return fileName.endsWith(".tmp") || fileName.endsWith(".temp") ||
+            fileName.endsWith(".part") || fileName.endsWith(".crdownload") ||
+            fileName.endsWith(".download")
+    }
+
+    private fun isDirectoryPath(vararg candidates: String): Boolean {
+        val root = Environment.getExternalStorageDirectory()
+        for (candidate in candidates) {
+            val value = candidate.trim()
+            if (value.isEmpty()) continue
+            val direct = File(value)
+            if (direct.isAbsolute && direct.isDirectory) return true
+            val relative = value.trimStart('/').replace('/', File.separatorChar)
+            if (File(root, relative).isDirectory) return true
+        }
+        return false
     }
 
     private fun readWorkspaceList(key: String): List<Map<String, Any?>> {
@@ -2087,8 +2463,13 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val ACTION_OPEN_RECEIVED_DIRECTORY =
             "com.hinge.office.OPEN_RECEIVED_DIRECTORY"
+        private const val ACTION_OPEN_RECEIVED_FILE =
+            "com.hinge.office.OPEN_RECEIVED_FILE"
         private const val EXTRA_RECEIVED_FILE_PATH =
             "com.hinge.office.RECEIVED_FILE_PATH"
+        private const val EXTRA_RECEIVED_FILE_MIME =
+            "com.hinge.office.RECEIVED_FILE_MIME"
         private const val FILE_CHANNEL_ID = "hinge_file_transfer"
+        private const val DEFAULT_APPS_PREFS = "default_apps"
     }
 }

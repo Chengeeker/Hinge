@@ -1,3 +1,5 @@
+import 'constants.dart';
+
 enum DevicePlatform { android, windows, linux, macos, ios, unknown }
 
 enum DeviceConnectionState {
@@ -19,6 +21,7 @@ class Device {
   final DevicePlatform platform;
   final String appVersion;
   final String protocolVersion;
+  final int sessionPort;
   final List<String> capabilities;
   final List<String> networkAddresses;
   final DeviceConnectionState connectionState;
@@ -32,6 +35,7 @@ class Device {
     required this.platform,
     required this.appVersion,
     required this.protocolVersion,
+    this.sessionPort = AppConstants.sessionTcpPort,
     required this.capabilities,
     required this.networkAddresses,
     this.connectionState = DeviceConnectionState.discovered,
@@ -46,6 +50,7 @@ class Device {
     DevicePlatform? platform,
     String? appVersion,
     String? protocolVersion,
+    int? sessionPort,
     List<String>? capabilities,
     List<String>? networkAddresses,
     DeviceConnectionState? connectionState,
@@ -59,6 +64,7 @@ class Device {
       platform: platform ?? this.platform,
       appVersion: appVersion ?? this.appVersion,
       protocolVersion: protocolVersion ?? this.protocolVersion,
+      sessionPort: sessionPort ?? this.sessionPort,
       capabilities: capabilities ?? this.capabilities,
       networkAddresses: networkAddresses ?? this.networkAddresses,
       connectionState: connectionState ?? this.connectionState,
@@ -74,6 +80,7 @@ class Device {
     'platform': platform.name,
     'appVersion': appVersion,
     'protocolVersion': protocolVersion,
+    'port': sessionPort,
     'capabilities': capabilities,
     'networkAddresses': networkAddresses,
     'connectionState': connectionState.name,
@@ -90,8 +97,10 @@ class Device {
         (e) => e.name == json['platform'],
         orElse: () => DevicePlatform.unknown,
       ),
-      appVersion: json['appVersion'] as String? ?? '1.0.0',
+      appVersion: json['appVersion'] as String? ?? '1.0.1',
       protocolVersion: json['protocolVersion'] as String? ?? '0.1',
+      sessionPort:
+          (json['port'] as num?)?.toInt() ?? AppConstants.sessionTcpPort,
       capabilities: List<String>.from(json['capabilities'] as List? ?? []),
       networkAddresses: List<String>.from(
         json['networkAddresses'] as List? ?? [],

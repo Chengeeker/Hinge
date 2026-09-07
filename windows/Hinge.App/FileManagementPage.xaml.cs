@@ -11,6 +11,7 @@ public sealed partial class FileManagementPage : Page
 {
     private readonly HashSet<ScrollViewer> _fileScrollViewers = new();
     private bool _nearEndSignaled;
+    private bool _nearEndCheckQueued;
     private bool _dropFeedbackVisible;
 
     public event EventHandler? NearEndReached;
@@ -111,6 +112,21 @@ public sealed partial class FileManagementPage : Page
     public void ResetNearEndTrigger()
     {
         _nearEndSignaled = false;
+        RequestNearEndCheck();
+    }
+
+    public void RequestNearEndCheck()
+    {
+        if (_nearEndCheckQueued) return;
+        _nearEndCheckQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _nearEndCheckQueued = false;
+            foreach (var scrollViewer in _fileScrollViewers.ToArray())
+            {
+                EvaluateNearEnd(scrollViewer);
+            }
+        });
     }
 
     public void ApplyViewMode()
@@ -153,9 +169,21 @@ public sealed partial class FileManagementPage : Page
     {
         if (sender is not ScrollViewer scrollViewer) return;
 
-        var threshold = Math.Max(480, scrollViewer.ViewportHeight * 1.5);
+        EvaluateNearEnd(scrollViewer);
+    }
+
+    private void EvaluateNearEnd(ScrollViewer scrollViewer)
+    {
+        // Start the next page before the thumb reaches the absolute bottom.
+        // This matters when a user drags the scrollbar into the latter part
+        // of a large directory: only the first 200 visual items exist at
+        // first, so waiting for the exact end makes the scrollbar appear
+        // stuck and leaves later tiles without a chance to request thumbs.
+        var preloadDistance = Math.Max(
+            480,
+            Math.Min(2400, scrollViewer.ScrollableHeight * 0.35));
         var nearEnd = scrollViewer.ScrollableHeight <= 0 ||
-            scrollViewer.VerticalOffset >= scrollViewer.ScrollableHeight - threshold;
+            scrollViewer.VerticalOffset >= scrollViewer.ScrollableHeight - preloadDistance;
         if (!nearEnd)
         {
             _nearEndSignaled = false;

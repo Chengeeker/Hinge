@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,7 @@ import 'package:hinge/core/device_identity_manager.dart';
 import 'package:hinge/core/device_model.dart';
 import 'package:hinge/core/device_registry.dart';
 import 'package:hinge/core/discovery_message.dart';
+import 'package:hinge/core/discovery_service.dart';
 
 void main() {
   group('Device Core Tests', () {
@@ -36,6 +38,7 @@ void main() {
         port: 52831,
         capabilities: ['file_transfer', 'clipboard'],
         timestamp: 1756992000,
+        connectionRequested: true,
       );
 
       final json = msg.toJson();
@@ -43,13 +46,63 @@ void main() {
 
       expect(parsed.deviceId, equals('uuid-1234-5678'));
       expect(parsed.platform, equals('windows'));
+      expect(parsed.port, equals(52831));
       expect(parsed.capabilities, contains('clipboard'));
       expect(parsed.timestamp, equals(1756992000));
+      expect(parsed.connectionRequested, isTrue);
+    });
+
+    test('DiscoveryService emits reverse connection requests', () async {
+      final probe = await RawDatagramSocket.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final port = probe.port;
+      probe.close();
+
+      final registry = DeviceRegistry();
+      final service = DiscoveryService(
+        localIdentity: const DeviceIdentity(
+          deviceId: 'local-device',
+          name: 'Local',
+        ),
+        registry: registry,
+        listenPort: port,
+      );
+      final sender = await RawDatagramSocket.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      try {
+        await service.start();
+        final requestFuture = service.connectionRequests.first.timeout(
+          const Duration(seconds: 2),
+        );
+        final message = DiscoveryMessage(
+          deviceId: 'remote-device',
+          name: 'Remote',
+          platform: 'windows',
+          timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          connectionRequested: true,
+        );
+        sender.send(
+          utf8.encode(jsonEncode(message.toJson())),
+          InternetAddress.loopbackIPv4,
+          port,
+        );
+
+        final request = await requestFuture;
+        expect(request.message.deviceId, 'remote-device');
+        expect(request.remoteAddress, InternetAddress.loopbackIPv4.address);
+      } finally {
+        sender.close();
+        service.dispose();
+      }
     });
 
     test(
       'DeviceRegistry upsert and pruneOffline marks device disconnected',
-      () {
+      () async {
         final registry = DeviceRegistry();
         final msg = DiscoveryMessage(
           deviceId: 'remote-win-01',
@@ -71,7 +124,10 @@ void main() {
           contains('192.168.1.120'),
         );
 
-        // Prune offline with zero duration marks it disconnected
+        // Ensure the monotonic wall-clock has advanced before using a zero
+        // timeout; Windows can otherwise return the same timestamp twice.
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+        // Prune offline with zero duration marks it disconnected.
         registry.pruneOffline(Duration.zero);
 
         expect(
@@ -99,6 +155,35 @@ void main() {
         '192.168.1.20',
         '192.168.3.34',
       ]);
+      registry.dispose();
+    });
+
+    test('DeviceRegistry reconciles duplicate identities on one LAN address', () {
+      final registry = DeviceRegistry();
+      final first = DiscoveryMessage(
+        deviceId: 'phone-first-id',
+        name: 'vivo X200 Pro mini',
+        manufacturer: 'vivo',
+        model: 'V2419A',
+        platform: 'android',
+        timestamp: 1,
+      );
+      final second = DiscoveryMessage(
+        deviceId: 'phone-second-id',
+        name: 'vivo X200 Pro mini',
+        manufacturer: 'vivo',
+        model: 'V2419A',
+        platform: 'android',
+        timestamp: 2,
+      );
+
+      // Neither record is offline yet. The registry should still collapse the
+      // stale identity instead of waiting for a prune cycle.
+      registry.upsertDevice(first, '192.168.3.27');
+      registry.upsertDevice(second, '192.168.3.27');
+
+      expect(registry.devices, hasLength(1));
+      expect(registry.devices.single.deviceId, equals('phone-second-id'));
       registry.dispose();
     });
   });

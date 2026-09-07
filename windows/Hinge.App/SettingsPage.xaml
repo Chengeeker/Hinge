@@ -9,7 +9,32 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="应用设置" FontSize="18" FontWeight="SemiBold" />
                     <Button x:Name="PersonalizationButton" Content="个性化" HorizontalAlignment="Left" />
-                    <Button x:Name="StorageButton" Content="存储位置" HorizontalAlignment="Left" />
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="自定义存储位置" FontSize="15" FontWeight="SemiBold" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="StoragePathTextBox"
+                                Grid.Column="0"
+                                IsReadOnly="True"
+                                PlaceholderText="未设置时使用 Downloads\Hinge"
+                                HorizontalAlignment="Stretch" />
+                            <Button
+                                x:Name="StorageButton"
+                                Grid.Column="1"
+                                Content="浏览"
+                                MinWidth="72"
+                                HorizontalAlignment="Right" />
+                        </Grid>
+                        <TextBlock
+                            Text="批量保存文件和照片时使用此目录。更新应用不会清除该设置。"
+                            FontSize="14"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
                     <Button x:Name="AboutButton" Content="关于应用" HorizontalAlignment="Left" />
                     <ToggleSwitch x:Name="MinimizeToTrayToggle" Header="关闭窗口时最小化到托盘" OnContent="开启" OffContent="关闭" />
                     <TextBlock Text="开启后点击关闭按钮会隐藏窗口，仍可从系统托盘恢复或退出应用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />

@@ -4,12 +4,15 @@ import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import 'personalization_screen.dart';
 import 'keep_alive_settings_screen.dart';
+import 'default_apps_screen.dart';
 
 import '../core/clipboard_adapter.dart';
 import '../core/clipboard_manager.dart';
@@ -56,8 +59,7 @@ class HingeApp extends StatefulWidget {
   State<HingeApp> createState() => _HingeAppState();
 }
 
-class _HingeAppState extends State<HingeApp>
-    with WidgetsBindingObserver {
+class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   late final DeviceIdentity _identity;
   late final DeviceRegistry _registry;
   late final DiscoveryService _discoveryService;
@@ -113,8 +115,8 @@ class _HingeAppState extends State<HingeApp>
       _discoveryService = DiscoveryService(
         localIdentity: _identity,
         registry: _registry,
+        sessionPortProvider: () => _sessionManager.listeningPort,
       );
-      _discoveryService.start();
     }
 
     _pairingManager = PairingManager(
@@ -149,9 +151,18 @@ class _HingeAppState extends State<HingeApp>
     _clipboardManager.adapter.startMonitoring();
 
     if (!Platform.environment.containsKey('FLUTTER_TEST')) {
-      _sessionManager.startListener();
-      _commandRouter.start();
+      unawaited(_startNetworkServices());
     }
+  }
+
+  Future<void> _startNetworkServices() async {
+    // Bind the TCP listener before the first UDP announcement. This guarantees
+    // that discovery never advertises the fallback/default port while the
+    // Android socket is still being created.
+    await _sessionManager.startListener();
+    if (!mounted) return;
+    _commandRouter.start();
+    if (_ownsDiscovery) await _discoveryService.start();
   }
 
   @override
@@ -190,6 +201,9 @@ class _HingeAppState extends State<HingeApp>
         builder: (context, child) => MaterialApp(
           title: AppConstants.appName,
           debugShowCheckedModeBanner: false,
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
           theme: _hingeTheme(
             _workspaceState,
             brightness: Brightness.light,
@@ -627,8 +641,11 @@ class _DevicesScreenState extends State<DevicesScreen>
   StreamSubscription<List<Device>>? _deviceSubscription;
   StreamSubscription<SessionState>? _connectionSubscription;
   StreamSubscription<SessionConnection>? _incomingConnectionSubscription;
+  StreamSubscription<DiscoveryConnectionRequest>?
+  _connectionRequestSubscription;
   StreamSubscription<String>? _fileReceivedSubscription;
   final List<StreamSubscription<dynamic>> _incomingPeerSubscriptions = [];
+  final Set<SessionConnection> _watchedConnections = <SessionConnection>{};
   StreamSubscription? _clipboardSubscription;
   StreamSubscription? _urlSubscription;
   SessionConnection? _activeConnection;
@@ -658,6 +675,11 @@ class _DevicesScreenState extends State<DevicesScreen>
   List<WorkspaceTask> _tasks = [];
   bool _notesLoading = false;
   bool _tasksLoading = false;
+  static const int _photoPageSize = 200;
+  int _photosTotal = 0;
+  int _photosOffset = 0;
+  bool _photoPageRequestInFlight = false;
+  final _AsyncLimiter _photoThumbnailLimiter = _AsyncLimiter(6);
   String? _notesError;
   String? _tasksError;
   bool _hapticFeedbackEnabled = true;
@@ -698,6 +720,10 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
     _incomingConnectionSubscription = widget.sessionManager.onClientConnected
         .listen(_watchIncomingConnection);
+    _connectionRequestSubscription = widget.discoveryService.connectionRequests
+        .listen((request) {
+          unawaited(_handleReverseConnectionRequest(request));
+        });
     _workspaceState.addListener(_onWorkspaceChanged);
     _clipboardSubscription = widget.clipboardManager.clipboardStream.listen((
       message,
@@ -740,6 +766,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     _deviceSubscription?.cancel();
     _connectionSubscription?.cancel();
     _incomingConnectionSubscription?.cancel();
+    _connectionRequestSubscription?.cancel();
     _fileReceivedSubscription?.cancel();
     _listenerStatusTimer?.cancel();
     _listenerStatusTimer = null;
@@ -1025,6 +1052,8 @@ class _DevicesScreenState extends State<DevicesScreen>
       setState(() {
         _selectedAlbumId = null;
         _photos = [];
+        _photosOffset = 0;
+        _photosTotal = 0;
         _photosError = null;
       });
       return;
@@ -1127,6 +1156,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   void _watchConnectionData(SessionConnection connection) {
+    if (!_watchedConnections.add(connection)) return;
     widget.clipboardManager.registerConnection(connection);
     _incomingPeerSubscriptions.add(
       connection.frames.listen((frame) {
@@ -1141,10 +1171,45 @@ class _DevicesScreenState extends State<DevicesScreen>
     _incomingPeerSubscriptions.add(
       connection.stateStream.listen((state) {
         if (state == SessionState.disconnected) {
+          _watchedConnections.remove(connection);
           widget.clipboardManager.unregisterConnection(connection);
         }
       }),
     );
+  }
+
+  Future<void> _handleReverseConnectionRequest(
+    DiscoveryConnectionRequest request,
+  ) async {
+    if (!mounted ||
+        request.message.deviceId == widget.localIdentity.deviceId ||
+        widget.sessionManager.connectionForDevice(request.message.deviceId) !=
+            null) {
+      return;
+    }
+
+    // If a simultaneous direct attempt is still finishing, give it a short
+    // chance to release the connection gate before honoring the reverse ask.
+    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    while (_connectingDeviceId != null && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted ||
+          widget.sessionManager.connectionForDevice(request.message.deviceId) !=
+              null) {
+        return;
+      }
+    }
+    if (!mounted || _connectingDeviceId != null) return;
+
+    final device = widget.discoveryService.registry.devices
+        .cast<Device?>()
+        .firstWhere(
+          (candidate) => candidate?.deviceId == request.message.deviceId,
+          orElse: () => null,
+        );
+    if (device != null) {
+      await _connect(device, automatic: true);
+    }
   }
 
   void _registerIncomingPeer(
@@ -1339,15 +1404,30 @@ class _DevicesScreenState extends State<DevicesScreen>
         device.networkAddresses,
       );
       SessionConnection? connection;
+      var reverseConnection = false;
+      // Start both directions at once. Duplicate sockets are collapsed by
+      // SessionManager after the identity handshake, while the first usable
+      // path wins without waiting for an inbound TCP timeout.
       for (final address in addresses) {
-        try {
-          connection = await widget.sessionManager.connectToPeer(
-            InternetAddress(address),
-          );
-          break;
-        } catch (error) {
-          lastError = error;
+        widget.discoveryService.requestReverseConnection(address);
+      }
+      for (final address in addresses) {
+        for (final port in {device.sessionPort, AppConstants.sessionTcpPort}) {
+          try {
+            connection = await widget.sessionManager.connectToPeer(
+              InternetAddress(address),
+              port,
+            );
+            break;
+          } catch (error) {
+            lastError = error;
+          }
         }
+        if (connection != null) break;
+      }
+      if (connection == null) {
+        connection = await _waitForReverseConnection(device.deviceId);
+        reverseConnection = connection != null;
       }
       if (connection == null) {
         throw StateError(lastError == null ? '没有可用的地址' : '$lastError');
@@ -1357,7 +1437,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         connection.dispose();
         return;
       }
-      _watchConnectionData(connection);
+      if (!reverseConnection) _watchConnectionData(connection);
       final peer =
           connection.peerInfo ??
           await connection.peerStream.first.timeout(
@@ -1368,6 +1448,13 @@ class _DevicesScreenState extends State<DevicesScreen>
         connection.dispose();
         throw StateError('目标设备身份不匹配');
       }
+      // Simultaneous direct and reverse attempts may briefly create two
+      // sockets. Use the connection retained by SessionManager's deterministic
+      // duplicate resolver before wiring feature streams to the UI.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      connection =
+          widget.sessionManager.connectionForDevice(device.deviceId) ??
+          connection;
       if (attemptGeneration != _connectionAttemptGeneration ||
           (automatic && _userDisconnected)) {
         connection.dispose();
@@ -1397,6 +1484,19 @@ class _DevicesScreenState extends State<DevicesScreen>
     } finally {
       if (mounted) setState(() => _connectingDeviceId = null);
     }
+  }
+
+  Future<SessionConnection?> _waitForReverseConnection(
+    String deviceId, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final connection = widget.sessionManager.connectionForDevice(deviceId);
+      if (connection != null) return connection;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    return widget.sessionManager.connectionForDevice(deviceId);
   }
 
   Future<List<String>> _orderedConnectionAddresses(
@@ -1554,6 +1654,8 @@ class _DevicesScreenState extends State<DevicesScreen>
         _photosError = null;
         _selectedAlbumId = null;
         _photos = [];
+        _photosOffset = 0;
+        _photosTotal = 0;
       });
     }
     try {
@@ -1599,7 +1701,6 @@ class _DevicesScreenState extends State<DevicesScreen>
     setState(() {
       _selectedAlbumId = album.id;
       _photos = [];
-      _photosLoading = true;
       _photosError = null;
     });
     await _refreshAlbumPhotos(album.id);
@@ -1608,51 +1709,106 @@ class _DevicesScreenState extends State<DevicesScreen>
   Future<void> _refreshAlbumPhotos(String albumId) async {
     _photoBytesCache.clear();
     _photoPreviewBytesCache.clear();
+    await _loadMorePhotoPage(albumId, reset: true);
+  }
+
+  Future<void> _loadMorePhotoPage(String albumId, {required bool reset}) async {
+    if (_photoPageRequestInFlight ||
+        (!reset && _photosOffset >= _photosTotal)) {
+      return;
+    }
+    if (reset) {
+      _photosOffset = 0;
+      _photosTotal = 0;
+      _photos = [];
+    }
+    _photoPageRequestInFlight = true;
     if (mounted) {
       setState(() {
         _photosLoading = true;
         _photosError = null;
       });
     }
+
     try {
       final selected = _selectedDevice;
+      PhotoPage page;
       if (_isDesktop) {
         if (selected == null) {
-          _photos = [];
           _photosPermission = true;
           _photosError = '请先连接 Android 手机，再读取相册内容';
+          return;
         } else if (selected.platform == DevicePlatform.android) {
           if (_activeConnection == null ||
               _activeDevice?.deviceId != selected.deviceId) {
-            _photos = [];
             _photosPermission = true;
             _photosError = '请先建立设备会话，再读取相册内容';
+            return;
           } else {
-            final raw = await _invokeWorkspace(selected, 'photos', {
-              'albumId': albumId,
-            });
-            _photos = raw is List
-                ? raw.whereType<Map>().map(PhotoItem.fromJson).toList()
-                : [];
+            try {
+              final raw = await _invokeWorkspace(selected, 'photosPage', {
+                'albumId': albumId,
+                'offset': _photosOffset,
+                'limit': _photoPageSize,
+              });
+              page = raw is Map
+                  ? PhotoPage.fromJson(raw)
+                  : const PhotoPage(items: [], total: 0);
+            } on PlatformException {
+              // Keep older Android peers usable while the paged command is
+              // being rolled out: only the current window is retained.
+              final raw = await _invokeWorkspace(selected, 'photos', {
+                'albumId': albumId,
+              });
+              final all = raw is List
+                  ? raw.whereType<Map>().map(PhotoItem.fromJson).toList()
+                  : <PhotoItem>[];
+              final start = _photosOffset.clamp(0, all.length).toInt();
+              page = PhotoPage(
+                items: all.skip(start).take(_photoPageSize).toList(),
+                total: all.length,
+              );
+            }
             _photosPermission = true;
           }
         } else {
-          _photos = [];
           _photosPermission = true;
           _photosError = '当前选择的设备不是 Android 手机';
+          return;
         }
       } else {
         _photosPermission = await widget.dataService.hasPhotosPermission();
         if (_photosPermission == true) {
-          _photos = await widget.dataService.loadPhotos(albumId: albumId);
+          page = await widget.dataService.loadPhotoPage(
+            albumId: albumId,
+            offset: _photosOffset,
+            limit: _photoPageSize,
+          );
+        } else {
+          return;
         }
+      }
+
+      if (!mounted || _selectedAlbumId != albumId) return;
+      if (reset) _photos = [];
+      _photos.addAll(page.items);
+      _photosTotal = page.total;
+      _photosOffset = (_photosOffset + page.items.length)
+          .clamp(0, _photosTotal)
+          .toInt();
+      if (page.items.isEmpty && _photosOffset < _photosTotal) {
+        // A provider can skip rows while still reporting the full count;
+        // advance to the end rather than repeatedly requesting an empty page.
+        _photosOffset = _photosTotal;
       }
     } on PlatformException catch (error) {
       _photosError = error.message ?? error.code;
     } catch (error) {
       _photosError = '$error';
+    } finally {
+      _photoPageRequestInFlight = false;
+      if (mounted) setState(() => _photosLoading = false);
     }
-    if (mounted) setState(() => _photosLoading = false);
   }
 
   Future<void> _requestPhotosPermission() async {
@@ -1862,6 +2018,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                   final initial = dueDate ?? DateTime.now();
                   final picked = await showDatePicker(
                     context: dialogContext,
+                    locale: const Locale('zh', 'CN'),
                     firstDate: DateTime(2000),
                     lastDate: DateTime(2100),
                     initialDate: initial,
@@ -1977,6 +2134,8 @@ class _DevicesScreenState extends State<DevicesScreen>
             _workspaceState.navigationStyle == AppNavigationStyle.bottom ||
             _workspaceState.floatingCapsuleNavigation;
         final hasDrawer = _isDesktop && !desktop && !bottomNavigation;
+        final floatingCapsule =
+            bottomNavigation && _workspaceState.floatingCapsuleNavigation;
         return PopScope(
           canPop: _isDesktop,
           onPopInvokedWithResult: (didPop, result) {
@@ -1985,23 +2144,27 @@ class _DevicesScreenState extends State<DevicesScreen>
           child: Scaffold(
             drawer: hasDrawer ? _buildDrawer() : null,
             appBar: _buildAppBar(desktop, hasDrawer: hasDrawer),
-            bottomNavigationBar: bottomNavigation
+            bottomNavigationBar:
+                bottomNavigation && !_workspaceState.floatingCapsuleNavigation
                 ? _buildBottomNavigationBar()
                 : null,
-            floatingActionButton:
-                _workspaceState.currentTabIndex == 3 &&
-                    !_showMobileWorkspaceOverview
-                ? FloatingActionButton.extended(
-                    onPressed: _editNote,
-                    icon: const Icon(Symbols.add_rounded),
-                    label: const Text('新建笔记'),
-                  )
-                : null,
-            body: Row(
+            body: Stack(
+              fit: StackFit.expand,
               children: [
-                if (desktop && !bottomNavigation)
-                  _buildNavigationRail(constraints.maxWidth),
-                Expanded(child: _buildAnimatedPage()),
+                Row(
+                  children: [
+                    if (desktop && !bottomNavigation)
+                      _buildNavigationRail(constraints.maxWidth),
+                    Expanded(child: _buildAnimatedPage()),
+                  ],
+                ),
+                if (floatingCapsule)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildFloatingNavigationBar(),
+                  ),
               ],
             ),
           ),
@@ -2043,53 +2206,148 @@ class _DevicesScreenState extends State<DevicesScreen>
             : _pageTitles[_workspaceState.currentTabIndex],
       ),
       actions: [
-        IconButton(
-          tooltip: '刷新设备发现',
-          icon: const Icon(Symbols.refresh_rounded),
-          onPressed: _refreshDiscovery,
-        ),
+        if (_workspaceState.currentTabIndex == 3 &&
+            _mobileWorkspaceFocus == 'notes')
+          IconButton(
+            tooltip: '新建笔记',
+            icon: const Icon(Symbols.edit_rounded),
+            onPressed: _editNote,
+          )
+        else if (_workspaceState.currentTabIndex == 3 &&
+            _mobileWorkspaceFocus == 'tasks')
+          IconButton(
+            tooltip: '新建待办',
+            icon: const Icon(Symbols.edit_rounded),
+            onPressed: _editTask,
+          )
+        else if (_workspaceState.currentTabIndex == 3 && _isDesktop)
+          PopupMenuButton<String>(
+            tooltip: '新建工作项',
+            icon: const Icon(Symbols.edit_rounded),
+            onSelected: (value) {
+              if (value == 'note') {
+                _editNote();
+              } else if (value == 'task') {
+                _editTask();
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem<String>(
+                value: 'note',
+                child: Text('新建笔记'),
+              ),
+              PopupMenuItem<String>(
+                value: 'task',
+                child: Text('新建待办'),
+              ),
+            ],
+          )
+        else if (_workspaceState.currentTabIndex != 4 &&
+            _workspaceState.currentTabIndex != 5)
+          IconButton(
+            tooltip: '刷新设备发现',
+            icon: const Icon(Symbols.refresh_rounded),
+            onPressed: _refreshDiscovery,
+          ),
         const SizedBox(width: 8),
       ],
     );
   }
 
   Widget _buildBottomNavigationBar() {
-    final navigation = NavigationBar(
+    return NavigationBar(
       selectedIndex: _selectedNavigationIndex,
       onDestinationSelected: _selectNavigationDestination,
       destinations: _navigationBarDestinations,
     );
-    if (!_workspaceState.floatingCapsuleNavigation) return navigation;
+  }
+
+  Widget _buildFloatingNavigationBar() {
+    final scheme = Theme.of(context).colorScheme;
+    final destinations = _navigationBarDestinations;
     return SafeArea(
       top: false,
-      child: SizedBox(
-        height: 78,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          child: Center(
-            child: ConstrainedBox(
-              // Keep the floating navigation compact instead of stretching it
-              // across the entire phone width. The destinations remain the
-              // standard Material component, only its outer placement is
-              // intentionally narrower like a true floating capsule.
-              constraints: const BoxConstraints(maxWidth: 320),
-              child: Material(
-                color: Theme.of(context).colorScheme.surfaceContainer,
-                elevation: 3,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(28)),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: SizedBox(
-                  height: 64,
-                  child: NavigationBar(
-                    selectedIndex: _selectedNavigationIndex,
-                    onDestinationSelected: _selectNavigationDestination,
-                    destinations: _navigationBarDestinations,
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    height: 64,
-                  ),
+      minimum: const EdgeInsets.only(bottom: 12),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: FractionallySizedBox(
+          widthFactor: 0.62,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: Material(
+              color: scheme.surfaceContainer,
+              elevation: 8,
+              shadowColor: scheme.shadow.withValues(alpha: 0.28),
+              shape: StadiumBorder(
+                side: BorderSide(color: scheme.outlineVariant),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  children: List.generate(destinations.length, (index) {
+                    final destination = destinations[index];
+                    final selected = index == _selectedNavigationIndex;
+                    final foreground = selected
+                        ? scheme.onSecondaryContainer
+                        : scheme.onSurfaceVariant;
+                    return Expanded(
+                      child: Semantics(
+                        button: true,
+                        selected: selected,
+                        label: destination.label,
+                        child: Tooltip(
+                          message: destination.label,
+                          child: InkWell(
+                            onTap: () => _selectNavigationDestination(index),
+                            borderRadius: BorderRadius.circular(28),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOutCubic,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 3,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? scheme.secondaryContainer
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(28),
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconTheme(
+                                    data: IconThemeData(
+                                      color: foreground,
+                                      size: 20,
+                                    ),
+                                    child: selected
+                                        ? (destination.selectedIcon ??
+                                              destination.icon)
+                                        : destination.icon,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    destination.label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: foreground,
+                                      fontSize: 11,
+                                      fontWeight: selected
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
                 ),
               ),
             ),
@@ -2357,8 +2615,12 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _pageBody(Widget child) {
+    final bottomPadding = !_isDesktop &&
+            _workspaceState.floatingCapsuleNavigation
+        ? 136 + MediaQuery.viewPaddingOf(context).bottom
+        : 32.0;
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+      padding: EdgeInsets.fromLTRB(24, 8, 24, bottomPadding),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1180),
@@ -2528,6 +2790,9 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   Widget _buildWelcomeHeader(Device? selected) {
     final name = selected?.name ?? '尚未连接手机';
+    final brandAsset = _isDesktop
+        ? _brandAssetFor(selected)
+        : _brandAssetForIdentity(widget.localIdentity);
     return Card(
       color: Theme.of(context).colorScheme.primaryContainer,
       child: Padding(
@@ -2540,7 +2805,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Hinge 办公套件',
+                    'Hinge Work',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       color: Theme.of(context).colorScheme.onPrimaryContainer,
                       fontWeight: FontWeight.w700,
@@ -2558,17 +2823,59 @@ class _DevicesScreenState extends State<DevicesScreen>
                 ],
               ),
             ),
-            Icon(
-              selected == null
-                  ? Symbols.devices_other_rounded
-                  : Symbols.phone_android_rounded,
-              size: 48,
-              color: Theme.of(context).colorScheme.onPrimaryContainer,
-            ),
+            brandAsset == null
+                ? Icon(
+                    selected == null
+                        ? Symbols.devices_other_rounded
+                        : Symbols.phone_android_rounded,
+                    size: 48,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  )
+                : Container(
+                    width: 56,
+                    height: 48,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: SvgPicture.asset(
+                      'assets/brands/$brandAsset',
+                      fit: BoxFit.contain,
+                    ),
+                  ),
           ],
         ),
       ),
     );
+  }
+
+  String? _brandAssetFor(Device? device) {
+    if (device == null || device.platform != DevicePlatform.android) {
+      return null;
+    }
+    return _brandAssetForValues(device.manufacturer, device.model);
+  }
+
+  String? _brandAssetForIdentity(DeviceIdentity identity) {
+    return _brandAssetForValues(identity.manufacturer, identity.model);
+  }
+
+  String? _brandAssetForValues(String manufacturer, String model) {
+    final name = '$manufacturer $model'.toLowerCase();
+    if (name.contains('honor')) return 'honor.svg';
+    if (name.contains('vivo')) return 'vivo.svg';
+    if (name.contains('xiaomi') ||
+        name.contains('redmi') ||
+        name.contains('poco')) {
+      return 'xiaomi.svg';
+    }
+    if (name.contains('samsung') || name.contains('galaxy')) {
+      return 'samsung.svg';
+    }
+    if (name.contains('huawei')) return 'huawei.svg';
+    if (name.contains('oppo')) return 'oppo.svg';
+    return null;
   }
 
   Widget _buildDeviceSummaryCard(Device? selected) {
@@ -3150,11 +3457,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
-                IconButton(
-                  tooltip: '新建笔记',
-                  onPressed: _editNote,
-                  icon: const Icon(Symbols.add_circle_rounded),
-                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -3223,11 +3525,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
-                IconButton(
-                  tooltip: '新建待办',
-                  onPressed: _editTask,
-                  icon: const Icon(Symbols.add_circle_rounded),
-                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -3294,58 +3591,6 @@ class _DevicesScreenState extends State<DevicesScreen>
             ),
             const SizedBox(height: 16),
             Card(
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: Icon(Symbols.tune_rounded, color: scheme.primary),
-                    title: const Text('应用偏好'),
-                    subtitle: const Text('控制交互反馈和设备连接行为'),
-                  ),
-                  const Divider(height: 1),
-                  if (_isDesktop)
-                    ListTile(
-                      leading: Icon(
-                        Symbols.desktop_windows_rounded,
-                        color: scheme.primary,
-                      ),
-                      title: Text('震动反馈'),
-                      subtitle: Text('Windows 使用系统输入反馈；安卓端可单独开关震动反馈'),
-                      trailing: Text('不适用'),
-                    )
-                  else
-                    SwitchListTile.adaptive(
-                      secondary: Icon(
-                        Symbols.vibration_rounded,
-                        color: scheme.primary,
-                      ),
-                      title: const Text('震动反馈'),
-                      subtitle: const Text('点击按钮、切换页面时提供轻微触感反馈'),
-                      value: _hapticFeedbackEnabled,
-                      onChanged: _setHapticFeedbackEnabled,
-                    ),
-                ],
-              ),
-            ),
-            if (!_isDesktop) ...[
-              const SizedBox(height: 16),
-              Card(
-                child: ListTile(
-                  leading: Icon(Symbols.shield_rounded, color: scheme.primary),
-                  title: const Text('保活设置'),
-                  subtitle: const Text('通知、电池优化和厂商后台保护引导'),
-                  trailing: const Icon(Symbols.chevron_right_rounded),
-                  onTap: () => Navigator.of(context).push<void>(
-                    MaterialPageRoute<void>(
-                      builder: (_) => KeepAliveSettingsScreen(
-                        dataService: widget.dataService,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            Card(
               child: ListTile(
                 leading: Icon(Symbols.palette_rounded, color: scheme.primary),
                 title: const Text('个性化'),
@@ -3373,15 +3618,48 @@ class _DevicesScreenState extends State<DevicesScreen>
                 onTap: _showStorageSettingsDialog,
               ),
             ),
+            if (!_isDesktop) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
+                  leading: Icon(Symbols.shield_rounded, color: scheme.primary),
+                  title: const Text('保活设置'),
+                  subtitle: const Text('通知、电池优化和厂商后台保护引导'),
+                  trailing: const Icon(Symbols.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => KeepAliveSettingsScreen(
+                        dataService: widget.dataService,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
+                  leading: Icon(
+                    Symbols.open_in_new_rounded,
+                    color: scheme.primary,
+                  ),
+                  title: const Text('默认应用'),
+                  subtitle: const Text('选择通知中的图片、视频和文件打开方式'),
+                  trailing: const Icon(Symbols.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          DefaultAppsScreen(dataService: widget.dataService),
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             Card(
               child: ListTile(
                 leading: Icon(Symbols.info_rounded, color: scheme.primary),
                 title: const Text('关于应用'),
-                subtitle: Text(
-                  '${AppConstants.appName} ${AppConstants.appVersion}\n局域网优先的跨设备办公工作台\n数据默认保存在设备本地。',
-                ),
-                isThreeLine: true,
+                subtitle: Text('${AppConstants.appName} ${AppConstants.appVersion}'),
                 trailing: const Icon(Symbols.chevron_right_rounded),
                 onTap: _showAboutDialog,
               ),
@@ -3492,9 +3770,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                         color: dialogScheme.primary,
                       ),
                       title: const Text('GitHub 开源地址'),
-                      subtitle: const Text(
-                        'github.com/Chengeeker/Hinge',
-                      ),
+                      subtitle: const Text('github.com/Chengeeker/Hinge'),
                       trailing: const Icon(Symbols.open_in_new_rounded),
                       onTap: () async {
                         final opened = await widget.dataService
@@ -3528,6 +3804,8 @@ class _DevicesScreenState extends State<DevicesScreen>
         builder: (_) => PersonalizationScreen(
           state: _workspaceState,
           isDesktop: _isDesktop,
+          hapticFeedbackEnabled: _hapticFeedbackEnabled,
+          onHapticFeedbackChanged: _setHapticFeedbackEnabled,
         ),
       ),
     );
@@ -3864,16 +4142,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                         style: Theme.of(context).textTheme.bodyLarge,
                       ),
               ),
-              IconButton(
-                tooltip: '刷新日历',
-                onPressed: _refreshCalendar,
-                icon: _calendarLoading
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Symbols.refresh_rounded),
-              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -4102,85 +4370,88 @@ class _DevicesScreenState extends State<DevicesScreen>
             orElse: () => null,
           )
         : null;
-    return _pageBody(
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              if (inAlbum)
-                IconButton(
-                  tooltip: '返回相册集',
-                  onPressed: () {
-                    setState(() {
-                      _selectedAlbumId = null;
-                      _photos = [];
-                      _photosError = null;
-                    });
-                  },
-                  icon: const Icon(Symbols.arrow_back_rounded),
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (inAlbum &&
+            notification.metrics.axis == Axis.vertical &&
+            notification.metrics.extentAfter < 900 &&
+            _photosOffset < _photosTotal) {
+          unawaited(_loadMorePhotoPage(_selectedAlbumId!, reset: false));
+        }
+        return false;
+      },
+      child: _pageBody(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                if (inAlbum)
+                  IconButton(
+                    tooltip: '返回相册集',
+                    onPressed: () {
+                      setState(() {
+                        _selectedAlbumId = null;
+                        _photos = [];
+                        _photosOffset = 0;
+                        _photosTotal = 0;
+                        _photosError = null;
+                      });
+                    },
+                    icon: const Icon(Symbols.arrow_back_rounded),
+                  ),
+                Expanded(
+                  child: _buildSectionTitle(
+                    inAlbum ? (album?.name ?? '相册') : '相册集',
+                    inAlbum
+                        ? '共 ${album?.count ?? _photos.length} 张图片'
+                        : '先选择相册，再查看其中的图片；不会默认铺开全部照片',
+                  ),
                 ),
-              Expanded(
-                child: _buildSectionTitle(
-                  inAlbum ? (album?.name ?? '相册') : '相册集',
-                  inAlbum
-                      ? '共 ${album?.count ?? _photos.length} 张图片'
-                      : '先选择相册，再查看其中的图片；不会默认铺开全部照片',
-                ),
-              ),
-              IconButton(
-                tooltip: '刷新相册',
-                onPressed: _refreshPhotos,
-                icon: _photosLoading
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Symbols.refresh_rounded),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (_photosPermission == false && !_isDesktop)
-            _permissionCard(
-              icon: Symbols.photo_library_rounded,
-              title: '需要照片读取权限',
-              message: '只读取图片列表和缩略图，不会上传照片。',
-              onPressed: _requestPhotosPermission,
-              onOpenSettings: () => widget.dataService.openAppSettings(),
+              ],
             ),
-          if (_photosError != null) _errorCard('读取相册失败', _photosError!),
-          if (_photosPermission != false) ...[
-            if (!inAlbum && _photoAlbums.isEmpty && !_photosLoading)
-              _emptyCard(
+            const SizedBox(height: 12),
+            if (_photosPermission == false && !_isDesktop)
+              _permissionCard(
                 icon: Symbols.photo_library_rounded,
-                title: '暂无相册集',
-                message: '手机媒体库中没有可读取的图片或相册。',
-              )
-            else if (!inAlbum)
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _photoAlbums.length,
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 280,
-                  mainAxisExtent: 250,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                ),
-                itemBuilder: (context, index) =>
-                    _photoAlbumTile(_photoAlbums[index]),
-              )
-            else if (_photos.isEmpty && !_photosLoading)
-              _emptyCard(
-                icon: Symbols.photo_rounded,
-                title: '相册为空',
-                message: '这个相册中暂时没有可读取的图片。',
-              )
-            else
-              _buildPhotoMasonry(),
+                title: '需要照片读取权限',
+                message: '只读取图片列表和缩略图，不会上传照片。',
+                onPressed: _requestPhotosPermission,
+                onOpenSettings: () => widget.dataService.openAppSettings(),
+              ),
+            if (_photosError != null) _errorCard('读取相册失败', _photosError!),
+            if (_photosPermission != false) ...[
+              if (!inAlbum && _photoAlbums.isEmpty && !_photosLoading)
+                _emptyCard(
+                  icon: Symbols.photo_library_rounded,
+                  title: '暂无相册集',
+                  message: '手机媒体库中没有可读取的图片或相册。',
+                )
+              else if (!inAlbum)
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _photoAlbums.length,
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 280,
+                    mainAxisExtent: 250,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                  ),
+                  itemBuilder: (context, index) =>
+                      _photoAlbumTile(_photoAlbums[index]),
+                )
+              else if (_photos.isEmpty && !_photosLoading)
+                _emptyCard(
+                  icon: Symbols.photo_rounded,
+                  title: '相册为空',
+                  message: '这个相册中暂时没有可读取的图片。',
+                )
+              else
+                _buildPhotoMasonry(),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -4499,16 +4770,18 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Future<Uint8List?> _fetchPhotoThumbnailBytesByUri(String uri) async {
-    final selected = _selectedDevice;
-    if (_isDesktop &&
-        selected != null &&
-        selected.platform == DevicePlatform.android) {
-      final raw = await _invokeWorkspace(selected, 'photoThumbnailBytes', {
-        'uri': uri,
-      });
-      return raw is String ? base64Decode(raw) : null;
-    }
-    return widget.dataService.loadPhotoThumbnailBytes(uri);
+    return _photoThumbnailLimiter.run(() async {
+      final selected = _selectedDevice;
+      if (_isDesktop &&
+          selected != null &&
+          selected.platform == DevicePlatform.android) {
+        final raw = await _invokeWorkspace(selected, 'photoThumbnailBytes', {
+          'uri': uri,
+        });
+        return raw is String ? base64Decode(raw) : null;
+      }
+      return widget.dataService.loadPhotoThumbnailBytes(uri);
+    });
   }
 
   Widget _photoPlaceholder({IconData icon = Symbols.photo_rounded}) {
@@ -4687,5 +4960,30 @@ class _DevicesScreenState extends State<DevicesScreen>
     return compact.length <= maxLength
         ? compact
         : '${compact.substring(0, maxLength)}…';
+  }
+}
+
+class _AsyncLimiter {
+  final int _limit;
+  int _active = 0;
+  final List<Completer<void>> _waiters = [];
+
+  _AsyncLimiter(this._limit);
+
+  Future<T> run<T>(Future<T> Function() action) async {
+    if (_active >= _limit) {
+      final waiter = Completer<void>();
+      _waiters.add(waiter);
+      await waiter.future;
+    }
+    _active++;
+    try {
+      return await action();
+    } finally {
+      _active--;
+      if (_waiters.isNotEmpty) {
+        _waiters.removeAt(0).complete();
+      }
+    }
   }
 }

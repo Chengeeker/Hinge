@@ -122,6 +122,23 @@ class PhotoItem {
   }
 }
 
+class PhotoPage {
+  final List<PhotoItem> items;
+  final int total;
+
+  const PhotoPage({required this.items, required this.total});
+
+  factory PhotoPage.fromJson(Map<dynamic, dynamic> json) {
+    final rawItems = json['items'];
+    return PhotoPage(
+      items: rawItems is List
+          ? rawItems.whereType<Map>().map(PhotoItem.fromJson).toList()
+          : const <PhotoItem>[],
+      total: (json['total'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 class PhotoAlbum {
   final String id;
   final String name;
@@ -428,6 +445,35 @@ class WorkspaceDataService {
     return raw == true;
   }
 
+  Future<List<Map<String, String>>> defaultAppOptions(String type) async {
+    final raw = await _invoke('defaultAppOptions', {'type': type});
+    if (raw is! List) return const <Map<String, String>>[];
+    return raw
+        .whereType<Map>()
+        .map(
+          (item) => <String, String>{
+            'packageName': '${item['packageName'] ?? ''}',
+            'label': '${item['label'] ?? item['packageName'] ?? ''}',
+            'iconBase64': '${item['iconBase64'] ?? ''}',
+          },
+        )
+        .where((item) => item['packageName']!.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<String?> defaultApp(String type) async {
+    final raw = await _invoke('defaultApp', {'type': type});
+    return raw is String && raw.isNotEmpty ? raw : null;
+  }
+
+  Future<bool> setDefaultApp(String type, String? packageName) async {
+    final raw = await _invoke('setDefaultApp', {
+      'type': type,
+      'packageName': packageName ?? '',
+    });
+    return raw == true;
+  }
+
   Future<void> openAppSettings() async {
     await _invoke('openAppSettings');
   }
@@ -508,6 +554,21 @@ class WorkspaceDataService {
     );
     if (raw is! List) return const [];
     return raw.whereType<Map>().map(PhotoItem.fromJson).toList();
+  }
+
+  Future<PhotoPage> loadPhotoPage({
+    String? albumId,
+    int offset = 0,
+    int limit = 200,
+  }) async {
+    final raw = await _invoke('photosPage', {
+      ...?(albumId == null ? null : {'albumId': albumId}),
+      'offset': offset,
+      'limit': limit,
+    });
+    return raw is Map
+        ? PhotoPage.fromJson(raw)
+        : const PhotoPage(items: [], total: 0);
   }
 
   Future<List<PhotoAlbum>> loadPhotoAlbums() async {
@@ -793,6 +854,16 @@ class WorkspaceCommandRouter {
         return (await dataService.loadPhotos(
           albumId: payload['albumId']?.toString(),
         )).map((photo) => photo.toJson()).toList();
+      case 'photosPage':
+        final page = await dataService.loadPhotoPage(
+          albumId: payload['albumId']?.toString(),
+          offset: (payload['offset'] as num?)?.toInt() ?? 0,
+          limit: (payload['limit'] as num?)?.toInt() ?? 200,
+        );
+        return <String, dynamic>{
+          'items': page.items.map((photo) => photo.toJson()).toList(),
+          'total': page.total,
+        };
       case 'photoBytes':
         final bytes = await dataService.loadPhotoBytes(
           '${payload['uri'] ?? ''}',

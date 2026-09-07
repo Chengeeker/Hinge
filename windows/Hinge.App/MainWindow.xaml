@@ -37,7 +37,6 @@
             DragLeave="PageRoot_DragLeave"
             Drop="PageRoot_Drop"
             Title="Hinge"
-            Subtitle="跨设备办公"
             IsBackButtonVisible="False"
             IsPaneToggleButtonVisible="False">
             <TitleBar.IconSource>

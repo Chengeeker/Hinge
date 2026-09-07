@@ -39,6 +39,8 @@ public sealed partial class MainWindow : Window
     private const int DefaultWindowHeight = 1000;
     private const string StartupRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string StartupRegistryValueName = "Hinge";
+    private const string UserSettingsRegistryPath = @"Software\Hinge";
+    private const string ReceiveDirectorySettingName = "ReceiveDirectory";
     private const string StartupArgument = "--startup";
 
     private readonly DeviceIdentity _localIdentity;
@@ -56,6 +58,7 @@ public sealed partial class MainWindow : Window
     private readonly DiscoveryService _discoveryService;
     private readonly Win32TrayManager _trayManager;
     private readonly WorkspaceRemoteClient _workspaceRemoteClient;
+    private readonly PreviewCache _previewCache;
     private const int InitialFileBatchSize = 200;
     private const int AdditionalFileBatchSize = 200;
     private const int ThumbnailBudgetPerBatch = 80;
@@ -88,8 +91,12 @@ public sealed partial class MainWindow : Window
     private AppWindow? _appWindow;
     private bool _allowClose;
     private bool _minimizeToTray;
+    private string _receiveDirectory;
+    private readonly SemaphoreSlim _remoteMediaReceiveGate = new(1, 1);
     private TaskCompletionSource<string>? _pendingRemoteMedia;
     private string? _pendingRemoteMediaName;
+    private bool _fileSaveInProgress;
+    private bool _photoSaveInProgress;
     private IntPtr _nativeDropWindowHandle;
     private IntPtr _originalWindowProc;
     private WindowProcDelegate? _windowProcDelegate;
@@ -99,6 +106,7 @@ public sealed partial class MainWindow : Window
     private bool _nativeInternalRemoteDragActive;
     private bool _nativeExternalDragActive;
     private DateTime _nativeExternalDragCandidateSince;
+    private CancellationTokenSource? _computerDropCancellation;
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate IntPtr WindowProcDelegate(
@@ -219,6 +227,7 @@ public sealed partial class MainWindow : Window
             new PointerEventHandler(PageRoot_PointerReleased),
             true);
         _minimizeToTray = LoadMinimizeToTray();
+        _receiveDirectory = LoadReceiveDirectory();
         AppNavigation.OpenPaneLength = 200;
         ApplyWindowTheme(LoadWindowTheme());
         ApplyWindowMaterial(LoadWindowMaterial());
@@ -228,14 +237,13 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
         ContentFrame.Navigated += ContentFrame_Navigated;
         ContentFrame.Navigate(typeof(HomePage));
-        AppTitleBar.Title = "首页";
         AppNavigation.SelectedItem = AppNavigation.MenuItems[0];
 
         var identityManager = new DeviceIdentityManager();
         _localIdentity = identityManager.GetOrCreateIdentity();
         _trustStore = new TrustStore();
         _pairingManager = new PairingManager(_localIdentity, _trustStore);
-        _transferManager = new TransferManager();
+        _transferManager = new TransferManager(_receiveDirectory);
         _clipboardAdapter = new Win32ClipboardAdapter();
         _clipboardManager = new ClipboardManager(_localIdentity, _clipboardAdapter);
         _inputInjector = new Win32InputInjector();
@@ -244,18 +252,24 @@ public sealed partial class MainWindow : Window
         _notificationManager = new NotificationManager(_notificationPresenter, _trustStore);
         _sessionManager = new SessionManager(_localIdentity, _trustStore);
         _registry = new DeviceRegistry();
-        _discoveryService = new DiscoveryService(_localIdentity, _registry);
+        _discoveryService = new DiscoveryService(
+            _localIdentity,
+            _registry,
+            sessionPortProvider: () => _sessionManager.ListeningPort);
         _trayManager = new Win32TrayManager();
         _workspaceRemoteClient = new WorkspaceRemoteClient();
+        _previewCache = new PreviewCache();
 
         SetHeroDevice(null);
         LocalDeviceInfo.Text = $"本机：{_localIdentity.Name}\nID：{ShortId(_localIdentity.DeviceId)}";
 
         _registry.DevicesChanged += OnDevicesChanged;
+        _discoveryService.ConnectionRequested += OnReverseConnectionRequested;
         _sessionManager.ClientConnected += OnClientConnected;
         _sessionManager.MessageReceived += OnMessageReceived;
         _transferManager.TransferProgressChanged += OnTransferProgress;
         _transferManager.FileReceived += OnFileReceived;
+        _transferManager.TransferFailed += OnTransferFailed;
         _clipboardManager.ClipboardReceived += OnClipboardReceived;
         _clipboardManager.UrlHandoffReceived += OnUrlHandoffReceived;
         _notificationManager.NotificationReceived += OnNotificationReceived;
@@ -263,7 +277,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            _trayManager.Initialize("Hinge 办公套件", "Hinge — 局域网智能协同平台已就绪");
+            _trayManager.Initialize("Hinge Work", "Hinge — 局域网智能协同平台已就绪");
             _trayManager.OpenRequested += (_, _) => DispatcherQueue.TryEnqueue(() =>
             {
                 _appWindow?.Show();
@@ -374,6 +388,24 @@ public sealed partial class MainWindow : Window
 
     private void RouteExternalDragOver(DragEventArgs e)
     {
+        if (!_nativeInternalRemoteDragActive && IsNavigationPanePoint(e.GetPosition(PageRoot).X))
+        {
+            HideNativeDragFeedback();
+            e.AcceptedOperation = DataPackageOperation.None;
+            e.Handled = true;
+            return;
+        }
+
+        // While a Hinge file is being dragged out, the only valid in-app drop
+        // target is the visible cancel zone. Do not let page-level handlers
+        // reinterpret that drag as a new computer-to-phone upload.
+        if (_nativeInternalRemoteDragActive)
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            e.Handled = true;
+            return;
+        }
+
         switch (ContentFrame.Content)
         {
             case FileManagementPage files:
@@ -413,6 +445,21 @@ public sealed partial class MainWindow : Window
 
     private void RouteExternalDrop(DragEventArgs e)
     {
+        if (!_nativeInternalRemoteDragActive && IsNavigationPanePoint(e.GetPosition(PageRoot).X))
+        {
+            HideNativeDragFeedback();
+            e.AcceptedOperation = DataPackageOperation.None;
+            e.Handled = true;
+            return;
+        }
+
+        if (_nativeInternalRemoteDragActive)
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            e.Handled = true;
+            return;
+        }
+
         switch (ContentFrame.Content)
         {
             case FileManagementPage files:
@@ -463,7 +510,10 @@ public sealed partial class MainWindow : Window
 
     private void DragCancelZone_DragOver(object sender, DragEventArgs e)
     {
-        if (!HingeDragMetadata.IsInternalRemoteFileDrag(e.DataView))
+        // The zone is made visible only by DragStarting for a Hinge remote
+        // file. Use that local state as the authority instead of relying on a
+        // custom DataPackage property surviving the WinUI/OLE hand-off.
+        if (!_nativeInternalRemoteDragActive)
         {
             e.AcceptedOperation = DataPackageOperation.None;
             return;
@@ -483,13 +533,14 @@ public sealed partial class MainWindow : Window
 
     private void DragCancelZone_Drop(object sender, DragEventArgs e)
     {
-        if (!HingeDragMetadata.IsInternalRemoteFileDrag(e.DataView))
+        if (!_nativeInternalRemoteDragActive)
         {
             e.AcceptedOperation = DataPackageOperation.None;
             return;
         }
 
         HideInternalRemoteDragCancelZone();
+        _computerDropCancellation?.Cancel();
         e.AcceptedOperation = DataPackageOperation.Copy;
         e.Handled = true;
         StatusText.Text = "已取消发送";
@@ -564,7 +615,7 @@ public sealed partial class MainWindow : Window
     {
         if (_filePage == null) return;
         var hasSelection = _filePage.GetSelectedEntries().Count > 0;
-        _filePage.SaveSelectedFiles.IsEnabled = hasSelection;
+        _filePage.SaveSelectedFiles.IsEnabled = !_fileSaveInProgress && hasSelection;
         _filePage.DeleteSelectedFiles.IsEnabled = hasSelection;
     }
 
@@ -580,10 +631,21 @@ public sealed partial class MainWindow : Window
 
     private async void SaveSelectedFilesButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_filePage == null) return;
+        if (_filePage == null || _fileSaveInProgress) return;
         var entries = _filePage.GetSelectedEntries();
         if (entries.Count == 0) return;
-        await SaveSelectedFilesAsync(entries);
+
+        _fileSaveInProgress = true;
+        _filePage.SaveSelectedFiles.IsEnabled = false;
+        try
+        {
+            await SaveSelectedFilesAsync(entries);
+        }
+        finally
+        {
+            _fileSaveInProgress = false;
+            FileSelectionStateChanged(this, EventArgs.Empty);
+        }
     }
 
     private async void DeleteSelectedFilesButton_Click(object sender, RoutedEventArgs e)
@@ -631,6 +693,7 @@ public sealed partial class MainWindow : Window
         if (!_configuredPages.Add(page)) return;
         page.Personalization.Click += BtnPersonalization_Click;
         page.Storage.Click += BtnStorage_Click;
+        page.StoragePath.Text = _receiveDirectory;
         page.About.Click += BtnAbout_Click;
         page.MinimizeToTray.IsOn = _minimizeToTray;
         page.MinimizeToTray.Toggled += MinimizeToTray_Toggled;
@@ -678,12 +741,121 @@ public sealed partial class MainWindow : Window
         {
             page.FilesDropped += ComputerFilesDropped;
             page.InternalRemoteDragStarted += (_, _) => ShowInternalRemoteDragCancelZone();
+            page.PhotoSelectionStateChanged += PhotoSelectionStateChanged;
+            page.SelectPhotos.Click += SelectPhotosButton_Click;
+            page.SaveSelectedPhotos.Click += SaveSelectedPhotosButton_Click;
+            page.CancelPhotoSelection.Click += CancelPhotoSelectionButton_Click;
         }
 
         page.Configure(
             _workspaceRemoteClient,
             GetConnectedConnection,
             OpenRemotePhotoWithDefaultAppAsync);
+    }
+
+    private void PhotoSelectionStateChanged(object? sender, EventArgs e)
+    {
+        if (_photosPage == null) return;
+        _photosPage.SaveSelectedPhotos.IsEnabled =
+            !_photoSaveInProgress && _photosPage.GetSelectedPhotos().Count > 0;
+    }
+
+    private void SelectPhotosButton_Click(object sender, RoutedEventArgs e)
+    {
+        _photosPage?.EnterPhotoSelectionMode();
+    }
+
+    private void CancelPhotoSelectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        _photosPage?.ExitPhotoSelectionMode();
+    }
+
+    private async void SaveSelectedPhotosButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_photosPage == null || _photoSaveInProgress) return;
+
+        var photos = _photosPage.GetSelectedPhotos();
+        if (photos.Count == 0) return;
+
+        _photoSaveInProgress = true;
+        _photosPage.SaveSelectedPhotos.IsEnabled = false;
+        try
+        {
+            await SaveSelectedPhotosAsync(_photosPage, photos);
+        }
+        finally
+        {
+            _photoSaveInProgress = false;
+            PhotoSelectionStateChanged(this, EventArgs.Empty);
+        }
+    }
+
+    private async Task SaveSelectedPhotosAsync(
+        PhotosPage page,
+        IReadOnlyList<RemotePhotoItem> photos)
+    {
+        if (GetConnectedConnection() == null)
+        {
+            await ShowDialogAsync("无法保存", "设备会话已断开，请重新连接手机。", false);
+            return;
+        }
+
+        var completed = 0;
+        var failures = new List<string>();
+        for (var index = 0; index < photos.Count; index++)
+        {
+            var photo = photos[index];
+            try
+            {
+                StatusText.Text = $"正在保存图片 {index + 1}/{photos.Count}…";
+                var entry = ToRemotePhotoFileEntry(photo);
+                await ReceiveRemoteFileAsync(entry, StatusText.Text);
+                completed++;
+            }
+            catch (Exception exception)
+            {
+                failures.Add($"{photo.Name}：{exception.Message}");
+            }
+        }
+
+        page.ExitPhotoSelectionMode();
+        var destination = _receiveDirectory;
+        StatusText.Text = failures.Count == 0
+            ? $"已保存 {completed} 张图片到 {destination}"
+            : $"已保存 {completed} 张图片，{failures.Count} 张失败";
+
+        if (failures.Count > 0)
+        {
+            await ShowDialogAsync(
+                "部分图片保存失败",
+                string.Join("\n", failures.Take(6)),
+                false);
+        }
+    }
+
+    private static RemoteFileEntry ToRemotePhotoFileEntry(RemotePhotoItem photo)
+    {
+        var extension = Path.GetExtension(photo.Name).ToLowerInvariant();
+        var mimeType = extension switch
+        {
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".heic" or ".heif" => "image/heic",
+            ".bmp" => "image/bmp",
+            ".tif" or ".tiff" => "image/tiff",
+            _ => "image/jpeg"
+        };
+        return new RemoteFileEntry
+        {
+            Id = photo.Id,
+            Name = string.IsNullOrWhiteSpace(photo.Name) ? "手机图片.jpg" : photo.Name,
+            Uri = photo.Uri,
+            SizeBytes = photo.SizeBytes,
+            ModifiedAt = photo.TakenAt,
+            MimeType = mimeType,
+            Category = "images"
+        };
     }
 
     private async Task OpenRemotePhotoWithDefaultAppAsync(RemotePhotoItem photo)
@@ -700,7 +872,7 @@ public sealed partial class MainWindow : Window
                 ? "image/jpeg"
                 : $"image/{extension}"
         };
-        var receivedPath = await ReceiveRemoteFileAsync(entry, "正在接收图片…");
+        var receivedPath = await ReceiveRemotePreviewFileAsync(entry, "正在读取图片预览…");
         await LaunchMediaFileAsync(entry, receivedPath, "图片");
     }
 
@@ -961,6 +1133,12 @@ public sealed partial class MainWindow : Window
     {
         if ((GetAsyncKeyState(VkLButton) & 0x8000) == 0) return;
 
+        if (!_nativeInternalRemoteDragActive && IsNavigationPanePoint(point))
+        {
+            HideNativeDragFeedback();
+            return;
+        }
+
         if (ContentFrame.Content is PhotosPage photos)
         {
             var scale = photos.XamlRoot?.RasterizationScale ?? 1;
@@ -1024,6 +1202,16 @@ public sealed partial class MainWindow : Window
     {
         if (paths.Count == 0) return;
 
+        // The navigation pane is deliberately not a file drop target. This
+        // guard covers the WM_DROPFILES fallback used when Explorer cannot
+        // participate in the WinUI drag event, so sidebar drops never start a
+        // transfer or report a misleading success message.
+        if (!_nativeInternalRemoteDragActive && IsNavigationPanePoint(point))
+        {
+            HideNativeDragFeedback();
+            return;
+        }
+
         var destination = "Download";
         if (ContentFrame.Content is PhotosPage photos)
         {
@@ -1054,6 +1242,21 @@ public sealed partial class MainWindow : Window
         ComputerFilesDropped(
             this,
             new ComputerFilesDroppedEventArgs(paths, destination));
+    }
+
+    private bool IsNavigationPanePoint(NativePoint point)
+    {
+        var scale = PageRoot.XamlRoot?.RasterizationScale ?? 1;
+        return IsNavigationPanePoint(point.X / scale);
+    }
+
+    private bool IsNavigationPanePoint(double xDip)
+    {
+        if (xDip < 0) return false;
+        var paneWidth = AppNavigation.IsPaneOpen
+            ? AppNavigation.OpenPaneLength
+            : AppNavigation.CompactPaneLength;
+        return xDip < paneWidth;
     }
 
     private void UninitializeNativeFileDrop()
@@ -1115,13 +1318,92 @@ public sealed partial class MainWindow : Window
         _trayManager.ShowNotification("Hinge", "应用仍在后台运行，可从系统托盘恢复或退出。");
     }
 
+    private static string DefaultReceiveDirectory() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "Downloads",
+        "Hinge");
+
+    private static string LoadReceiveDirectory()
+    {
+        if (TryNormalizeReceiveDirectory(
+                ReadUserSetting(ReceiveDirectorySettingName) as string,
+                out var registryDirectory))
+        {
+            return registryDirectory;
+        }
+
+        try
+        {
+            if (ApplicationData.Current.LocalSettings.Values[ReceiveDirectorySettingName] is string localDirectory &&
+                TryNormalizeReceiveDirectory(localDirectory, out var normalizedDirectory))
+            {
+                SaveReceiveDirectory(normalizedDirectory);
+                return normalizedDirectory;
+            }
+        }
+        catch
+        {
+            // Fall back to the stable default when LocalSettings is unavailable.
+        }
+
+        return DefaultReceiveDirectory();
+    }
+
+    private static bool TryNormalizeReceiveDirectory(string? value, out string directory)
+    {
+        directory = string.Empty;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        try
+        {
+            var fullPath = Path.GetFullPath(value.Trim());
+            if (!Path.IsPathRooted(fullPath)) return false;
+
+            var root = Path.GetPathRoot(fullPath);
+            directory = string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase)
+                ? root ?? fullPath
+                : fullPath.TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void SaveReceiveDirectory(string directory)
+    {
+        try
+        {
+            ApplicationData.Current.LocalSettings.Values[ReceiveDirectorySettingName] = directory;
+        }
+        catch
+        {
+            // The registry copy below is the durable fallback for unpackaged
+            // EXE updates and for environments without ApplicationData.
+        }
+        WriteUserSetting(ReceiveDirectorySettingName, directory);
+    }
+
     private static string LoadWindowTheme()
     {
         try
         {
+            if (ReadUserSetting("WindowTheme") is string registryTheme &&
+                registryTheme is "system" or "light" or "dark")
+            {
+                return registryTheme;
+            }
             if (ApplicationData.Current.LocalSettings.Values["WindowTheme"] is string theme &&
                 theme is "system" or "light" or "dark")
             {
+                WriteUserSetting("WindowTheme", theme);
                 return theme;
             }
         }
@@ -1133,6 +1415,7 @@ public sealed partial class MainWindow : Window
     {
         try { ApplicationData.Current.LocalSettings.Values["WindowTheme"] = theme; }
         catch { }
+        WriteUserSetting("WindowTheme", theme);
     }
 
     private void ApplyWindowTheme(string theme)
@@ -1165,9 +1448,15 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            if (ReadUserSetting("WindowMaterial") is string registryMaterial &&
+                registryMaterial is "mica" or "micaAlt" or "acrylic" or "acrylicThin")
+            {
+                return registryMaterial;
+            }
             if (ApplicationData.Current.LocalSettings.Values["WindowMaterial"] is string material &&
                 material is "mica" or "micaAlt" or "acrylic" or "acrylicThin")
             {
+                WriteUserSetting("WindowMaterial", material);
                 return material;
             }
         }
@@ -1179,6 +1468,7 @@ public sealed partial class MainWindow : Window
     {
         try { ApplicationData.Current.LocalSettings.Values["WindowMaterial"] = material; }
         catch { }
+        WriteUserSetting("WindowMaterial", material);
     }
 
     private static string WindowMaterialName(string material) => material switch
@@ -1211,7 +1501,18 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            return ApplicationData.Current.LocalSettings.Values["WindowBackgroundPath"] as string;
+            if (ReadUserSetting("WindowBackgroundPath") is string registryPath &&
+                !string.IsNullOrWhiteSpace(registryPath))
+            {
+                return registryPath;
+            }
+            if (ApplicationData.Current.LocalSettings.Values["WindowBackgroundPath"] is string localPath &&
+                !string.IsNullOrWhiteSpace(localPath))
+            {
+                WriteUserSetting("WindowBackgroundPath", localPath);
+                return localPath;
+            }
+            return null;
         }
         catch
         {
@@ -1233,6 +1534,7 @@ public sealed partial class MainWindow : Window
             }
         }
         catch { }
+        WriteUserSetting("WindowBackgroundPath", path);
     }
 
     private void ApplyBackgroundImage(string? path)
@@ -1260,11 +1562,20 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            return ApplicationData.Current.LocalSettings.Values["MinimizeToTray"] is bool value && value;
+            if (ReadUserSetting("MinimizeToTray") is int registryValue)
+            {
+                return registryValue != 0;
+            }
+            if (ApplicationData.Current.LocalSettings.Values["MinimizeToTray"] is bool value)
+            {
+                WriteUserSetting("MinimizeToTray", value ? 1 : 0);
+                return value;
+            }
+            return false;
         }
         catch
         {
-            return false;
+            return ReadUserSetting("MinimizeToTray") is int registryValue && registryValue != 0;
         }
     }
 
@@ -1272,6 +1583,7 @@ public sealed partial class MainWindow : Window
     {
         try { ApplicationData.Current.LocalSettings.Values["MinimizeToTray"] = value; }
         catch { }
+        WriteUserSetting("MinimizeToTray", value ? 1 : 0);
     }
 
     public static bool ShouldStartSilently(string? arguments)
@@ -1326,11 +1638,20 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            return ApplicationData.Current.LocalSettings.Values["SilentStartup"] is bool value && value;
+            if (ReadUserSetting("SilentStartup") is int registryValue)
+            {
+                return registryValue != 0;
+            }
+            if (ApplicationData.Current.LocalSettings.Values["SilentStartup"] is bool value)
+            {
+                WriteUserSetting("SilentStartup", value ? 1 : 0);
+                return value;
+            }
+            return false;
         }
         catch
         {
-            return false;
+            return ReadUserSetting("SilentStartup") is int registryValue && registryValue != 0;
         }
     }
 
@@ -1338,6 +1659,42 @@ public sealed partial class MainWindow : Window
     {
         try { ApplicationData.Current.LocalSettings.Values["SilentStartup"] = value; }
         catch { }
+        WriteUserSetting("SilentStartup", value ? 1 : 0);
+    }
+
+    private static object? ReadUserSetting(string valueName)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(UserSettingsRegistryPath, writable: false);
+            return key?.GetValue(valueName);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void WriteUserSetting(string valueName, object? value)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(UserSettingsRegistryPath, writable: true);
+            if (key == null) return;
+            if (value == null)
+            {
+                key.DeleteValue(valueName, throwOnMissingValue: false);
+            }
+            else
+            {
+                key.SetValue(valueName, value);
+            }
+        }
+        catch
+        {
+            // Registry mirroring is a compatibility layer; LocalSettings is
+            // still the primary store when the registry is unavailable.
+        }
     }
 
     private void OnDevicesChanged(object? sender, IReadOnlyList<Device> devices)
@@ -1346,6 +1703,35 @@ public sealed partial class MainWindow : Window
         {
             RefreshDeviceList(devices);
             _ = TryAutoConnectHistoricalDeviceAsync(devices);
+        });
+    }
+
+    private void OnReverseConnectionRequested(
+        object? sender,
+        DiscoveryConnectionRequestEventArgs args)
+    {
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            if (_sessionManager.ConnectionForDevice(args.Message.DeviceId) != null)
+            {
+                return;
+            }
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
+            while (_connectingDeviceId != null && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(120);
+                if (_sessionManager.ConnectionForDevice(args.Message.DeviceId) != null)
+                {
+                    return;
+                }
+            }
+            if (_connectingDeviceId != null) return;
+
+            if (_registry.TryGetDevice(args.Message.DeviceId, out var device) && device != null)
+            {
+                await ConnectDeviceAsync(device, automatic: true);
+            }
         });
     }
 
@@ -1388,10 +1774,21 @@ public sealed partial class MainWindow : Window
 
     private async void OnMessageReceived(object? sender, SessionMessageEventArgs args)
     {
-        await _transferManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
-        await _clipboardManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
-        _remoteInputManager.HandleIncomingFrame(args.Connection, args.Frame);
-        await _notificationManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
+        try
+        {
+            await _transferManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
+            await _clipboardManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
+            _remoteInputManager.HandleIncomingFrame(args.Connection, args.Frame);
+            await _notificationManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
+        }
+        catch (Exception exception)
+        {
+            // Network frames are raised from the socket read loop. Never allow a
+            // malformed or failed frame to escape this async-void event handler
+            // and terminate the WinUI process.
+            DispatcherQueue.TryEnqueue(() =>
+                StatusText.Text = $"网络数据处理失败：{exception.Message}");
+        }
     }
 
     private void OnTransferProgress(object? sender, TransferProgress progress)
@@ -1404,12 +1801,28 @@ public sealed partial class MainWindow : Window
         if (_pendingRemoteMedia != null &&
             string.Equals(
                 Path.GetFileName(path),
-                _pendingRemoteMediaName,
+                Path.GetFileName(_pendingRemoteMediaName),
                 StringComparison.OrdinalIgnoreCase))
         {
             _pendingRemoteMedia.TrySetResult(path);
         }
         DispatcherQueue.TryEnqueue(() => StatusText.Text = $"已接收文件：{Path.GetFileName(path)}");
+    }
+
+    private void OnTransferFailed(object? sender, TransferFailure failure)
+    {
+        if (_pendingRemoteMedia != null &&
+            string.Equals(
+                Path.GetFileName(failure.FileName),
+                Path.GetFileName(_pendingRemoteMediaName),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            _pendingRemoteMedia.TrySetException(
+                new IOException($"接收 {failure.FileName} 失败：{failure.Error}"));
+        }
+
+        DispatcherQueue.TryEnqueue(() =>
+            StatusText.Text = $"文件接收失败：{failure.FileName} · {failure.Error}");
     }
 
     private void OnClipboardReceived(object? sender, ClipboardEventMessage message)
@@ -1573,19 +1986,38 @@ public sealed partial class MainWindow : Window
                 : $"正在连接：{device.Name}";
             HeaderStatusText.Text = automatic ? "自动连接中..." : "连接中...";
             Exception? lastError = null;
-            foreach (var address in OrderAddresses(device.NetworkAddresses))
+            var addresses = OrderAddresses(device.NetworkAddresses).ToArray();
+
+            // Request the reverse path immediately instead of waiting for a
+            // blocked inbound TCP attempt to time out. SessionManager removes
+            // duplicate sockets deterministically after identity exchange.
+            foreach (var address in addresses)
             {
-                try
-                {
-                    connection = await _sessionManager.ConnectToPeerAsync(address);
-                    break;
-                }
-                catch (Exception exception)
-                {
-                    lastError = exception;
-                }
+                try { await _discoveryService.RequestReverseConnectionAsync(address); }
+                catch { }
             }
 
+            foreach (var address in addresses)
+            {
+                foreach (var port in new[] { device.SessionPort, Constants.SessionTcpPort }.Distinct())
+                {
+                    try
+                    {
+                        connection = await _sessionManager.ConnectToPeerAsync(address, port);
+                        break;
+                    }
+                    catch (Exception exception)
+                    {
+                        lastError = exception;
+                    }
+                }
+                if (connection != null) break;
+            }
+
+            if (connection == null)
+            {
+                connection = await WaitForReverseConnectionAsync(device.DeviceId);
+            }
             if (connection == null)
             {
                 throw lastError ?? new SocketException((int)SocketError.HostUnreachable);
@@ -1598,6 +2030,8 @@ public sealed partial class MainWindow : Window
                 connection.Dispose();
                 throw new InvalidOperationException("目标设备身份不匹配，已拒绝连接。");
             }
+            await Task.Delay(20);
+            connection = _sessionManager.ConnectionForDevice(device.DeviceId) ?? connection;
 
             // Only register and persist the peer after the hello identity has
             // matched the device discovered on the network. This prevents an
@@ -1630,6 +2064,20 @@ public sealed partial class MainWindow : Window
                 _connectingDeviceId = null;
             }
         }
+    }
+
+    private async Task<SessionConnection?> WaitForReverseConnectionAsync(
+        string deviceId,
+        TimeSpan? timeout = null)
+    {
+        DateTime deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        while (DateTime.UtcNow < deadline)
+        {
+            var connection = _sessionManager.ConnectionForDevice(deviceId);
+            if (connection != null) return connection;
+            await Task.Delay(100);
+        }
+        return _sessionManager.ConnectionForDevice(deviceId);
     }
 
     private static async Task<SessionPeerInfo> WaitForPeerInfoAsync(
@@ -1843,10 +2291,8 @@ public sealed partial class MainWindow : Window
 
     private void NavigateTo(string title, double unusedOffset)
     {
-        // Keep the page name in the native WinUI title bar. The content area
-        // stays focused on the actual task instead of reserving a second,
-        // independently aligned page-heading row.
-        AppTitleBar.Title = title;
+        // Keep only the product name in the native title bar. Page names belong
+        // to the navigation/content area and must not replace the app title.
         switch (title)
         {
             case "首页":
@@ -1884,7 +2330,6 @@ public sealed partial class MainWindow : Window
     private void NavigateToFeature(string title, string description, string status, string glyph, string? primary = null, string? secondary = null)
     {
         ContentFrame.Navigate(typeof(FeaturePage), new FeaturePageOptions(title, description, status, glyph, primary, secondary));
-        AppTitleBar.Title = title;
         PageTitle.Text = title;
     }
 
@@ -2821,7 +3266,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var receivedPath = await ReceiveRemoteFileAsync(entry, "正在接收图片…");
+            var receivedPath = await ReceiveRemotePreviewFileAsync(entry, "正在读取图片预览…");
             await LaunchMediaFileAsync(entry, receivedPath, "图片");
         }
         catch (Exception exception)
@@ -2832,46 +3277,86 @@ public sealed partial class MainWindow : Window
 
     private async Task<string> ReceiveRemoteFileAsync(
         RemoteFileEntry entry,
-        string progressText)
+        string progressText,
+        string? destinationDirectory = null)
     {
-        var connection = GetConnectedConnection();
-        if (connection == null)
-        {
-            throw new InvalidOperationException("设备会话已断开，请重新连接手机。");
-        }
-        if (string.IsNullOrWhiteSpace(entry.Uri))
-        {
-            throw new InvalidOperationException("手机没有返回这个文件的有效地址。");
-        }
-        if (_pendingRemoteMedia != null)
-        {
-            throw new InvalidOperationException("另一个文件正在接收，请稍后再试。");
-        }
-
-        if (_filePage != null)
-        {
-            _filePage.StatusText.Text = progressText;
-        }
-        var completion = new TaskCompletionSource<string>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingRemoteMedia = completion;
-        _pendingRemoteMediaName = entry.Name;
+        await _remoteMediaReceiveGate.WaitAsync();
         try
         {
-            await _workspaceRemoteClient.SendMediaToComputerAsync(
-                connection,
-                entry.Uri,
+            var connection = GetConnectedConnection();
+            if (connection == null)
+            {
+                throw new InvalidOperationException("设备会话已断开，请重新连接手机。");
+            }
+            if (string.IsNullOrWhiteSpace(entry.Uri))
+            {
+                throw new InvalidOperationException("手机没有返回这个文件的有效地址。");
+            }
+            if (_pendingRemoteMedia != null)
+            {
+                throw new InvalidOperationException("另一个文件正在接收，请稍后再试。");
+            }
+
+            if (_filePage != null)
+            {
+                _filePage.StatusText.Text = progressText;
+            }
+            var completion = new TaskCompletionSource<string>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _pendingRemoteMedia = completion;
+            _pendingRemoteMediaName = entry.Name;
+            var targetDirectory = destinationDirectory ?? _receiveDirectory;
+            using var incomingDirectory = _transferManager.RegisterIncomingDirectory(
                 entry.Name,
-                entry.MimeType);
-            return await completion.Task.WaitAsync(TimeSpan.FromMinutes(2));
+                targetDirectory);
+            try
+            {
+                await _workspaceRemoteClient.SendMediaToComputerAsync(
+                    connection,
+                    entry.Uri,
+                    entry.Name,
+                    entry.MimeType);
+                return await completion.Task.WaitAsync(TimeSpan.FromMinutes(2));
+            }
+            finally
+            {
+                if (ReferenceEquals(_pendingRemoteMedia, completion))
+                {
+                    _pendingRemoteMedia = null;
+                    _pendingRemoteMediaName = null;
+                }
+            }
         }
         finally
         {
-            if (ReferenceEquals(_pendingRemoteMedia, completion))
-            {
-                _pendingRemoteMedia = null;
-                _pendingRemoteMediaName = null;
-            }
+            _remoteMediaReceiveGate.Release();
+        }
+    }
+
+    private async Task<string> ReceiveRemotePreviewFileAsync(
+        RemoteFileEntry entry,
+        string progressText)
+    {
+        var location = _previewCache.GetLocation(entry);
+        if (_previewCache.IsUsable(location, entry.SizeBytes))
+        {
+            return location.FilePath;
+        }
+
+        _previewCache.Prepare(location);
+        try
+        {
+            var receivedPath = await ReceiveRemoteFileAsync(
+                entry,
+                progressText,
+                location.Directory);
+            _previewCache.Prune(location.Directory);
+            return receivedPath;
+        }
+        catch
+        {
+            _previewCache.Remove(location);
+            throw;
         }
     }
 
@@ -2892,7 +3377,8 @@ public sealed partial class MainWindow : Window
             {
                 await ReceiveRemoteFileAsync(
                     entry,
-                    $"正在保存 {completed + 1}/{entries.Count} 个文件…");
+                    $"正在保存 {completed + 1}/{entries.Count} 个文件…",
+                    _receiveDirectory);
                 completed++;
             }
             catch (Exception exception)
@@ -2902,10 +3388,7 @@ public sealed partial class MainWindow : Window
         }
 
         _filePage?.ExitSelectionMode();
-        var destination = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads",
-            "Hinge");
+        var destination = _receiveDirectory;
         FileManagementStatusText.Text = failures.Count == 0
             ? $"已保存 {completed} 个文件到 {destination}"
             : $"已保存 {completed} 个文件，{failures.Count} 个失败";
@@ -2922,7 +3405,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var receivedPath = await ReceiveRemoteFileAsync(entry, "正在接收视频…");
+            var receivedPath = await ReceiveRemotePreviewFileAsync(entry, "正在读取视频预览…");
             await ShowVideoFilePreviewAsync(entry, receivedPath);
         }
         catch (Exception exception)
@@ -2940,7 +3423,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var receivedPath = await ReceiveRemoteFileAsync(entry, "正在接收音频…");
+            var receivedPath = await ReceiveRemotePreviewFileAsync(entry, "正在读取音频预览…");
             await ShowAudioFilePreviewAsync(entry, receivedPath);
         }
         catch (Exception exception)
@@ -3180,6 +3663,14 @@ public sealed partial class MainWindow : Window
         string sort = SelectedTag(_filePage?.SortOptions, "timeDesc");
 
         IEnumerable<RemoteFileEntry> filtered = entries;
+        if (category.Equals("recent", StringComparison.OrdinalIgnoreCase))
+        {
+            // A MediaStore provider can accidentally return a directory as a
+            // zero-byte record. Recent files must never surface directories;
+            // directory navigation remains available in phone storage.
+            filtered = filtered.Where(entry => !entry.IsDirectory &&
+                !IsRecentCacheNoise(entry));
+        }
         if (category.Equals("documents", StringComparison.OrdinalIgnoreCase))
         {
             filtered = filtered.Where(entry =>
@@ -3207,6 +3698,92 @@ public sealed partial class MainWindow : Window
                 .ThenByDescending(entry => entry.ModifiedAt),
         };
         return filtered.ToList();
+    }
+
+    private static bool IsRecentCacheNoise(RemoteFileEntry entry)
+    {
+        if (entry.IsDirectory) return false;
+
+        var name = entry.Name.Trim();
+        var path = $"{entry.RelativePath}/{name}"
+            .Replace('\\', '/')
+            .Trim('/')
+            .ToLowerInvariant();
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var fileName = Path.GetFileName(name).ToLowerInvariant();
+
+        // Classify by source path/name, never by size. Small logs and other
+        // meaningful user files in normal folders remain visible.
+        if (segments.Any(segment => segment is "cache" or ".cache" or "code_cache" or
+                "app_webview" or ".thumbnails" or "thumbnails" or "tmp" or "temp" or
+                "logs" or "log" or "databases" or "shared_prefs" or "no_backup" ||
+                segment.StartsWith("cache_") || segment.StartsWith("thumb")))
+        {
+            return true;
+        }
+
+        if (path.Contains("/android/data/") || path.Contains("/android/obb/"))
+        {
+            return true;
+        }
+
+        if (fileName.StartsWith(".")) return true;
+
+        if (fileName is "cache" or ".nomedia" || fileName.StartsWith(".thumbdata"))
+        {
+            return true;
+        }
+
+        // MediaProvider and chat applications often persist web thumbnails
+        // with the URL percent-encoded into the filename. They are useful
+        // inside their owning app, but are not meaningful entries in a
+        // user-facing "recent files" view. The rule is name/path based so a
+        // legitimate small document is not removed merely because of size.
+        if (fileName.Contains("%3a%2f%2f") ||
+            fileName.Contains("%3a%252f%252f") ||
+            fileName.Contains("%2f%2f"))
+        {
+            return true;
+        }
+
+        if (fileName.StartsWith("cache_") || fileName.StartsWith("thumb_") ||
+            fileName.StartsWith("thumbnail_") || fileName.StartsWith("temp_") ||
+            fileName.StartsWith("tmp_"))
+        {
+            return true;
+        }
+
+        // The recent view is for user-facing content, not diagnostic or
+        // database sidecar files. Keep these hidden here only; they remain
+        // available in their original folder views.
+        if (fileName.EndsWith(".log") || fileName.EndsWith(".trace") ||
+            fileName.EndsWith(".db-shm") || fileName.EndsWith(".db-wal") ||
+            fileName.EndsWith(".lock") || fileName.EndsWith(".lck"))
+        {
+            return true;
+        }
+
+        var appPrivatePath = path.Contains("/android/data/") ||
+            path.Contains("/android/obb/") || path.Contains("/android/media/");
+        if (appPrivatePath && (fileName.EndsWith(".log") ||
+            fileName.EndsWith(".json") || fileName.StartsWith("log_")))
+        {
+            return true;
+        }
+
+        // A few OEM providers expose zero-byte bookkeeping placeholders with
+        // generic names. Keep arbitrary small user files, but hide only the
+        // well-known placeholder names in the recent view.
+        if (entry.SizeBytes == 0 && fileName is "file" or "文件" or "thumb" or "thumbnail")
+        {
+            return true;
+        }
+
+        return fileName.EndsWith(".tmp") ||
+            fileName.EndsWith(".temp") ||
+            fileName.EndsWith(".part") ||
+            fileName.EndsWith(".crdownload") ||
+            fileName.EndsWith(".download");
     }
 
     private static string SelectedTag(ComboBox? comboBox, string fallback = "all") =>
@@ -3406,46 +3983,50 @@ public sealed partial class MainWindow : Window
 
     private async void BtnStorage_Click(object sender, RoutedEventArgs e)
     {
-        var folder = new TextBox
+        var picker = new FolderPicker
         {
-            Text = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Downloads",
-                "Hinge"),
-            PlaceholderText = "例如 D:\\Hinge\\接收文件"
+            SuggestedStartLocation = PickerLocationId.Downloads
         };
+        picker.FileTypeFilter.Add("*");
+        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
 
-        var dialog = new ContentDialog
+        StorageFolder? folder;
+        try
         {
-            Title = "存储位置",
-            Content = new StackPanel
-            {
-                Spacing = 8,
-                Children =
-                {
-                    new TextBlock { Text = "Windows 端接收文件时会再次询问保存位置；这里是默认建议目录。" },
-                    folder,
-                    new TextBlock
-                    {
-                        Text = "路径只用于显示和后续默认值，当前版本仍会在接收前确认目标文件夹。",
-                        TextWrapping = TextWrapping.Wrap,
-                        FontSize = 14,
-                        Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-                    }
-                }
-            },
-            PrimaryButtonText = "保存",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = ((FrameworkElement)Content).XamlRoot
-        };
-
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary &&
-            !string.IsNullOrWhiteSpace(folder.Text))
-        {
-            SettingsStatusText.Text = $"默认接收目录：{folder.Text.Trim()}";
-            StatusText.Text = "存储设置已保存";
+            folder = await picker.PickSingleFolderAsync();
         }
+        catch (Exception exception)
+        {
+            await ShowDialogAsync("无法选择目录", exception.Message, false);
+            return;
+        }
+
+        if (folder == null) return;
+
+        if (!TryNormalizeReceiveDirectory(folder.Path, out var directory))
+        {
+            await ShowDialogAsync("目录无效", "请选择一个有效的 Windows 文件夹。", false);
+            return;
+        }
+
+        try
+        {
+            _transferManager.SetDownloadDirectory(directory);
+        }
+        catch (Exception exception)
+        {
+            await ShowDialogAsync("无法使用该目录", exception.Message, false);
+            return;
+        }
+
+        _receiveDirectory = directory;
+        SaveReceiveDirectory(_receiveDirectory);
+        if (_settingsPage != null)
+        {
+            _settingsPage.StoragePath.Text = _receiveDirectory;
+        }
+        SettingsStatusText.Text = $"默认接收目录：{_receiveDirectory}";
+        StatusText.Text = "存储设置已保存";
     }
 
     private async void BtnAbout_Click(object sender, RoutedEventArgs e)
@@ -3542,6 +4123,37 @@ public sealed partial class MainWindow : Window
         object? sender,
         ComputerFilesDroppedEventArgs args)
     {
+        var cancellation = new CancellationTokenSource();
+        var previousCancellation = Interlocked.Exchange(ref _computerDropCancellation, cancellation);
+        previousCancellation?.Cancel();
+        previousCancellation?.Dispose();
+
+        try
+        {
+            await SendComputerFilesAsync(args, cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // The user deliberately dropped the item on the red cancel zone.
+            // Keep the cancellation status instead of reporting a successful
+            // send after the transfer task has stopped.
+            StatusText.Text = "已取消发送";
+            if (_filePage != null) _filePage.StatusText.Text = "已取消发送";
+        }
+        finally
+        {
+            if (ReferenceEquals(_computerDropCancellation, cancellation))
+            {
+                _computerDropCancellation = null;
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task SendComputerFilesAsync(
+        ComputerFilesDroppedEventArgs args,
+        CancellationToken cancellationToken)
+    {
         var connection = GetConnectedConnection();
         if (connection == null)
         {
@@ -3554,11 +4166,13 @@ public sealed partial class MainWindow : Window
         var failures = new List<string>();
         foreach (var path in args.FilePaths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 await _transferManager.SendFileAsync(
                     connection,
                     path,
+                    cancellationToken: cancellationToken,
                     destinationPath: destination);
                 completed++;
             }
@@ -3567,6 +4181,8 @@ public sealed partial class MainWindow : Window
                 failures.Add($"{Path.GetFileName(path)}：{exception.Message}");
             }
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         var destinationLabel = string.IsNullOrWhiteSpace(destination)
             ? "手机默认目录"

@@ -9,11 +9,22 @@ import 'device_identity_manager.dart';
 import 'device_registry.dart';
 import 'discovery_message.dart';
 
+class DiscoveryConnectionRequest {
+  final DiscoveryMessage message;
+  final String remoteAddress;
+
+  const DiscoveryConnectionRequest({
+    required this.message,
+    required this.remoteAddress,
+  });
+}
+
 class DiscoveryService {
   static const MethodChannel _platform = MethodChannel('hinge/platform');
   final DeviceIdentity _localIdentity;
   final DeviceRegistry _registry;
   final int _listenPort;
+  final int Function()? sessionPortProvider;
 
   RawDatagramSocket? _socket;
   Timer? _broadcastTimer;
@@ -23,16 +34,23 @@ class DiscoveryService {
   bool _isListening = false;
   String? _lastError;
   final Map<String, DateTime> _lastPeerReplies = {};
+  final Map<String, DateTime> _lastConnectionRequests = {};
+  final StreamController<DiscoveryConnectionRequest>
+  _connectionRequestController =
+      StreamController<DiscoveryConnectionRequest>.broadcast();
 
   bool get isRunning => _isRunning;
   bool get isListening => _isListening;
   String? get lastError => _lastError;
   DeviceRegistry get registry => _registry;
+  Stream<DiscoveryConnectionRequest> get connectionRequests =>
+      _connectionRequestController.stream;
 
   DiscoveryService({
     required this._localIdentity,
     required this._registry,
     this._listenPort = AppConstants.discoveryUdpPort,
+    this.sessionPortProvider,
   });
 
   Future<void> start() async {
@@ -106,6 +124,19 @@ class DiscoveryService {
         if (message.deviceId != _localIdentity.deviceId) {
           _registry.upsertDevice(message, datagram.address.address);
           final now = DateTime.now();
+          if (message.connectionRequested) {
+            final lastRequest = _lastConnectionRequests[message.deviceId];
+            if (lastRequest == null ||
+                now.difference(lastRequest) >= const Duration(seconds: 2)) {
+              _lastConnectionRequests[message.deviceId] = now;
+              _connectionRequestController.add(
+                DiscoveryConnectionRequest(
+                  message: message,
+                  remoteAddress: datagram.address.address,
+                ),
+              );
+            }
+          }
           final lastReply = _lastPeerReplies[message.deviceId];
           if (lastReply == null || now.difference(lastReply).inSeconds >= 5) {
             _lastPeerReplies[message.deviceId] = now;
@@ -255,7 +286,22 @@ class DiscoveryService {
     } catch (_) {}
   }
 
-  DiscoveryMessage _createDiscoveryMessage() {
+  /// Asks the peer to open the TCP session in the opposite direction.
+  /// UDP discovery is often reachable even when a renamed Windows executable
+  /// has not yet been granted an inbound TCP firewall exception.
+  void requestReverseConnection(
+    String ip, [
+    int port = AppConstants.discoveryUdpPort,
+  ]) {
+    if (_socket == null) return;
+    try {
+      final message = _createDiscoveryMessage(connectionRequested: true);
+      final data = utf8.encode(jsonEncode(message.toJson()));
+      _socket?.send(data, InternetAddress(ip), port);
+    } catch (_) {}
+  }
+
+  DiscoveryMessage _createDiscoveryMessage({bool connectionRequested = false}) {
     return DiscoveryMessage(
       version: AppConstants.appVersion,
       deviceId: _localIdentity.deviceId,
@@ -263,7 +309,7 @@ class DiscoveryService {
       manufacturer: _localIdentity.manufacturer,
       model: _localIdentity.model,
       platform: _platformName,
-      port: AppConstants.sessionTcpPort,
+      port: sessionPortProvider?.call() ?? AppConstants.sessionTcpPort,
       capabilities: const [
         'file_transfer',
         'clipboard',
@@ -272,6 +318,7 @@ class DiscoveryService {
       ],
       protocolVersion: AppConstants.protocolVersion,
       timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      connectionRequested: connectionRequested,
     );
   }
 
@@ -296,6 +343,7 @@ class DiscoveryService {
     _isRunning = false;
     _isListening = false;
     _lastPeerReplies.clear();
+    _lastConnectionRequests.clear();
     if (Platform.isAndroid) {
       _platform
           .invokeMethod<bool>('releaseDiscoveryMulticastLock')
@@ -305,6 +353,7 @@ class DiscoveryService {
 
   void dispose() {
     stop();
+    _connectionRequestController.close();
     _registry.dispose();
   }
 }

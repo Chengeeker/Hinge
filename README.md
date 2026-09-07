@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前发布：[v1.0.0](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.0)
+- 当前开发版：[v1.0.17-dev.1](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.1)（安装包运行版本为 `1.0.17`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -60,7 +60,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 
 ### Android
 
-从 [v1.0.0 Release](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.0) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
+从 [v1.0.17-dev.1 Release](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.1) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
 
 ### Windows
 
@@ -122,6 +122,7 @@ tests/                   跨模块测试资料
 
 ## 文档入口
 
+- [开发文档](docs/development.md)：从源码、协议、测试到发布的日常开发入口；
 - [开发状态](docs/development-status.md)：当前实现、验证结果和真实设备边界；
 - [系统架构](docs/architecture.md)：UI、Feature、Core、协议和平台层边界；
 - [兼容性基准](docs/compatibility.md)：Android 厂商、Windows 网络和权限风险；

@@ -8,6 +8,8 @@ namespace Hinge.Setup;
 internal static class Program
 {
     private const string PayloadMarker = "HINGE_PAYLOAD_V1";
+    private const string UninstallRegistryPath =
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hinge";
 
     [STAThread]
     private static void Main()
@@ -30,12 +32,16 @@ internal static class Program
 
         public InstallerForm()
         {
+            var existingPath = FindExistingInstallPath();
+
             Text = "Hinge 安装程序";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(640, 270);
+            // Keep enough horizontal room for the Chinese browse label even
+            // when the installer is rendered with non-default system scaling.
+            ClientSize = new Size(810, 270);
             Font = new Font("Segoe UI", 10F);
 
             var title = new Label
@@ -47,7 +53,7 @@ internal static class Program
             };
             var description = new Label
             {
-                Text = "选择安装位置。安装包不依赖 MSIX 证书，也不会强制安装到 C 盘。",
+                Text = "选择安装位置。选择磁盘根目录时会自动创建 Hinge 文件夹；更新会自动使用原安装目录。",
                 AutoSize = true,
                 Location = new Point(30, 68),
                 ForeColor = Color.DimGray
@@ -60,22 +66,30 @@ internal static class Program
             };
             _pathBox = new TextBox
             {
-                Text = _defaultPath,
+                Text = existingPath ?? _defaultPath,
                 Location = new Point(30, 142),
-                Width = 480,
+                Width = 580,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             _browseButton = new Button
             {
-                Text = "浏览…",
-                Location = new Point(520, 140),
-                Width = 88,
+                Text = "浏览",
+                Location = new Point(630, 140),
+                Width = 150,
+                Height = 34,
+                AutoSize = false,
+                Padding = new Padding(0),
+                TextAlign = ContentAlignment.MiddleCenter,
+                AutoEllipsis = false,
+                UseCompatibleTextRendering = true,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             _browseButton.Click += BrowseButton_Click;
             _statusLabel = new Label
             {
-                Text = "准备安装",
+                Text = existingPath == null
+                    ? "准备安装"
+                    : $"检测到现有安装，将更新：{existingPath}",
                 AutoSize = true,
                 Location = new Point(30, 190),
                 ForeColor = Color.DimGray
@@ -83,17 +97,20 @@ internal static class Program
             _progressBar = new ProgressBar
             {
                 Location = new Point(30, 216),
-                Width = 478,
+                Width = 580,
                 Height = 18,
                 Style = ProgressBarStyle.Marquee,
                 Visible = false
             };
             _installButton = new Button
             {
-                Text = "安装",
-                Location = new Point(520, 210),
-                Width = 88,
-                Height = 30,
+                Text = existingPath == null ? "安装" : "更新",
+                Location = new Point(630, 208),
+                Width = 150,
+                Height = 34,
+                AutoSize = false,
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseCompatibleTextRendering = true,
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right
             };
             _installButton.Click += InstallButton_Click;
@@ -121,8 +138,8 @@ internal static class Program
 
         private async void InstallButton_Click(object? sender, EventArgs e)
         {
-            var installPath = _pathBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(installPath))
+            var selectedPath = _pathBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(selectedPath))
             {
                 MessageBox.Show(this, "请选择安装目录。", "Hinge", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -130,21 +147,27 @@ internal static class Program
 
             try
             {
-                installPath = Path.GetFullPath(installPath);
-                if (installPath == Path.GetPathRoot(installPath))
+                var installPath = NormalizeInstallPath(selectedPath);
+                if (!string.Equals(selectedPath, installPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new InvalidOperationException("不能直接安装到磁盘根目录，请选择一个文件夹。 ");
+                    _pathBox.Text = installPath;
+                }
+
+                if (IsHingeRunning())
+                {
+                    var answer = MessageBox.Show(
+                        this,
+                        "检测到 Hinge 正在运行。继续安装会自动关闭正在运行的 Hinge，是否继续？",
+                        "Hinge",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning);
+                    if (answer != DialogResult.Yes) return;
                 }
 
                 SetBusy(true, "正在安装，请稍候…");
                 await Task.Run(() => Install(installPath));
                 SetBusy(false, "安装完成");
-                MessageBox.Show(
-                    this,
-                    $"Hinge 安装完成。\n\n安装位置：{installPath}",
-                    "Hinge",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                ShowCompletionDialog(installPath);
                 Close();
             }
             catch (Exception exception)
@@ -162,9 +185,162 @@ internal static class Program
             _browseButton.Enabled = !busy;
             _installButton.Enabled = !busy;
         }
+
+        private void ShowCompletionDialog(string installPath)
+        {
+            using var dialog = new Form
+            {
+                Text = "Hinge",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false,
+                ShowInTaskbar = false,
+                ClientSize = new Size(420, 170),
+                Font = new Font("Segoe UI", 10F)
+            };
+
+            var title = new Label
+            {
+                Text = "安装完成",
+                AutoSize = true,
+                Font = new Font("Segoe UI", 16F, FontStyle.Bold),
+                Location = new Point(28, 24)
+            };
+            var location = new Label
+            {
+                Text = $"安装位置：{installPath}",
+                AutoSize = true,
+                Location = new Point(30, 66),
+                ForeColor = Color.DimGray
+            };
+            var finishButton = new Button
+            {
+                Text = "完成",
+                Width = 88,
+                Height = 32,
+                Location = new Point(310, 116),
+                DialogResult = DialogResult.OK
+            };
+            var openButton = new Button
+            {
+                Text = "打开",
+                Width = 88,
+                Height = 32,
+                Location = new Point(212, 116)
+            };
+            openButton.Click += (_, _) =>
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = Path.Combine(installPath, "Hinge.exe"),
+                        UseShellExecute = true,
+                        WorkingDirectory = installPath
+                    });
+                    dialog.Close();
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(dialog, $"无法打开 Hinge：{exception.Message}", "Hinge", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
+            dialog.AcceptButton = finishButton;
+            dialog.CancelButton = finishButton;
+            dialog.Controls.AddRange(new Control[] { title, location, openButton, finishButton });
+            dialog.ShowDialog(this);
+        }
     }
 
-    private static void Install(string installPath)
+    private static string NormalizeInstallPath(string selectedPath)
+    {
+        var fullPath = Path.GetFullPath(selectedPath);
+        var root = Path.GetPathRoot(fullPath);
+        if (!string.IsNullOrWhiteSpace(root) &&
+            string.Equals(
+                fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(root, "Hinge");
+        }
+
+        return fullPath;
+    }
+
+    private static string? FindExistingInstallPath()
+    {
+        var candidates = new List<string>();
+
+        foreach (var registryView in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            try
+            {
+                using var key = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, registryView)
+                    .OpenSubKey(UninstallRegistryPath);
+                AddCandidate(candidates, key?.GetValue("InstallLocation") as string);
+            }
+            catch
+            {
+                // A registry view may not exist on every Windows installation.
+            }
+        }
+
+        foreach (var registryView in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            try
+            {
+                using var key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, registryView)
+                    .OpenSubKey(UninstallRegistryPath);
+                AddCandidate(candidates, key?.GetValue("InstallLocation") as string);
+            }
+            catch
+            {
+                // Reading HKLM is best effort; the installer itself uses HKCU.
+            }
+        }
+
+        AddCandidate(
+            candidates,
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs",
+                "Hinge"));
+        AddCandidate(
+            candidates,
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Hinge"));
+        AddCandidate(
+            candidates,
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                "Hinge"));
+
+        return candidates.FirstOrDefault(path =>
+            File.Exists(Path.Combine(path, "Hinge.exe")));
+    }
+
+    private static void AddCandidate(ICollection<string> candidates, string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) return;
+        try
+        {
+            var fullPath = Path.GetFullPath(candidate.Trim());
+            if (!candidates.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
+            {
+                candidates.Add(fullPath);
+            }
+        }
+        catch
+        {
+            // Ignore malformed or inaccessible paths from stale registry data.
+        }
+    }
+
+    private static string? Install(string installPath)
     {
         StopRunningApp();
         Directory.CreateDirectory(installPath);
@@ -183,7 +359,7 @@ internal static class Program
 
             CreateShortcuts(installPath, executablePath);
             RegisterUninstaller(installPath, executablePath);
-            ConfigureFirewall(installPath);
+            return ConfigureFirewall(installPath);
         }
         finally
         {
@@ -229,14 +405,42 @@ internal static class Program
         }
     }
 
+    private static bool IsHingeRunning()
+    {
+        var processes = Process.GetProcessesByName("Hinge");
+        try
+        {
+            return processes.Any(process =>
+            {
+                try { return !process.HasExited; }
+                catch { return true; }
+            });
+        }
+        finally
+        {
+            foreach (var process in processes) process.Dispose();
+        }
+    }
+
     private static void StopRunningApp()
     {
         foreach (var process in Process.GetProcessesByName("Hinge"))
         {
             try
             {
-                if (process.CloseMainWindow() && process.WaitForExit(5000)) continue;
-                throw new InvalidOperationException("Hinge 正在运行，请先关闭它再安装。");
+                if (process.HasExited) continue;
+
+                // Prefer a normal close so the application can persist its
+                // settings, then force-close tray/background instances that
+                // do not expose a closable main window.
+                process.CloseMainWindow();
+                if (process.WaitForExit(3000)) continue;
+
+                process.Kill(entireProcessTree: true);
+                if (!process.WaitForExit(5000))
+                {
+                    throw new InvalidOperationException("无法关闭正在运行的 Hinge 进程。");
+                }
             }
             finally
             {
@@ -281,7 +485,7 @@ internal static class Program
         var uninstallerPath = Path.Combine(installPath, "Uninstall-Hinge.ps1");
         if (!File.Exists(uninstallerPath)) return;
         using var key = Registry.CurrentUser.CreateSubKey(
-            "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hinge");
+            UninstallRegistryPath);
         key?.SetValue("DisplayName", "Hinge");
         key?.SetValue("DisplayPublisher", "Hinge");
         key?.SetValue("InstallLocation", installPath);
@@ -289,25 +493,39 @@ internal static class Program
         key?.SetValue("UninstallString", $"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{uninstallerPath}\"");
     }
 
-    private static void ConfigureFirewall(string installPath)
+    private static string? ConfigureFirewall(string installPath)
     {
         var firewallScript = Path.Combine(installPath, "allow_hinge_firewall.ps1");
-        if (!File.Exists(firewallScript)) return;
+        if (!File.Exists(firewallScript))
+        {
+            return $"未找到防火墙配置脚本：{firewallScript}";
+        }
+
         try
         {
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                UseShellExecute = true,
-                Verb = "runas",
+                UseShellExecute = false,
+                CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
+                RedirectStandardError = true,
                 Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{firewallScript}\""
-            });
-            process?.WaitForExit();
+            }) ?? throw new InvalidOperationException("无法启动 Windows 防火墙配置程序。");
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode == 0) return null;
+
+            var detail = string.IsNullOrWhiteSpace(error) ? $"退出代码 {process.ExitCode}" : error.Trim();
+            var logPath = Path.Combine(installPath, "firewall-error.log");
+            File.WriteAllText(logPath, detail);
+            return $"{logPath}\n{detail}";
         }
-        catch (System.ComponentModel.Win32Exception exception) when (exception.NativeErrorCode == 1223)
+        catch (Exception exception)
         {
-            // The user declined elevation; the app can still be used.
+            var logPath = Path.Combine(installPath, "firewall-error.log");
+            try { File.WriteAllText(logPath, exception.ToString()); } catch { }
+            return $"{logPath}\n{exception.Message}";
         }
     }
 }

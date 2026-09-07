@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using Hinge.Core;
 using Xunit;
@@ -142,5 +143,32 @@ public class PairingAndSessionTests
         var frame = await tcs.Task;
         Assert.Equal(MessageType.TextMessage, frame.Type);
         Assert.Equal("Hello Secure World", Encoding.UTF8.GetString(frame.Payload));
+    }
+
+    [Fact]
+    public void SessionManager_Uses_Ephemeral_Port_When_Default_Is_Occupied()
+    {
+        using var blocker = new TcpListener(IPAddress.Any, 0);
+        blocker.Start();
+        int blockedPort = ((IPEndPoint)blocker.LocalEndpoint).Port;
+
+        var localId = new DeviceIdentity { DeviceId = "fallback-server", Name = "Fallback Server" };
+        var storePath = Path.Combine(Path.GetTempPath(), $"ts_{Guid.NewGuid()}.json");
+        try
+        {
+            using var session = new SessionManager(
+                localId,
+                new TrustStore(storePath),
+                blockedPort);
+            session.StartListener();
+
+            Assert.True(session.IsListening);
+            Assert.NotEqual(blockedPort, session.ListeningPort);
+            Assert.InRange(session.ListeningPort, 1, 65535);
+        }
+        finally
+        {
+            if (File.Exists(storePath)) File.Delete(storePath);
+        }
     }
 }

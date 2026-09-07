@@ -18,15 +18,37 @@ public class IncomingFileContext
 public class TransferManager : IDisposable
 {
     private const int FileChunkSize = 512 * 1024;
-    private readonly string _downloadDirectory;
+    private string _downloadDirectory;
     private readonly ConcurrentDictionary<string, IncomingFileContext> _incomingTransfers = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _cancellations = new();
+    private readonly ConcurrentDictionary<string, string> _incomingDirectories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _incomingFrameGate = new(1, 1);
 
     public event EventHandler<TextTransferMessage>? TextReceived;
     public event EventHandler<TransferProgress>? TransferProgressChanged;
     public event EventHandler<string>? FileReceived;
+    public event EventHandler<TransferFailure>? TransferFailed;
 
     public int ActiveTransfersCount => _incomingTransfers.Count;
+
+    /// <summary>
+    /// Routes the next incoming file with this name to a temporary directory.
+    /// This is used by Windows previews; ordinary incoming transfers continue
+    /// to use the user's Hinge download directory.
+    /// </summary>
+    public IDisposable RegisterIncomingDirectory(string fileName, string directory)
+    {
+        var safeName = SanitizeFileName(fileName);
+        if (string.IsNullOrWhiteSpace(safeName))
+        {
+            throw new ArgumentException("文件名无效。", nameof(fileName));
+        }
+
+        Directory.CreateDirectory(directory);
+        _incomingDirectories[safeName] = directory;
+        return new IncomingDirectoryRegistration(
+            () => _incomingDirectories.TryRemove(safeName, out _));
+    }
 
     public TransferManager(string? downloadDirectory = null)
     {
@@ -43,6 +65,21 @@ public class TransferManager : IDisposable
             _downloadDirectory = downloadDirectory;
         }
         Directory.CreateDirectory(_downloadDirectory);
+    }
+
+    /// <summary>
+    /// Changes the default directory used by unsolicited incoming files while
+    /// keeping the manager and its active connections alive.
+    /// </summary>
+    public void SetDownloadDirectory(string downloadDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(downloadDirectory))
+        {
+            throw new ArgumentException("接收目录不能为空。", nameof(downloadDirectory));
+        }
+
+        Directory.CreateDirectory(downloadDirectory);
+        _downloadDirectory = downloadDirectory;
     }
 
     public async Task SendTextAsync(SessionConnection conn, string content, string type = "text")
@@ -211,45 +248,69 @@ public class TransferManager : IDisposable
 
     public async Task HandleIncomingFrameAsync(SessionConnection conn, ProtocolFrame frame)
     {
-        if (frame.Type == MessageType.TextMessage)
+        await _incomingFrameGate.WaitAsync();
+        try
         {
-            string json = Encoding.UTF8.GetString(frame.Payload);
-            var textMsg = JsonSerializer.Deserialize<TextTransferMessage>(json);
-            if (textMsg != null)
+            if (frame.Type == MessageType.TextMessage)
             {
-                TextReceived?.Invoke(this, textMsg);
+                string json = Encoding.UTF8.GetString(frame.Payload);
+                var textMsg = JsonSerializer.Deserialize<TextTransferMessage>(json);
+                if (textMsg != null)
+                {
+                    TextReceived?.Invoke(this, textMsg);
+                }
+            }
+            else if (frame.Type == MessageType.FileOffer)
+            {
+                string json = Encoding.UTF8.GetString(frame.Payload);
+                var offer = JsonSerializer.Deserialize<FileOfferMessage>(json);
+                if (offer != null)
+                {
+                    await HandleFileOfferAsync(conn, offer);
+                }
+            }
+            else if (frame.Type == MessageType.FileChunk)
+            {
+                await HandleFileChunkAsync(frame.Payload);
+            }
+            else if (frame.Type == MessageType.FileComplete)
+            {
+                string json = Encoding.UTF8.GetString(frame.Payload);
+                var complete = JsonSerializer.Deserialize<FileCompleteMessage>(json);
+                if (complete != null)
+                {
+                    await HandleFileCompleteAsync(conn, complete);
+                }
             }
         }
-        else if (frame.Type == MessageType.FileOffer)
+        catch (Exception exception)
         {
-            string json = Encoding.UTF8.GetString(frame.Payload);
-            var offer = JsonSerializer.Deserialize<FileOfferMessage>(json);
-            if (offer != null)
-            {
-                await HandleFileOfferAsync(conn, offer);
-            }
+            await HandleIncomingFrameFailureAsync(conn, frame, exception);
         }
-        else if (frame.Type == MessageType.FileChunk)
+        finally
         {
-            await HandleFileChunkAsync(frame.Payload);
-        }
-        else if (frame.Type == MessageType.FileComplete)
-        {
-            string json = Encoding.UTF8.GetString(frame.Payload);
-            var complete = JsonSerializer.Deserialize<FileCompleteMessage>(json);
-            if (complete != null)
-            {
-                await HandleFileCompleteAsync(conn, complete);
-            }
+            _incomingFrameGate.Release();
         }
     }
 
     private async Task HandleFileOfferAsync(SessionConnection conn, FileOfferMessage offer)
     {
-        // Sanitize filename to prevent directory traversal
-        string safeName = Path.GetFileName(offer.FileName);
-        string finalPath = Path.Combine(_downloadDirectory, safeName);
-        string tempPath = finalPath + ".part";
+        // Sanitize filename to prevent directory traversal and invalid Windows paths.
+        string safeName = SanitizeFileName(offer.FileName);
+        if (string.IsNullOrWhiteSpace(safeName))
+        {
+            throw new InvalidOperationException("收到的文件名无效。");
+        }
+
+        var directory = _incomingDirectories.TryRemove(safeName, out var registeredDirectory)
+            ? registeredDirectory
+            : _downloadDirectory;
+        Directory.CreateDirectory(directory);
+        string finalPath = Path.Combine(directory, safeName);
+        string transferSuffix = SanitizeTransferId(offer.TransferId);
+        string tempPath = Path.Combine(
+            directory,
+            $".{safeName}.{transferSuffix}.part");
 
         long existingBytes = 0;
         if (File.Exists(tempPath))
@@ -328,50 +389,173 @@ public class TransferManager : IDisposable
             return;
         }
 
-        await context.FileStream.FlushAsync();
-        context.FileStream.Close();
-        context.FileStream.Dispose();
-        context.FileStream = null;
-
-        // Verify SHA-256
-        string localHash = await ComputeSha256Async(context.TempFilePath, CancellationToken.None);
-        string expectedHash = string.IsNullOrWhiteSpace(complete.Sha256)
-            ? context.Offer.Sha256
-            : complete.Sha256;
-        if (!string.IsNullOrWhiteSpace(expectedHash) &&
-            string.Equals(localHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+        try
         {
-            if (File.Exists(context.FinalFilePath))
+            await context.FileStream.FlushAsync();
+            await context.FileStream.DisposeAsync();
+            context.FileStream = null;
+
+            // Verify SHA-256 only after all queued chunks have been serialized.
+            string localHash = await ComputeSha256Async(context.TempFilePath, CancellationToken.None);
+            string expectedHash = string.IsNullOrWhiteSpace(complete.Sha256)
+                ? context.Offer.Sha256
+                : complete.Sha256;
+            if (!string.IsNullOrWhiteSpace(expectedHash) &&
+                string.Equals(localHash, expectedHash, StringComparison.OrdinalIgnoreCase))
             {
-                File.Delete(context.FinalFilePath);
+                if (File.Exists(context.FinalFilePath))
+                {
+                    File.Delete(context.FinalFilePath);
+                }
+                File.Move(context.TempFilePath, context.FinalFilePath);
+
+                var prog = new TransferProgress
+                {
+                    TransferId = complete.TransferId,
+                    FileName = context.Offer.FileName,
+                    BytesTransferred = context.Offer.FileSize,
+                    TotalBytes = context.Offer.FileSize,
+                    State = TransferState.Completed
+                };
+                TransferProgressChanged?.Invoke(this, prog);
+                FileReceived?.Invoke(this, context.FinalFilePath);
             }
-            File.Move(context.TempFilePath, context.FinalFilePath);
-
-            var prog = new TransferProgress
+            else
             {
-                TransferId = complete.TransferId,
-                FileName = context.Offer.FileName,
-                BytesTransferred = context.Offer.FileSize,
-                TotalBytes = context.Offer.FileSize,
-                State = TransferState.Completed
-            };
-            TransferProgressChanged?.Invoke(this, prog);
-            FileReceived?.Invoke(this, context.FinalFilePath);
+                DeleteFileIfExists(context.TempFilePath);
+                ReportTransferFailure(
+                    context,
+                    "文件校验失败，已丢弃不完整文件。",
+                    complete.TransferId);
+            }
         }
-        else
+        catch (Exception exception)
         {
-            // Corrupt file
-            File.Delete(context.TempFilePath);
-            var prog = new TransferProgress
-            {
-                TransferId = complete.TransferId,
-                FileName = context.Offer.FileName,
-                BytesTransferred = 0,
-                TotalBytes = context.Offer.FileSize,
-                State = TransferState.Failed
-            };
-            TransferProgressChanged?.Invoke(this, prog);
+            context.FileStream?.Dispose();
+            context.FileStream = null;
+            DeleteFileIfExists(context.TempFilePath);
+            ReportTransferFailure(context, exception.Message, complete.TransferId);
         }
+    }
+
+    private async Task HandleIncomingFrameFailureAsync(
+        SessionConnection conn,
+        ProtocolFrame frame,
+        Exception exception)
+    {
+        if (frame.Type == MessageType.FileOffer)
+        {
+            try
+            {
+                var offer = JsonSerializer.Deserialize<FileOfferMessage>(
+                    Encoding.UTF8.GetString(frame.Payload));
+                if (offer != null)
+                {
+                    await conn.SendJsonAsync(
+                        MessageType.FileAccept,
+                        new FileAcceptMessage
+                        {
+                            TransferId = offer.TransferId,
+                            Accepted = false,
+                            Reason = exception.Message
+                        });
+                }
+            }
+            catch
+            {
+                // The peer may already have disconnected; there is nothing else
+                // to do, but this must never escape the network callback.
+            }
+        }
+        else if (frame.Type == MessageType.FileChunk && frame.Payload.Length >= 16)
+        {
+            var transferId = ProtocolUuid.ReadNetworkBytes(frame.Payload.AsSpan(0, 16)).ToString();
+            DiscardIncomingTransfer(transferId, exception.Message);
+        }
+        else if (frame.Type == MessageType.FileComplete)
+        {
+            try
+            {
+                var complete = JsonSerializer.Deserialize<FileCompleteMessage>(
+                    Encoding.UTF8.GetString(frame.Payload));
+                if (complete != null)
+                {
+                    DiscardIncomingTransfer(complete.TransferId, exception.Message);
+                }
+            }
+            catch
+            {
+                // Ignore malformed completion frames.
+            }
+        }
+    }
+
+    private void DiscardIncomingTransfer(string transferId, string error)
+    {
+        if (!_incomingTransfers.TryRemove(transferId, out var context)) return;
+        context.FileStream?.Dispose();
+        context.FileStream = null;
+        DeleteFileIfExists(context.TempFilePath);
+        ReportTransferFailure(context, error, transferId);
+    }
+
+    private void ReportTransferFailure(
+        IncomingFileContext context,
+        string error,
+        string transferId)
+    {
+        var prog = new TransferProgress
+        {
+            TransferId = transferId,
+            FileName = context.Offer.FileName,
+            BytesTransferred = 0,
+            TotalBytes = context.Offer.FileSize,
+            State = TransferState.Failed
+        };
+        try { TransferProgressChanged?.Invoke(this, prog); } catch { }
+        try
+        {
+            TransferFailed?.Invoke(this, new TransferFailure
+            {
+                TransferId = transferId,
+                FileName = context.Offer.FileName,
+                Error = error
+            });
+        }
+        catch { }
+    }
+
+    private static string SanitizeFileName(string? fileName)
+    {
+        var value = Path.GetFileName(fileName?.Trim() ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(value) || value is "." or "..") return string.Empty;
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            builder.Append(invalid.Contains(character) ? '_' : character);
+        }
+
+        value = builder.ToString().Trim().TrimEnd('.');
+        if (value.Length > 180) value = value[..180].TrimEnd('.', ' ');
+        return value;
+    }
+
+    private static string SanitizeTransferId(string? transferId)
+    {
+        var value = new string((transferId ?? string.Empty).Where(char.IsLetterOrDigit).ToArray());
+        if (value.Length == 0) value = Guid.NewGuid().ToString("N");
+        return value.Length > 32 ? value[..32] : value;
+    }
+
+    private static void DeleteFileIfExists(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch { }
     }
 
     public void CancelTransfer(string transferId)
@@ -415,5 +599,16 @@ public class TransferManager : IDisposable
             try { ctx.FileStream?.Dispose(); } catch { }
         }
         _incomingTransfers.Clear();
+        _incomingDirectories.Clear();
+        _incomingFrameGate.Dispose();
+    }
+
+    private sealed class IncomingDirectoryRegistration : IDisposable
+    {
+        private Action? _release;
+
+        public IncomingDirectoryRegistration(Action release) => _release = release;
+
+        public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
     }
 }

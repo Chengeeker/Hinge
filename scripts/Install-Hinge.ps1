@@ -29,27 +29,41 @@ $package = Get-AppxPackage -Name 'Hinge' -ErrorAction SilentlyContinue |
     Select-Object -First 1
 if ($null -ne $package -and $package.PackageFamilyName) {
     $firewallRules = @(
-        @{ Name = 'Hinge MSIX LAN - Discovery UDP'; Protocol = 'UDP'; Port = 52830 },
-        @{ Name = 'Hinge MSIX LAN - Session TCP'; Protocol = 'TCP'; Port = 52831 }
+        @{ Name = 'Hinge MSIX LAN - Discovery UDP'; Protocol = 'UDP'; Port = 52830; RemoteAddress = 'LocalSubnet' },
+        @{ Name = 'Hinge MSIX LAN - Session TCP'; Protocol = 'TCP'; Port = 52831; RemoteAddress = 'LocalSubnet' },
+        @{ Name = 'Hinge MSIX LAN - Session TCP Dynamic'; Protocol = 'TCP'; Port = 'Any'; RemoteAddress = 'LocalSubnet' }
     )
     foreach ($rule in $firewallRules) {
         $existing = Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue
         if ($null -eq $existing) {
-            New-NetFirewallRule `
-                -DisplayName $rule.Name `
-                -Direction Inbound `
-                -Action Allow `
-                -Profile Any `
-                -PackageFamilyName $package.PackageFamilyName `
-                -Protocol $rule.Protocol `
-                -LocalPort $rule.Port | Out-Null
+            $firewallArgs = @{
+                DisplayName = $rule.Name
+                Direction = 'Inbound'
+                Action = 'Allow'
+                Profile = 'Any'
+                PackageFamilyName = $package.PackageFamilyName
+                Protocol = $rule.Protocol
+                LocalPort = $rule.Port
+            }
+            if ($rule.ContainsKey('RemoteAddress')) {
+                $firewallArgs.RemoteAddress = $rule.RemoteAddress
+            }
+            New-NetFirewallRule @firewallArgs | Out-Null
         } else {
-            Set-NetFirewallRule `
-                -DisplayName $rule.Name `
-                -Enabled True `
-                -Direction Inbound `
-                -Action Allow `
-                -Profile Any | Out-Null
+            $firewallArgs = @{
+                DisplayName = $rule.Name
+                Enabled = 'True'
+                Direction = 'Inbound'
+                Action = 'Allow'
+                Profile = 'Any'
+                PackageFamilyName = $package.PackageFamilyName
+                Protocol = $rule.Protocol
+                LocalPort = $rule.Port
+            }
+            if ($rule.ContainsKey('RemoteAddress')) {
+                $firewallArgs.RemoteAddress = $rule.RemoteAddress
+            }
+            Set-NetFirewallRule @firewallArgs | Out-Null
         }
     }
 }

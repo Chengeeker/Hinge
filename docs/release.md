@@ -1,9 +1,11 @@
 # 发布流程
 
+本文是 Hinge 当前的可执行发布流程。发布前应先看 `docs/development.md` 的环境和验证说明。
+
 ## 版本约定
 
-- Android 应用版本来自 `android/pubspec.yaml`，当前为 `1.0.0+1`；
-- GitHub Release 使用三段式产品版本标签，本次为 `v1.0.0`；
+- Android 应用版本来自 `android/pubspec.yaml`，当前开发版为 `1.0.17+18`；
+- Android 和 Windows 的产品版本名保持为 `1.0.17`；GitHub 开发版标签为 `v1.0.17-dev.1`；
 - Windows MSIX 使用四段式 AppX 版本，脚本会在本机已安装版本不低于源清单时递增修订号；
 - Windows AppX 修订号与 GitHub Release 标签不是同一个字段，不应直接混用。
 
@@ -43,8 +45,8 @@ $env:HINGE_KEY_PASSWORD = '<key-password>'
 ## GitHub Release
 
 1. 提交源码、协议和文档，不提交 `publish/` 二进制目录；
-2. 推送 `main` 和版本标签 `v1.0.0`；
-3. 创建非草稿、非预发布 Release；
+2. 推送 `main` 和版本标签 `v1.0.17-dev.1`；
+3. 创建标记为 pre-release 的 GitHub Release；
 4. 上传 APK、EXE、ZIP；若 MSIX 可用，再上传 MSIX 与 CER；
 5. 使用 `RELEASE_NOTES.md` 和 `CHANGELOG.md` 生成发布说明，并在发布页注明真机验收边界；
 6. 发布后验证源代码提交、tag、Release 资产数量和文件 SHA-256。

@@ -5,7 +5,15 @@
     NavigationCacheMode="Required">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
         <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
-            <Button x:Name="BackToSettingsButton" Content="返回设置" HorizontalAlignment="Left" />
+            <Button
+                x:Name="BackToSettingsButton"
+                Width="32"
+                Height="32"
+                Padding="0"
+                HorizontalAlignment="Left"
+                ToolTipService.ToolTip="返回设置">
+                <SymbolIcon Symbol="Back" />
+            </Button>
             <TextBlock Text="调整窗口的显示方式，设置会立即保存。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">

@@ -14,7 +14,7 @@ Get-Process -Name 'Hinge' -ErrorAction SilentlyContinue | ForEach-Object {
 }
 Start-Sleep -Milliseconds 500
 
-foreach ($ruleName in @('Hinge LAN - Discovery UDP', 'Hinge LAN - Session TCP')) {
+foreach ($ruleName in @('Hinge LAN - Discovery UDP', 'Hinge LAN - Session TCP', 'Hinge LAN - Session TCP Dynamic')) {
     try { Get-NetFirewallRule -DisplayName $ruleName | Remove-NetFirewallRule } catch {}
 }
 

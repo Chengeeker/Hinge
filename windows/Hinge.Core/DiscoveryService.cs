@@ -7,11 +7,24 @@ using System.Collections.Concurrent;
 
 namespace Hinge.Core;
 
+public sealed class DiscoveryConnectionRequestEventArgs : EventArgs
+{
+    public DiscoveryMessage Message { get; }
+    public IPAddress RemoteAddress { get; }
+
+    public DiscoveryConnectionRequestEventArgs(DiscoveryMessage message, IPAddress remoteAddress)
+    {
+        Message = message;
+        RemoteAddress = remoteAddress;
+    }
+}
+
 public class DiscoveryService : IDisposable
 {
     private readonly DeviceIdentity _localIdentity;
     private readonly DeviceRegistry _registry;
     private readonly int _listenPort;
+    private readonly Func<int>? _sessionPortProvider;
     private UdpClient? _listener;
     private CancellationTokenSource? _cts;
     private Task? _listenTask;
@@ -19,17 +32,24 @@ public class DiscoveryService : IDisposable
     private Task? _subnetProbeTask;
     private Task? _pruneTask;
     private readonly ConcurrentDictionary<string, DateTime> _lastPeerReplies = new();
+    private readonly ConcurrentDictionary<string, DateTime> _lastConnectionRequests = new();
 
     public DeviceRegistry Registry => _registry;
     public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
     public bool IsListening { get; private set; }
     public string? LastError { get; private set; }
+    public event EventHandler<DiscoveryConnectionRequestEventArgs>? ConnectionRequested;
 
-    public DiscoveryService(DeviceIdentity localIdentity, DeviceRegistry registry, int listenPort = Constants.DiscoveryUdpPort)
+    public DiscoveryService(
+        DeviceIdentity localIdentity,
+        DeviceRegistry registry,
+        int listenPort = Constants.DiscoveryUdpPort,
+        Func<int>? sessionPortProvider = null)
     {
         _localIdentity = localIdentity;
         _registry = registry;
         _listenPort = listenPort;
+        _sessionPortProvider = sessionPortProvider;
     }
 
     public void Start()
@@ -77,6 +97,8 @@ public class DiscoveryService : IDisposable
         }
         _listener = null;
         IsListening = false;
+        _lastPeerReplies.Clear();
+        _lastConnectionRequests.Clear();
         _cts?.Dispose();
         _cts = null;
     }
@@ -89,13 +111,21 @@ public class DiscoveryService : IDisposable
         await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
     }
 
+    public async Task RequestReverseConnectionAsync(
+        IPAddress targetIp,
+        int port = Constants.DiscoveryUdpPort)
+    {
+        var message = CreateDiscoveryMessage(connectionRequested: true);
+        byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
+        using var sender = new UdpClient();
+        await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+    }
+
     public async Task ProbeLocalSubnetsAsync()
     {
         var message = CreateDiscoveryMessage();
         byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
         using var sender = new UdpClient();
-        int sent = 0;
-
         foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (networkInterface.OperationalStatus != OperationalStatus.Up ||
@@ -112,17 +142,18 @@ public class DiscoveryService : IDisposable
             {
                 if (unicast.Address.AddressFamily != AddressFamily.InterNetwork) continue;
                 byte[] local = unicast.Address.GetAddressBytes();
+                int interfaceBudget = 0;
 
                 // Home and enterprise Wi-Fi normally use /24 or smaller host ranges.
                 // Limiting the fallback to this /24 avoids broad network scans.
-                for (int host = 1; host < 255 && sent < 512; host++)
+                for (int host = 1; host < 255 && interfaceBudget < 512; host++)
                 {
                     if (host == local[3]) continue;
                     var target = new IPAddress(new byte[] { local[0], local[1], local[2], (byte)host });
                     try
                     {
                         await sender.SendAsync(data, data.Length, new IPEndPoint(target, _listenPort));
-                        sent++;
+                        interfaceBudget++;
                     }
                     catch
                     {
@@ -213,7 +244,7 @@ public class DiscoveryService : IDisposable
         return targets;
     }
 
-    private DiscoveryMessage CreateDiscoveryMessage()
+    private DiscoveryMessage CreateDiscoveryMessage(bool connectionRequested = false)
     {
         return new DiscoveryMessage
         {
@@ -221,11 +252,25 @@ public class DiscoveryService : IDisposable
             DeviceId = _localIdentity.DeviceId,
             Name = _localIdentity.Name,
             Platform = "windows",
-            Port = Constants.SessionTcpPort,
+            Port = GetSessionPort(),
             Capabilities = new List<string> { "file_transfer", "clipboard", "remote_control", "backup" },
             ProtocolVersion = Constants.ProtocolVersion,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ConnectionRequested = connectionRequested
         };
+    }
+
+    private int GetSessionPort()
+    {
+        try
+        {
+            int port = _sessionPortProvider?.Invoke() ?? 0;
+            return port > 0 ? port : Constants.SessionTcpPort;
+        }
+        catch
+        {
+            return Constants.SessionTcpPort;
+        }
     }
 
     private async Task ListenLoopAsync(CancellationToken token)
@@ -243,10 +288,36 @@ public class DiscoveryService : IDisposable
                     // Ignore our own announcement
                     if (message.DeviceId != _localIdentity.DeviceId)
                     {
+                        // A second Hinge process (for example an older installed
+                        // copy that was not closed during an update) can still
+                        // broadcast the machine's previous identity. The device
+                        // ID alone cannot identify that as self, so discard
+                        // Windows announcements whose source address belongs to
+                        // one of this computer's network adapters.
+                        if (IsLocalWindowsAnnouncement(message, result.RemoteEndPoint.Address))
+                        {
+                            continue;
+                        }
+
                         string remoteIp = result.RemoteEndPoint.Address.ToString();
                         _registry.UpsertDevice(message, remoteIp);
 
                         DateTime now = DateTime.UtcNow;
+                        if (message.ConnectionRequested)
+                        {
+                            DateTime lastRequest = _lastConnectionRequests.GetOrAdd(
+                                message.DeviceId,
+                                DateTime.MinValue);
+                            if (now - lastRequest >= TimeSpan.FromSeconds(2))
+                            {
+                                _lastConnectionRequests[message.DeviceId] = now;
+                                ConnectionRequested?.Invoke(
+                                    this,
+                                    new DiscoveryConnectionRequestEventArgs(
+                                        message,
+                                        result.RemoteEndPoint.Address));
+                            }
+                        }
                         DateTime lastReply = _lastPeerReplies.GetOrAdd(message.DeviceId, DateTime.MinValue);
                         if (now - lastReply > TimeSpan.FromSeconds(5))
                         {
@@ -265,6 +336,40 @@ public class DiscoveryService : IDisposable
                 if (token.IsCancellationRequested) break;
             }
         }
+    }
+
+    private static bool IsLocalWindowsAnnouncement(
+        DiscoveryMessage message,
+        IPAddress remoteAddress)
+    {
+        if (!string.Equals(message.Platform, "windows", StringComparison.OrdinalIgnoreCase) ||
+            IPAddress.IsLoopback(remoteAddress))
+        {
+            return false;
+        }
+
+        foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (networkInterface.OperationalStatus != OperationalStatus.Up)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (networkInterface.GetIPProperties().UnicastAddresses.Any(unicast =>
+                    unicast.Address.Equals(remoteAddress)))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // An adapter can disappear while Wi-Fi switches networks.
+            }
+        }
+
+        return false;
     }
 
     private async Task BroadcastLoopAsync(CancellationToken token)

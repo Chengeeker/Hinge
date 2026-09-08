@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前开发版：[v1.0.17-dev.1](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.1)（安装包运行版本为 `1.0.17`）
+- 当前开发版：[v1.0.17-dev.2](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.2)（安装包运行版本为 `1.0.17`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -42,12 +42,15 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - 独立的首页、文件管理、笔记、待办、日历、相册、工具和设置页面；
 - 显示手机设备名称、品牌标识和连接状态；
 - 文件管理支持最近文件、图片、视频、音频、文档、微信相册、QQ 相册和手机存储；
+- 文件分类不只依赖手机厂商返回的 MIME：对常见文档、压缩包、安装包和媒体扩展名做统一回退识别，未知类型在需要时再读取文件头；
+- 大型工作区/同步控制数据支持双方协商的 ZLIB 压缩，旧版本会自动回退到普通控制帧；
 - 宫格/列表视图、类型筛选、排序、多选、保存、删除、目录进入/返回和分页加载；
 - 相册和图片缩略图按批次加载，首次只取前 200 项，继续滚动时再读取后续内容；
+- 双击媒体时按需读取图片尺寸、EXIF 相机信息，或音视频时长、分辨率、码率，并将结果反馈到 Windows 状态栏；
 - 支持从资源管理器拖入文件，并在拖动过程中预览保存目标；窗口标题栏移动不会误触发文件投放提示；
 - 图片、视频、音频使用当前 Windows 文件关联打开，避免应用内播放器的后台播放和释放问题；
 - WinUI 3 主题、窗口材质、背景图、开机启动、静默启动和关闭时最小化到托盘；
-- 推荐使用可选择安装路径的自包含 EXE 安装器，也提供便携 ZIP 和可选 MSIX。
+- 推荐使用可选择安装路径的自包含 EXE 安装器，也提供便携 ZIP。
 
 ## 当前明确不包含的能力
 
@@ -60,7 +63,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 
 ### Android
 
-从 [v1.0.17-dev.1 Release](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.1) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
+从 [v1.0.17-dev.2 Release](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.2) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
 
 ### Windows
 
@@ -69,8 +72,8 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 另外提供：
 
 - `Hinge-Windows.zip`：解压即用的便携版；
-- `Hinge-Installer.msix`：适合已经配置好测试证书的环境；
-- `Hinge-Installer.cer`：MSIX 测试证书，仅在确认来源可信时安装。
+
+Windows 发布只提供上面的 EXE 安装器和便携 ZIP，不提供需要测试证书的 MSIX 发布资产。
 
 Hinge 不会修改 `EnableLUA`，也不要求用户把它改成 `1`。保持系统原有设置即可；应用同时保留 Win32 文件拖放回退路径，在 `EnableLUA=0` 的环境下也能接收普通资源管理器文件拖放。若应用被“以管理员身份运行”而资源管理器不是管理员权限，Windows 仍可能按系统权限规则拒绝拖放，此时应让两者处于相同权限级别，而不是修改注册表。可参考 [Windows drag-and-drop 文档](https://learn.microsoft.com/en-us/windows/apps/develop/data/drag-and-drop)。
 
@@ -128,6 +131,7 @@ tests/                   跨模块测试资料
 - [兼容性基准](docs/compatibility.md)：Android 厂商、Windows 网络和权限风险；
 - [发布流程](docs/release.md)：版本、签名、构建产物和 GitHub Release 约定；
 - [依赖说明](docs/dependencies.md)：第三方依赖和许可证；
+- [第三方许可证登记](THIRD_PARTY_LICENSES.md)：实际随项目发布或参与构建的依赖清单；
 - [协议说明](protocol/protocol.md)：跨端帧和传输约定；
 - [安全策略](SECURITY.md)：局域网边界、报告问题和敏感配置；
 - [更新日志](CHANGELOG.md)：面向用户的版本变更。
@@ -137,3 +141,41 @@ tests/                   跨模块测试资料
 写代码前先确认功能是否已经存在、系统原生 API 或现成依赖是否能够解决，以及是否真的需要新增实现。跨端功能应同步更新协议、测试和文档；不要把单端 Mock 或回环测试描述成真实设备已经完成。
 
 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 开源组件与合规说明
+
+Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `android/pubspec.lock`、各 `.csproj` 和构建工具锁定结果为准。间接依赖由 Flutter/Dart、NuGet 和 Android 构建工具解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
+
+### 随应用使用的直接组件
+
+| 组件 | 平台与版本 | 许可证 | 在 Hinge 中的用途 |
+| --- | --- | --- | --- |
+| [Flutter SDK](https://github.com/flutter/flutter) | Android / 构建环境 | BSD-3-Clause | Flutter UI、国际化和应用运行框架 |
+| [`crypto`](https://pub.dev/packages/crypto) | Android / Dart `3.0.7` | BSD-3-Clause | SHA-256、HMAC 和文件完整性校验 |
+| [`dynamic_color`](https://pub.dev/packages/dynamic_color) | Android / Dart `1.9.0` | Apache-2.0 | 接入 Android 12+ Monet 动态配色 |
+| [`material_symbols_icons`](https://pub.dev/packages/material_symbols_icons) | Android / Dart `4.2960.0` | Apache-2.0 | Material Symbols 图标 |
+| [`flutter_svg`](https://pub.dev/packages/flutter_svg) | Android / Dart `2.3.0` | MIT | 读取本地品牌 SVG 资源 |
+| [`cupertino_icons`](https://pub.dev/packages/cupertino_icons) | Android / Dart `1.0.9` | MIT | 少量兼容性图标资源 |
+| [Microsoft.WindowsAppSDK](https://github.com/microsoft/WindowsAppSDK) | Windows / NuGet `2.4.0` | MIT | WinUI 3、窗口和 Windows App SDK 能力 |
+| [.NET Runtime / BCL](https://github.com/dotnet/runtime) | Windows / .NET `8` | MIT | Socket、压缩、加密、文件和系统集成基础能力 |
+
+### 仅用于开发和测试的组件
+
+Windows 测试使用 [xUnit](https://github.com/xunit/xunit) `2.5.3`、[Microsoft.NET.Test.Sdk](https://github.com/microsoft/vstest) `17.8.0`、[coverlet.collector](https://github.com/coverlet-coverage/coverlet) `6.0.0` 和 `xunit.runner.visualstudio` `2.5.3`；Android 测试与代码检查使用 Flutter SDK 内的 `flutter_test` 和 `flutter_lints`。这些组件不会被打包进最终用户运行时。
+
+### vivo 开源声明的审查边界
+
+参考 vivo 办公套件公开的开源声明时，评估过 `file-type`、`mediainfo.js`/MediaInfo、`ExifReader`、`fflate`、`pako` 和 `Jimp`。它们只是候选方案和实现思路的对照，当前没有复制源码、打包文件或写入 Hinge 的依赖锁文件：
+
+- MIME/文件头识别使用 Hinge 自有的 Kotlin 小型实现；
+- 音视频信息使用 Android Framework `MediaMetadataRetriever`；
+- 图片尺寸与 EXIF 使用 Android Framework `BitmapFactory` / `ExifInterface`；
+- Windows 媒体打开、文件属性和压缩使用 WinRT / .NET BCL。
+
+如果未来真正引入上述项目或任何新的第三方组件，必须在同一个提交中锁定版本、登记许可证和 NOTICE 要求，并同步更新 `docs/dependencies.md`、`THIRD_PARTY_LICENSES.md` 和本节。
+
+### 品牌 SVG 与签名材料
+
+Windows 和 Android 使用的本地品牌 SVG 来自 Wikimedia Commons 对应条目，具体来源在 [第三方许可证登记](THIRD_PARTY_LICENSES.md) 中列出。它们属于各品牌商标，仅用于连接设备时的品牌识别，不表示 Hinge 与品牌存在合作或背书关系。
+
+Android 发布包必须由发布者自行提供签名库、别名和密码。签名库、密码、临时转换文件和个人设备信息不进入 Git，也不会写入 README、发行版或构建日志；构建脚本只读取调用者提供的环境变量或参数。

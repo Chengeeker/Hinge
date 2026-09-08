@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.database.Cursor
+import android.content.ContentResolver
 import android.content.Intent
 import android.content.Context
 import android.content.res.Configuration
@@ -36,6 +37,7 @@ import android.provider.Settings
 import android.provider.DocumentsContract
 import androidx.core.content.FileProvider
 import android.media.ImageReader
+import android.media.MediaMetadataRetriever
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.view.Display
@@ -91,7 +93,19 @@ class MainActivity : FlutterActivity() {
         val entries: List<Map<String, Any?>>,
     )
 
+    private data class CountCacheEntry(
+        val expiresAt: Long,
+        val total: Int,
+    )
+
     private val storageDirectoryCache = ConcurrentHashMap<String, StorageCacheEntry>()
+    private val mediaTotalCache = ConcurrentHashMap<String, CountCacheEntry>()
+    private val documentFileExtensions = arrayOf(
+        "pdf", "doc", "docx", "docm", "dot", "dotx", "odt",
+        "xls", "xlsx", "xlsm", "xlt", "xltx", "ods",
+        "ppt", "pptx", "pptm", "pps", "ppsx", "odp",
+        "txt", "md", "csv", "tsv", "rtf", "json", "xml", "html", "htm",
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -215,6 +229,7 @@ class MainActivity : FlutterActivity() {
             "photoBytes" -> readPhotoBytes(call, result)
             "photoThumbnailBytes" -> readPhotoThumbnailBytes(call, result)
             "photoPreviewBytes" -> readPhotoPreviewBytes(call, result)
+            "mediaMetadata" -> readMediaMetadata(call, result)
             "copyUriToCache" -> copyUriToCache(call, result)
             "files" -> readFiles(result)
             "storageDirectory" -> readStorageDirectory(call, result)
@@ -1746,6 +1761,151 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun readMediaMetadata(call: MethodCall, result: MethodChannel.Result) {
+        val uriText = call.argument<String>("uri")?.trim().orEmpty()
+        val name = call.argument<String>("name")?.trim().orEmpty().ifBlank { "未命名文件" }
+        val reportedMime = call.argument<String>("mimeType")?.trim().orEmpty()
+        if (uriText.isBlank()) {
+            result.error("invalid_argument", "媒体地址为空", null)
+            return
+        }
+
+        val resolvedMime = HingeMimeDetector.resolve(name, reportedMime)
+        val canRead = hasAllFilesAccess() ||
+            (resolvedMime.startsWith("image/") && hasPhotosPermission()) ||
+            hasMediaPermission()
+        if (!canRead) {
+            result.error("permission_required", "需要读取对应的媒体权限", null)
+            return
+        }
+
+        contentExecutor.execute {
+            try {
+                val uri = Uri.parse(uriText)
+                val metadata = readMediaMetadataInternal(uri, name, resolvedMime)
+                runOnUiThread { result.success(metadata) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("metadata_failed", "读取媒体参数失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun readMediaMetadataInternal(
+        uri: Uri,
+        name: String,
+        fallbackMimeType: String,
+    ): Map<String, Any?> {
+        val detectedMimeType = try {
+            openUriInputStream(uri)?.use { input ->
+                HingeMimeDetector.sniff(name, input)
+            } ?: fallbackMimeType
+        } catch (_: Exception) {
+            fallbackMimeType
+        }
+        val metadata = linkedMapOf<String, Any?>(
+            "name" to name,
+            "mimeType" to HingeMimeDetector.resolve(name, detectedMimeType),
+            "durationMs" to 0L,
+            "width" to 0,
+            "height" to 0,
+            "rotation" to 0,
+            "bitrate" to 0L,
+            "title" to "",
+            "artist" to "",
+            "album" to "",
+            "cameraMake" to "",
+            "cameraModel" to "",
+            "dateTimeOriginal" to "",
+            "orientation" to 0,
+        )
+
+        if (detectedMimeType.startsWith("image/")) {
+            openUriInputStream(uri)?.use { input ->
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(input, null, options)
+                metadata["width"] = options.outWidth.coerceAtLeast(0)
+                metadata["height"] = options.outHeight.coerceAtLeast(0)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    openUriInputStream(uri)?.use { input ->
+                        val exif = android.media.ExifInterface(input)
+                        metadata["cameraMake"] = exif.getAttribute(
+                            android.media.ExifInterface.TAG_MAKE,
+                        ).orEmpty()
+                        metadata["cameraModel"] = exif.getAttribute(
+                            android.media.ExifInterface.TAG_MODEL,
+                        ).orEmpty()
+                        metadata["dateTimeOriginal"] = exif.getAttribute(
+                            android.media.ExifInterface.TAG_DATETIME_ORIGINAL,
+                        ).orEmpty()
+                        metadata["orientation"] = exif.getAttributeInt(
+                            android.media.ExifInterface.TAG_ORIENTATION,
+                            0,
+                        )
+                    }
+                } catch (_: Exception) {
+                    // Some OEM providers expose a readable image stream but no
+                    // EXIF block. Dimensions and MIME remain useful in that case.
+                }
+            }
+        } else if (detectedMimeType.startsWith("audio/") ||
+            detectedMimeType.startsWith("video/")) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                if (uri.scheme.equals("file", ignoreCase = true)) {
+                    retriever.setDataSource(uri.path.orEmpty())
+                } else {
+                    retriever.setDataSource(this, uri)
+                }
+                metadata["durationMs"] = metadataLong(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION),
+                )
+                metadata["width"] = metadataInt(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH),
+                )
+                metadata["height"] = metadataInt(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT),
+                )
+                metadata["rotation"] = metadataInt(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION),
+                )
+                metadata["bitrate"] = metadataLong(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE),
+                )
+                metadata["title"] = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_TITLE,
+                ).orEmpty()
+                metadata["artist"] = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_ARTIST,
+                ).orEmpty()
+                metadata["album"] = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_ALBUM,
+                ).orEmpty()
+            } finally {
+                retriever.release()
+            }
+        }
+        return metadata
+    }
+
+    private fun openUriInputStream(uri: Uri): java.io.InputStream? {
+        return if (uri.scheme.equals("file", ignoreCase = true)) {
+            val path = uri.path.orEmpty()
+            if (path.isBlank()) null else File(path).inputStream()
+        } else {
+            contentResolver.openInputStream(uri)
+        }
+    }
+
+    private fun metadataLong(value: String?): Long =
+        value?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+
+    private fun metadataInt(value: String?): Int =
+        value?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+
     private fun readFiles(result: MethodChannel.Result) {
         if (!hasMediaPermission() && !hasAllFilesAccess()) {
             result.error("permission_required", "需要读取文件或媒体权限", null)
@@ -1794,15 +1954,22 @@ class MainActivity : FlutterActivity() {
                 } else {
                     ""
                 }
-                if (sizeBytes == 0L && mimeType.isBlank() && isDirectoryPath(sourcePath)) {
+                val name = if (nameIndex >= 0) it.getString(nameIndex).orEmpty() else "未命名文件"
+                // MediaStore.Files may expose a directory-like row with a
+                // display name and a zero size. Only probe the real file
+                // system for this ambiguous case; probing every MediaStore
+                // row makes large recent lists several orders of magnitude
+                // slower on some OEM devices.
+                if (sizeBytes == 0L && mimeType.isBlank() &&
+                    isDirectoryPath(sourcePath)) {
                     continue
                 }
                 files.add(
                     mapOf(
                         "id" to id.toString(),
-                        "name" to if (nameIndex >= 0) it.getString(nameIndex).orEmpty() else "未命名文件",
+                        "name" to name,
                         "relativePath" to sourcePath,
-                        "mimeType" to mimeType,
+                        "mimeType" to HingeMimeDetector.resolve(name, mimeType),
                         "sizeBytes" to sizeBytes,
                         "modifiedAt" to if (dateIndex >= 0) it.getLong(dateIndex) * 1000L else 0L,
                         "uri" to uri.toString(),
@@ -1823,6 +1990,7 @@ class MainActivity : FlutterActivity() {
         val forceRefresh = call.argument<Boolean>("forceRefresh") == true
         val cacheKey = "$category\u0000$path"
         val now = System.currentTimeMillis()
+        if (forceRefresh) mediaTotalCache.remove(cacheKey)
         if (!forceRefresh) {
             val cached = storageDirectoryCache[cacheKey]
             if (cached != null && cached.expiresAt > now) {
@@ -1866,6 +2034,7 @@ class MainActivity : FlutterActivity() {
         val forceRefresh = call.argument<Boolean>("forceRefresh") == true
         val cacheKey = "$category\u0000$path"
         val now = System.currentTimeMillis()
+        if (forceRefresh) mediaTotalCache.remove(cacheKey)
         if (!forceRefresh) {
             val cached = storageDirectoryCache[cacheKey]
             if (cached != null && cached.expiresAt > now) {
@@ -1876,18 +2045,20 @@ class MainActivity : FlutterActivity() {
 
         contentExecutor.execute {
             try {
-                val entries = when (category) {
-                    "storage" -> listStorageDirectory(path, category)
-                    "wechat", "qq" -> querySocialAlbumEntries(category)
+                val payload = when (category) {
+                    "storage" -> {
+                        val entries = listStorageDirectory(path, category)
+                        storageDirectoryCache[cacheKey] = StorageCacheEntry(
+                            expiresAt = System.currentTimeMillis() + 10_000L,
+                            entries = entries,
+                        )
+                        storageDirectoryPagePayload(entries, offset, limit)
+                    }
+                    "wechat", "qq" -> querySocialAlbumPage(category, offset, limit, cacheKey)
                     "recent", "images", "videos", "audio", "documents", "deleted" ->
-                        queryMediaCategoryEntries(category)
+                        queryMediaCategoryPage(category, offset, limit, cacheKey)
                     else -> throw IllegalArgumentException("不支持的文件分类：$category")
                 }
-                storageDirectoryCache[cacheKey] = StorageCacheEntry(
-                    expiresAt = System.currentTimeMillis() + 10_000L,
-                    entries = entries,
-                )
-                val payload = storageDirectoryPagePayload(entries, offset, limit)
                 runOnUiThread { result.success(payload) }
             } catch (error: Exception) {
                 runOnUiThread {
@@ -1895,6 +2066,331 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Fetches only the requested MediaStore window. The previous implementation
+     * materialized every matching row before slicing the first 200 items, so a
+     * phone with tens of thousands of media records paid the full scan cost on
+     * every page request.
+     */
+    private fun queryMediaCategoryPage(
+        category: String,
+        offset: Int,
+        limit: Int,
+        cacheKey: String,
+    ): Map<String, Any?> {
+        if (category == "deleted" && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0)
+        }
+        if (category == "images" && !hasPhotosPermission()) {
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0)
+        }
+        if ((category == "videos" || category == "audio") && !hasMediaPermission()) {
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0)
+        }
+
+        val collection = when (category) {
+            "images" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            "videos" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            "audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else -> MediaStore.Files.getContentUri("external")
+        }
+        val mimeColumn = MediaStore.Files.FileColumns.MIME_TYPE
+        val displayNameColumn = MediaStore.Files.FileColumns.DISPLAY_NAME
+        val selection: String
+        val selectionArgs: Array<String>?
+        when (category) {
+            "images" -> {
+                selection = "$mimeColumn LIKE ?"
+                selectionArgs = arrayOf("image/%")
+            }
+            "videos" -> {
+                selection = "$mimeColumn LIKE ?"
+                selectionArgs = arrayOf("video/%")
+            }
+            "audio" -> {
+                selection = "$mimeColumn LIKE ?"
+                selectionArgs = arrayOf("audio/%")
+            }
+            "documents" -> {
+                // Filter document names in the provider so page 1 is not
+                // consumed by unrelated images/videos before Kotlin filters.
+                val extensionSelection = documentFileExtensions.joinToString(" OR ") {
+                    "$displayNameColumn LIKE ?"
+                }
+                val mimeSelection = listOf(
+                    "$mimeColumn LIKE 'text/%'",
+                    "$mimeColumn = 'application/pdf'",
+                    "$mimeColumn LIKE '%msword%'",
+                    "$mimeColumn LIKE '%ms-excel%'",
+                    "$mimeColumn LIKE '%ms-powerpoint%'",
+                    "$mimeColumn LIKE '%opendocument%'",
+                    "$mimeColumn LIKE '%officedocument%'",
+                    "$mimeColumn = 'application/rtf'",
+                ).joinToString(" OR ")
+                selection = "($extensionSelection OR $mimeSelection)"
+                selectionArgs = documentFileExtensions.map { "%.$it" }.toTypedArray()
+            }
+            "deleted" -> {
+                selection = "$mimeColumn IS NOT NULL AND is_trashed = 1"
+                selectionArgs = null
+            }
+            else -> {
+                selection = "_id IS NOT NULL"
+                selectionArgs = null
+            }
+        }
+
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.RELATIVE_PATH,
+            MediaStore.Files.FileColumns.DATA,
+        )
+        val now = System.currentTimeMillis()
+        val total = mediaTotalCache[cacheKey]
+            ?.takeIf { it.expiresAt > now }
+            ?.total
+            ?: countMediaStoreRows(collection, selection, selectionArgs).also {
+                mediaTotalCache[cacheKey] = CountCacheEntry(
+                    expiresAt = System.currentTimeMillis() + 10_000L,
+                    total = it,
+                )
+            }
+        val entries = ArrayList<Map<String, Any?>>()
+        val cursor = queryMediaStorePage(
+            collection,
+            projection,
+            selection,
+            selectionArgs,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            offset,
+            limit,
+        )
+        cursor?.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+            val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathIndex = it.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            val dataIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+            while (it.moveToNext()) {
+                val id = it.getLong(idIndex)
+                val name = if (nameIndex >= 0) {
+                    it.getString(nameIndex).orEmpty()
+                } else {
+                    "未命名文件"
+                }
+                val relativePath = if (pathIndex >= 0) {
+                    it.getString(pathIndex).orEmpty() + name
+                } else {
+                    name
+                }
+                val sourcePath = if (dataIndex >= 0 && !it.isNull(dataIndex)) {
+                    it.getString(dataIndex).orEmpty()
+                } else {
+                    relativePath
+                }
+                val sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                    it.getLong(sizeIndex)
+                } else {
+                    0L
+                }
+                val rawMimeType = if (mimeIndex >= 0) {
+                    it.getString(mimeIndex).orEmpty()
+                } else {
+                    ""
+                }
+                val mimeType = HingeMimeDetector.resolve(name, rawMimeType)
+                if (category == "documents" &&
+                    !HingeMimeDetector.isDocument(name, rawMimeType)) {
+                    continue
+                }
+                if (category == "recent" &&
+                    sizeBytes == 0L && rawMimeType.isBlank() &&
+                    isDirectoryPath(sourcePath, relativePath)) {
+                    continue
+                }
+                if (category == "recent" && isRecentCacheNoise(name, sourcePath, sizeBytes)) {
+                    continue
+                }
+                entries.add(
+                    storageEntry(
+                        id = id.toString(),
+                        name = name,
+                        relativePath = relativePath,
+                        mimeType = mimeType,
+                        sizeBytes = sizeBytes,
+                        modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
+                            it.getLong(dateIndex) * 1000L
+                        } else {
+                            0L
+                        },
+                        uri = Uri.withAppendedPath(collection, id.toString()).toString(),
+                        isDirectory = false,
+                        category = category,
+                    ),
+                )
+            }
+        }
+
+        if (category == "documents" && total == 0 && hasAllFilesAccess()) {
+            val fallback = scanDocumentFiles()
+            return storageDirectoryPagePayload(fallback, offset, limit)
+        }
+        return mapOf("items" to entries, "total" to total)
+    }
+
+    private fun querySocialAlbumPage(
+        category: String,
+        offset: Int,
+        limit: Int,
+        cacheKey: String,
+    ): Map<String, Any?> {
+        val collection = MediaStore.Files.getContentUri("external")
+        val pathColumn = if (Build.VERSION.SDK_INT >= 29) {
+            MediaStore.Files.FileColumns.RELATIVE_PATH
+        } else {
+            MediaStore.Files.FileColumns.DATA
+        }
+        val normalizedPathColumn = "LOWER($pathColumn)"
+        val selection: String
+        val args: Array<String>
+        if (category == "wechat") {
+            selection = "$normalizedPathColumn LIKE ? OR $normalizedPathColumn LIKE ?"
+            args = arrayOf("%pictures/weixin%", "%pictures/wechat%")
+        } else {
+            selection = "$normalizedPathColumn LIKE ? OR " +
+                "$normalizedPathColumn LIKE ? OR $normalizedPathColumn LIKE ?"
+            args = arrayOf("%pictures/qq%", "%dcim/qq%", "%tencent/qq_images%")
+        }
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            pathColumn,
+        )
+        val now = System.currentTimeMillis()
+        val total = mediaTotalCache[cacheKey]
+            ?.takeIf { it.expiresAt > now }
+            ?.total
+            ?: countMediaStoreRows(collection, selection, args).also {
+                mediaTotalCache[cacheKey] = CountCacheEntry(
+                    expiresAt = System.currentTimeMillis() + 10_000L,
+                    total = it,
+                )
+            }
+        val entries = ArrayList<Map<String, Any?>>()
+        queryMediaStorePage(
+            collection,
+            projection,
+            selection,
+            args,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            offset,
+            limit,
+        )?.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+            val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathIndex = it.getColumnIndex(pathColumn)
+            while (it.moveToNext()) {
+                val id = it.getLong(idIndex)
+                val name = if (nameIndex >= 0) {
+                    it.getString(nameIndex).orEmpty()
+                } else {
+                    "未命名文件"
+                }
+                val path = if (pathIndex >= 0) it.getString(pathIndex).orEmpty() else ""
+                entries.add(
+                    storageEntry(
+                        id = id.toString(),
+                        name = name,
+                        relativePath = path.trimEnd('/') + "/" + name,
+                        mimeType = HingeMimeDetector.resolve(
+                            name,
+                            if (mimeIndex >= 0) it.getString(mimeIndex).orEmpty() else "",
+                        ),
+                        sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                            it.getLong(sizeIndex)
+                        } else {
+                            0L
+                        },
+                        modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
+                            it.getLong(dateIndex) * 1000L
+                        } else {
+                            0L
+                        },
+                        uri = Uri.withAppendedPath(collection, id.toString()).toString(),
+                        isDirectory = false,
+                        category = category,
+                    ),
+                )
+            }
+        }
+        return mapOf("items" to entries, "total" to total)
+    }
+
+    private fun countMediaStoreRows(
+        collection: Uri,
+        selection: String?,
+        selectionArgs: Array<String>?,
+    ): Int {
+        return queryMediaStore(
+            collection,
+            arrayOf(MediaStore.Files.FileColumns._ID),
+            selection,
+            selectionArgs,
+            null,
+        )?.use { it.count } ?: 0
+    }
+
+    private fun queryMediaStorePage(
+        collection: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortColumn: String,
+        offset: Int,
+        limit: Int,
+    ): Cursor? {
+        val safeOffset = offset.coerceAtLeast(0)
+        val safeLimit = limit.coerceIn(1, 200)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val queryArgs = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(sortColumn))
+                putInt(
+                    ContentResolver.QUERY_ARG_SORT_DIRECTION,
+                    ContentResolver.QUERY_SORT_DIRECTION_DESCENDING,
+                )
+                putInt(ContentResolver.QUERY_ARG_OFFSET, safeOffset)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, safeLimit)
+            }
+            try {
+                return contentResolver.query(collection, projection, queryArgs, null)
+            } catch (_: IllegalArgumentException) {
+                // A few OEM providers do not implement Bundle query args.
+                // Fall through to the legacy LIMIT/OFFSET form.
+            }
+        }
+        return queryMediaStore(
+            collection,
+            projection,
+            selection,
+            selectionArgs,
+            "$sortColumn DESC LIMIT $safeLimit OFFSET $safeOffset",
+        )
     }
 
     private fun storageDirectoryPagePayload(
@@ -1935,6 +2431,7 @@ class MainActivity : FlutterActivity() {
                     if (wasDeleted) deleted++
                 }
                 storageDirectoryCache.clear()
+                mediaTotalCache.clear()
                 runOnUiThread { result.success(deleted) }
             } catch (error: Exception) {
                 runOnUiThread {
@@ -1985,7 +2482,7 @@ class MainActivity : FlutterActivity() {
                     mimeType = if (file.isDirectory) {
                         "inode/directory"
                     } else {
-                        guessMimeType(file.name)
+                        mimeTypeForFile(file)
                     },
                     sizeBytes = if (file.isFile) file.length() else 0L,
                     modifiedAt = file.lastModified(),
@@ -2030,11 +2527,12 @@ class MainActivity : FlutterActivity() {
                 selectionArgs = arrayOf("audio/%")
             }
             "documents" -> {
-                selection = "(" + mimeColumn + " IS NULL OR (" +
-                    mimeColumn + " NOT LIKE ? AND " +
-                    mimeColumn + " NOT LIKE ? AND " +
-                    mimeColumn + " NOT LIKE ?))"
-                selectionArgs = arrayOf("image/%", "video/%", "audio/%")
+                // Do not trust OEM MIME values for documents. A number of
+                // MediaProvider implementations return NULL or
+                // application/octet-stream for office files. Query all rows,
+                // then apply the extension/MIME predicate below in Kotlin.
+                selection = "_id IS NOT NULL"
+                selectionArgs = null
             }
             "deleted" -> {
                 selection = mimeColumn + " IS NOT NULL AND is_trashed = 1"
@@ -2105,12 +2603,19 @@ class MainActivity : FlutterActivity() {
                 } else {
                     ""
                 }
-                val mimeType = rawMimeType.ifBlank { guessMimeType(name) }
-                // Directory checks are deliberately limited to zero-byte rows
-                // without a MIME type. Calling File.isDirectory for every
-                // MediaStore item made large recent lists unnecessarily slow.
-                if (category == "recent" && sizeBytes == 0L &&
-                    rawMimeType.isBlank() && isDirectoryPath(sourcePath, relativePath)) {
+                val mimeType = HingeMimeDetector.resolve(name, rawMimeType)
+                if (category == "documents" &&
+                    !HingeMimeDetector.isDocument(name, rawMimeType)) {
+                    continue
+                }
+                // Prefer the absolute DATA path. Only probe the filesystem for
+                // zero-byte rows without a MIME type; checking every MediaStore
+                // row turns a 20k-item query into thousands of random I/O
+                // operations on slower phone storage.
+                val directoryLikeCategory = category == "recent" || category == "documents"
+                if (directoryLikeCategory &&
+                    sizeBytes == 0L && rawMimeType.isBlank() &&
+                    isDirectoryPath(sourcePath, relativePath)) {
                     continue
                 }
                 if (category == "recent" && isRecentCacheNoise(name, sourcePath, sizeBytes)) {
@@ -2255,11 +2760,10 @@ class MainActivity : FlutterActivity() {
                         id = id.toString(),
                         name = name,
                         relativePath = path.trimEnd('/') + "/" + name,
-                        mimeType = if (mimeIndex >= 0) {
-                            it.getString(mimeIndex).orEmpty().ifBlank { guessMimeType(name) }
-                        } else {
-                            guessMimeType(name)
-                        },
+                        mimeType = HingeMimeDetector.resolve(
+                            name,
+                            if (mimeIndex >= 0) it.getString(mimeIndex).orEmpty() else "",
+                        ),
                         sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) it.getLong(sizeIndex) else 0L,
                         modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) it.getLong(dateIndex) * 1000L else 0L,
                         uri = Uri.withAppendedPath(collection, id.toString()).toString(),
@@ -2317,11 +2821,16 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    private fun guessMimeType(name: String): String {
-        val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return android.webkit.MimeTypeMap.getSingleton()
-            .getMimeTypeFromExtension(extension)
-            ?: "application/octet-stream"
+    private fun guessMimeType(name: String): String = HingeMimeDetector.fromName(name)
+
+    private fun mimeTypeForFile(file: File): String {
+        val byName = HingeMimeDetector.fromName(file.name)
+        if (byName != "application/octet-stream" || !file.isFile) return byName
+        return try {
+            file.inputStream().use { input -> HingeMimeDetector.sniff(file.name, input) }
+        } catch (_: Exception) {
+            byName
+        }
     }
 
     private fun isRecentCacheNoise(

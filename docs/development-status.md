@@ -1,7 +1,7 @@
 # 当前开发状态
 
 > 更新时间：2026-09-08
-> 当前开发版：`v1.0.17-dev.1`
+> 当前开发版：`v1.0.17-dev.2`
 > 双端运行版本：Android `1.0.17+18` / Windows `1.0.17.0`
 
 本文只记录已在仓库或构建流程中确认的状态。真实手机、真实局域网和不同厂商系统仍需单独验收。
@@ -30,6 +30,8 @@
 - Windows 首次只加载 200 项，滚动时继续分页；
 - 图片和视频缩略图按批次读取，旧页面请求可取消；
 - Windows 图片、视频、音频交给系统默认关联应用打开，关闭页面不会留下自定义播放器实例。
+- Android 会在需要时用文件头校正未知 MIME，并通过原生媒体/EXIF API 返回图片尺寸、相机信息以及音视频时长、分辨率和码率；Windows 端并行请求这些轻量参数，不阻塞默认应用启动。
+- Android 与 Windows 已完成大控制 JSON 的可选 ZLIB 压缩协商；只在双方声明能力且压缩后确实更小时启用，旧版本自动回退。
 - Windows 外部文件拖入使用 Win32 接收回退路径，悬停时显示当前文件管理或相册目标；拖拽来源由明确的本地手势状态区分，避免应用内拖出和窗口移动误触发投放提示。
 - Windows 轮询 Windows GUI 线程的 `GUI_INMOVESIZE` 状态，拖动或调整其他程序窗口时屏蔽投放预览；资源管理器文件拖入不经过该状态，仍保留实时目标提示。
 - Windows 应用内远程文件拖出时显示取消发送区域，取消后不会重复写入手机。
@@ -47,16 +49,15 @@
 - `publish/android/Hinge.apk`：Android ARM64 Release APK；
 - `publish/windows/Hinge-Setup.exe`：自包含、可选安装目录的 EXE 安装器；
 - `publish/windows/Hinge-Windows.zip`：便携版；
-- `publish/windows/Hinge-Installer.msix`：可选 MSIX；
-- `publish/windows/Hinge-Installer.cer`：MSIX 测试证书。
+- Windows 发布不包含 MSIX 或测试证书；Windows 只发布自包含 EXE 安装器和便携 ZIP。
 
 ## 自动化验证
 
-- `flutter analyze --no-pub`：通过；
-- `flutter test --no-pub`：49 项通过；
+- `flutter analyze --no-pub`：本轮在当前构建环境长时间无输出，未完成并已中止；
+- `flutter test --no-pub`：52 项通过；
 - `dotnet build windows/Hinge.sln --configuration Release --no-restore`：通过；
-- `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：59 项通过；
-- Windows 本次本地打包的 AppX 版本为 `1.0.17.0`，同时生成 EXE 安装器和便携 ZIP；
+- `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：62 项通过；
+- Windows 本次本地打包的文件版本为 `1.0.17.0`，同时生成 EXE 安装器和便携 ZIP；
 - Android APK V2/V3 签名验证：通过。
 
 ## 仍需真实设备验收

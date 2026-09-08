@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'constants.dart';
 import 'device_identity_manager.dart';
+import 'protocol_compression.dart';
 import 'protocol_frame.dart';
 import 'trust_store.dart';
 
@@ -22,6 +23,7 @@ class SessionPeerInfo {
   final String manufacturer;
   final String model;
   final String platform;
+  final Set<String> capabilities;
 
   const SessionPeerInfo({
     required this.deviceId,
@@ -29,6 +31,7 @@ class SessionPeerInfo {
     this.manufacturer = '',
     this.model = '',
     required this.platform,
+    this.capabilities = const <String>{},
   });
 }
 
@@ -122,8 +125,18 @@ class SessionConnection {
   void sendFrame(MessageType type, Uint8List payload) {
     if (_disposed) return;
     try {
+      var frameType = type;
+      var framePayload = payload;
+      if (_peerInfo?.capabilities.contains(ProtocolCompression.capability) ==
+          true) {
+        final compressed = ProtocolCompression.tryCompress(type, payload);
+        if (compressed != null) {
+          frameType = MessageType.compressedControl;
+          framePayload = compressed;
+        }
+      }
       _outgoingBuffer.addAll(
-        ProtocolFrame(type: type, payload: payload).serialize(),
+        ProtocolFrame(type: frameType, payload: framePayload).serialize(),
       );
       _flushOutgoing();
     } catch (_) {
@@ -159,6 +172,7 @@ class SessionConnection {
       'manufacturer': _localIdentity.manufacturer,
       'model': _localIdentity.model,
       'platform': _platformName,
+      'capabilities': <String>[ProtocolCompression.capability],
     });
   }
 
@@ -225,6 +239,21 @@ class SessionConnection {
       _missedHeartbeats = 0;
       return;
     }
+    if (frame.type == MessageType.compressedControl) {
+      final decompressed = ProtocolCompression.tryDecompress(frame.payload);
+      if (decompressed == null) return;
+      _frameController.add(
+        ProtocolFrame(
+          version: frame.version,
+          type: decompressed.type,
+          messageId: frame.messageId,
+          timestamp: frame.timestamp,
+          sessionId: frame.sessionId,
+          payload: decompressed.payload,
+        ),
+      );
+      return;
+    }
     _frameController.add(frame);
   }
 
@@ -239,11 +268,13 @@ class SessionConnection {
         manufacturer: '${json['manufacturer'] ?? ''}',
         model: '${json['model'] ?? ''}',
         platform: '${json['platform'] ?? 'unknown'}',
+        capabilities: _readCapabilities(json['capabilities']),
       );
       if (_peerInfo?.deviceId == peer.deviceId) {
         // The peer may repeat SessionInit/SessionAck while both sides are
         // reconnecting. Do not leave a valid socket in the authenticating
         // state just because the identity payload did not change.
+        _peerInfo = peer;
         if (_state == SessionState.authenticating ||
             _state == SessionState.connecting ||
             _state == SessionState.reconnecting) {
@@ -261,6 +292,15 @@ class SessionConnection {
     } catch (_) {
       // Ignore malformed identity frames without dropping the socket.
     }
+  }
+
+  static Set<String> _readCapabilities(Object? raw) {
+    if (raw is! List) return const <String>{};
+    return raw
+        .whereType<Object>()
+        .map((value) => '$value'.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
   }
 
   void _updateState(SessionState newState) {

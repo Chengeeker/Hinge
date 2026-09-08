@@ -19,5 +19,18 @@
 | `crypto` | Android / Dart | BSD-3-Clause | 纯 Dart SHA-256/HMAC 与文件完整性校验 |
 | `dynamic_color` | Android / Dart | Apache-2.0 | 读取系统动态配色的 Flutter 接口；实际 Monet 角色由 Android 原生资源桥提供 |
 | `material_symbols_icons` | Android / Dart | Apache-2.0 | Android 端 Material Symbols 图标；Windows 端优先使用 WinUI/Segoe MDL2 原生符号 |
+| `flutter_svg` | Android / Dart | MIT | 读取本地品牌 SVG 资源；不从网络加载运行时 Logo |
 | `cupertino_icons` | Android / Dart | MIT | Flutter 工程默认的辅助图标资源，目前仅少量兼容性使用 |
+| `Microsoft.WindowsAppSDK` | Windows / NuGet | MIT | WinUI 3 / Windows App SDK 运行时与原生控件桥接 |
 | `.NET BCL` | Windows / C# | MIT | 微软官方运行时基类库 (`System.Security.Cryptography`, `System.Net.Sockets`) |
+
+## 4. vivo 开源声明的借鉴边界
+
+本次审查 vivo 办公套件公开的依赖清单后，评估过 `file-type`、`mediainfo.js`/MediaInfo、`ExifReader`、`fflate`、`pako` 和 `Jimp`。它们没有被直接复制、打包或加入 Hinge 的依赖锁文件：
+
+- 文件头/MIME 识别由 `android/android/app` 内的小型 Kotlin 实现完成；
+- 音视频参数使用 Android Framework 的 `MediaMetadataRetriever`；
+- 图片尺寸使用 `BitmapFactory`，API 24 及以上的 EXIF 使用 Android Framework `android.media.ExifInterface`；
+- Windows 继续使用 WinRT `Launcher`、文件属性和 .NET BCL，不新增媒体 JavaScript/WASM 运行时。
+
+因此，这次功能改动没有新增第三方许可证或 NOTICE 文件。上面这些项目只是候选方案和实现思路的对照，不应被误写成 Hinge 的运行时依赖。真正随 Hinge 发布的依赖必须同时登记在 `THIRD_PARTY_LICENSES.md`。

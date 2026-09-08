@@ -101,6 +101,24 @@ Hinge Protocol 采用分层解耦架构：
 | `0x0071` | `NOTIFICATION_ACTION`| JSON | Tools | 桌面端通知操作回传闭环 |
 | `0x0080` | `TOOL_COMMAND` | JSON | Tools | 原生工具任务调度 |
 | `0x0081` | `TOOL_RESULT` | JSON | Tools | 原生工具任务执行结果 |
+| `0x0082` | `COMPRESSED_CONTROL` | 二进制封装 | Session/Tools | 双方协商后压缩大控制载荷，内部保留原消息类型 |
+
+### 3.2 可选控制数据压缩
+
+`SESSION_INIT` 和 `SESSION_ACK` 的身份 JSON 可以带有 `capabilities` 数组。
+当双方都声明 `control-compression-zlib-v1` 时，发送端才可以把较大的 JSON
+控制载荷封装为 `COMPRESSED_CONTROL`；未声明能力的旧客户端继续使用原始消息类型。
+
+`COMPRESSED_CONTROL` 的载荷格式为：
+
+```text
+EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
++ UncompressedLength (4B, big-endian) + ZLIB payload
+```
+
+当前只对工作区、同步、剪贴板、通知和文本等 JSON 控制消息启用，并要求压缩后连同
+8 字节封装头确实小于原始载荷；文件分块、屏幕流、握手和心跳不走该路径。
+解压后的长度必须等于 `UncompressedLength`，并且不能超过 16 MiB。
 
 ### 3.1 工作区工具命令 (`TOOL_COMMAND` / `TOOL_RESULT`)
 

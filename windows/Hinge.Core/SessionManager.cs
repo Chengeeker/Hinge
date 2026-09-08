@@ -19,7 +19,8 @@ public sealed record SessionPeerInfo(
     string Name,
     string Platform,
     string Manufacturer = "",
-    string Model = "");
+    string Model = "",
+    IReadOnlyList<string>? Capabilities = null);
 
 public class SessionMessageEventArgs : EventArgs
 {
@@ -91,12 +92,21 @@ public class SessionConnection : IDisposable
     {
         if (_disposed) throw new ObjectDisposedException(nameof(SessionConnection));
 
+        var outgoingType = type;
+        var outgoingPayload = payload;
+        if (PeerInfo?.Capabilities?.Contains(ProtocolCompression.Capability) == true &&
+            ProtocolCompression.TryCompress(type, payload, out var compressedPayload))
+        {
+            outgoingType = MessageType.CompressedControl;
+            outgoingPayload = compressedPayload;
+        }
+
         var frame = new ProtocolFrame
         {
             Version = 1,
-            Type = type,
+            Type = outgoingType,
             SessionId = SessionId,
-            Payload = payload
+            Payload = outgoingPayload
         };
         byte[] data = frame.Serialize();
 
@@ -124,7 +134,8 @@ public class SessionConnection : IDisposable
         name = _localIdentity.Name,
         manufacturer = string.Empty,
         model = string.Empty,
-        platform = "windows"
+        platform = "windows",
+        capabilities = new[] { ProtocolCompression.Capability }
     });
 
     private async Task ReadLoopAsync(CancellationToken token)
@@ -203,6 +214,28 @@ public class SessionConnection : IDisposable
             return;
         }
 
+        if (frame.Type == MessageType.CompressedControl)
+        {
+            if (!ProtocolCompression.TryDecompress(
+                    frame.Payload,
+                    out var innerType,
+                    out var innerPayload))
+            {
+                return;
+            }
+
+            HandleIncomingFrame(new ProtocolFrame
+            {
+                Version = frame.Version,
+                Type = innerType,
+                MessageId = frame.MessageId,
+                Timestamp = frame.Timestamp,
+                SessionId = frame.SessionId,
+                Payload = innerPayload
+            });
+            return;
+        }
+
         FrameReceived?.Invoke(this, frame);
     }
 
@@ -220,13 +253,15 @@ public class SessionConnection : IDisposable
                 root.TryGetProperty("name", out var nameValue) ? nameValue.GetString() ?? "未命名设备" : "未命名设备",
                 root.TryGetProperty("platform", out var platformValue) ? platformValue.GetString() ?? "unknown" : "unknown",
                 root.TryGetProperty("manufacturer", out var manufacturerValue) ? manufacturerValue.GetString() ?? string.Empty : string.Empty,
-                root.TryGetProperty("model", out var modelValue) ? modelValue.GetString() ?? string.Empty : string.Empty);
+                root.TryGetProperty("model", out var modelValue) ? modelValue.GetString() ?? string.Empty : string.Empty,
+                ReadCapabilities(root));
 
             if (PeerInfo?.DeviceId == peer.DeviceId)
             {
                 // A duplicate SessionInit/SessionAck is normal when both
                 // sides start together. Keep the session usable even if the
                 // first identity frame arrived before the UI subscribed.
+                PeerInfo = peer;
                 UpdateState(SessionState.Connected);
                 return;
             }
@@ -238,6 +273,22 @@ public class SessionConnection : IDisposable
         {
             // Ignore malformed identity frames without dropping a healthy socket.
         }
+    }
+
+    private static IReadOnlyList<string> ReadCapabilities(JsonElement root)
+    {
+        if (!root.TryGetProperty("capabilities", out var value) ||
+            value.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString()?.Trim() ?? string.Empty)
+            .Where(item => item.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
     }
 
     private async Task HeartbeatLoopAsync(CancellationToken token)

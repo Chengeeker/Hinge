@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hinge/core/device_identity_manager.dart';
 import 'package:hinge/core/device_model.dart';
 import 'package:hinge/core/pairing_manager.dart';
+import 'package:hinge/core/protocol_compression.dart';
 import 'package:hinge/core/protocol_frame.dart';
 import 'package:hinge/core/session_manager.dart';
 import 'package:hinge/core/trust_store.dart';
@@ -193,7 +194,15 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(incomingConnection?.peerInfo?.deviceId, equals('client-id'));
       expect(clientConn.peerInfo?.deviceId, equals('server-id'));
-      final msg = 'Hello from client';
+      expect(
+        incomingConnection?.peerInfo?.capabilities,
+        contains(ProtocolCompression.capability),
+      );
+      expect(
+        clientConn.peerInfo?.capabilities,
+        contains(ProtocolCompression.capability),
+      );
+      final msg = List.filled(300, 'Hello from client').join(' ');
       clientConn.sendFrame(
         MessageType.textMessage,
         Uint8List.fromList(utf8.encode(msg)),

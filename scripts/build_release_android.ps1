@@ -1,6 +1,6 @@
 param(
-    [string]$KeystorePath = 'D:\Download\backup\infinitycm.bks',
-    [string]$KeyAlias = 'infinitycm',
+    [string]$KeystorePath = $env:HINGE_KEYSTORE_PATH,
+    [string]$KeyAlias = $env:HINGE_KEY_ALIAS,
     [string]$StorePassword = $env:HINGE_KEYSTORE_PASSWORD,
     [string]$KeyPassword = $env:HINGE_KEY_PASSWORD,
     [switch]$SkipFlutterBuild
@@ -52,8 +52,16 @@ if ($null -eq $apksigner -or -not (Test-Path -LiteralPath $keytool)) {
 
 $signingDirectory = Join-Path $repoRoot 'tmp'
 New-Item -ItemType Directory -Path $signingDirectory -Force | Out-Null
+if ([string]::IsNullOrWhiteSpace($KeystorePath)) {
+    Write-Error '未提供 Android 签名文件，请通过 -KeystorePath 或 HINGE_KEYSTORE_PATH 指定。'
+    exit 1
+}
 if (-not (Test-Path -LiteralPath $KeystorePath -PathType Leaf)) {
-    Write-Error "找不到 Android 签名文件：$KeystorePath"
+    Write-Error '找不到 Android 签名文件，请检查 -KeystorePath 或 HINGE_KEYSTORE_PATH。'
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($KeyAlias)) {
+    Write-Error '未提供 Android 签名别名，请通过 -KeyAlias 或 HINGE_KEY_ALIAS 指定。'
     exit 1
 }
 if ([string]::IsNullOrWhiteSpace($StorePassword)) {

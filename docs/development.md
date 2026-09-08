@@ -69,7 +69,9 @@ git diff --check
 ```powershell
 $env:HINGE_KEYSTORE_PASSWORD = '<keystore-password>'
 $env:HINGE_KEY_PASSWORD = '<key-password>'
-.\scripts\build_release_android.ps1 -KeystorePath 'D:\path\to\infinitycm.bks' -KeyAlias 'infinitycm'
+$env:HINGE_KEYSTORE_PATH = '<path-to-your-keystore.bks>'
+$env:HINGE_KEY_ALIAS = '<your-key-alias>'
+.\scripts\build_release_android.ps1
 .\scripts\build_release_windows.ps1
 ```
 

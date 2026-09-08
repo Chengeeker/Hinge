@@ -13,7 +13,7 @@
 
 ### Packaging
 
-- Windows 发布资产固定为自包含 `Hinge-Setup.exe` 和便携版 `Hinge-Windows.zip`，不再提供 MSIX 或测试证书。
+- Windows 发布资产固定为自包含 `Hinge-Setup.exe` 和便携版 `Hinge-Windows.zip`，不再提供 MSIX 或测试证书；EXE 安装器启用 .NET 单文件压缩以减小下载体积。
 
 ### Added
 

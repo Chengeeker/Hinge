@@ -7,6 +7,7 @@
 - Android 应用版本来自 `android/pubspec.yaml`，当前开发版为 `1.0.17+18`；
 - Android 和 Windows 的产品版本名保持为 `1.0.17`；本次 GitHub 开发版标签为 `v1.0.17-dev.2`；
 - Windows 发布只提供自包含 EXE 安装器和便携 ZIP，不提供 MSIX 或测试证书。
+- EXE 安装器启用 .NET 单文件压缩；安装逻辑不变，发布前仍需验证安装、更新和目录选择。
 
 ## 发布前检查
 

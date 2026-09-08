@@ -73,6 +73,7 @@ $installerArgs = @(
     '--output', $installerOutput,
     '-p:PublishSingleFile=true',
     '-p:IncludeNativeLibrariesForSelfExtract=true',
+    '-p:EnableCompressionInSingleFile=true',
     '-p:DebugType=None',
     '-p:DebugSymbols=false'
 )

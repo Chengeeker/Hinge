@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text;
 using System.Text.Json;
 using Hinge.Core;
 using Xunit;
@@ -101,5 +102,52 @@ public class ProtocolFramingTests
                 Type = MessageType.TextMessage,
                 Payload = new byte[ProtocolFrame.MaxPayloadSize + 1]
             }.Serialize());
+    }
+}
+
+public class ProtocolCompressionTests
+{
+    [Fact]
+    public void LargeControlPayload_RoundTripsThroughZlibEnvelope()
+    {
+        byte[] payload = Encoding.UTF8.GetBytes(
+            string.Concat(Enumerable.Repeat("{\"name\":\"photo\",\"type\":\"image/jpeg\"}", 200)));
+
+        bool compressed = ProtocolCompression.TryCompress(
+            MessageType.ToolResult,
+            payload,
+            out var envelope);
+
+        Assert.True(compressed);
+        Assert.True(envelope.Length < payload.Length);
+        Assert.True(ProtocolCompression.TryDecompress(
+            envelope,
+            out var type,
+            out var restored));
+        Assert.Equal(MessageType.ToolResult, type);
+        Assert.Equal(payload, restored);
+    }
+
+    [Fact]
+    public void SmallOrIneligiblePayload_StaysUncompressed()
+    {
+        byte[] small = Encoding.UTF8.GetBytes("small control payload");
+        Assert.False(ProtocolCompression.TryCompress(
+            MessageType.ToolResult,
+            small,
+            out _));
+        Assert.False(ProtocolCompression.TryCompress(
+            MessageType.FileChunk,
+            new byte[4096],
+            out _));
+    }
+
+    [Fact]
+    public void CorruptEnvelope_IsRejected()
+    {
+        Assert.False(ProtocolCompression.TryDecompress(
+            new byte[ProtocolCompression.EnvelopeHeaderSize + 1],
+            out _,
+            out _));
     }
 }

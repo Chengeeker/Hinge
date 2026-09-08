@@ -2232,14 +2232,8 @@ class _DevicesScreenState extends State<DevicesScreen>
               }
             },
             itemBuilder: (context) => const [
-              PopupMenuItem<String>(
-                value: 'note',
-                child: Text('新建笔记'),
-              ),
-              PopupMenuItem<String>(
-                value: 'task',
-                child: Text('新建待办'),
-              ),
+              PopupMenuItem<String>(value: 'note', child: Text('新建笔记')),
+              PopupMenuItem<String>(value: 'task', child: Text('新建待办')),
             ],
           )
         else if (_workspaceState.currentTabIndex != 4 &&
@@ -2615,8 +2609,8 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _pageBody(Widget child) {
-    final bottomPadding = !_isDesktop &&
-            _workspaceState.floatingCapsuleNavigation
+    final bottomPadding =
+        !_isDesktop && _workspaceState.floatingCapsuleNavigation
         ? 136 + MediaQuery.viewPaddingOf(context).bottom
         : 32.0;
     return SingleChildScrollView(
@@ -3659,7 +3653,9 @@ class _DevicesScreenState extends State<DevicesScreen>
               child: ListTile(
                 leading: Icon(Symbols.info_rounded, color: scheme.primary),
                 title: const Text('关于应用'),
-                subtitle: Text('${AppConstants.appName} ${AppConstants.appVersion}'),
+                subtitle: Text(
+                  '${AppConstants.appName} ${AppConstants.appVersion}',
+                ),
                 trailing: const Icon(Symbols.chevron_right_rounded),
                 onTap: _showAboutDialog,
               ),
@@ -4654,9 +4650,34 @@ class _DevicesScreenState extends State<DevicesScreen>
                     ),
                   ),
                   const SizedBox(height: 14),
-                  Text(
-                    '尺寸：${photo.width > 0 ? '${photo.width} × ${photo.height}' : '未知'}\n拍摄时间：${_formatDate(photo.takenAt)}\n媒体地址：${photo.uri}',
-                    style: Theme.of(context).textTheme.bodySmall,
+                  FutureBuilder<Map<String, dynamic>>(
+                    future: _loadPhotoMetadata(photo),
+                    initialData: const <String, dynamic>{},
+                    builder: (context, snapshot) {
+                      final metadata =
+                          snapshot.data ?? const <String, dynamic>{};
+                      final width =
+                          (metadata['width'] as num?)?.toInt() ?? photo.width;
+                      final height =
+                          (metadata['height'] as num?)?.toInt() ?? photo.height;
+                      final camera = [
+                        '${metadata['cameraMake'] ?? ''}'.trim(),
+                        '${metadata['cameraModel'] ?? ''}'.trim(),
+                      ].where((value) => value.isNotEmpty).join(' ');
+                      final originalDate =
+                          '${metadata['dateTimeOriginal'] ?? ''}'.trim();
+                      final details = [
+                        '尺寸：${width > 0 ? '$width × $height' : '未知'}',
+                        '拍摄时间：${_formatDate(photo.takenAt)}',
+                        if (camera.isNotEmpty) '设备：$camera',
+                        if (originalDate.isNotEmpty) '原始时间：$originalDate',
+                        '媒体地址：${photo.uri}',
+                      ].join('\n');
+                      return Text(
+                        details,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      );
+                    },
                   ),
                   const SizedBox(height: 8),
                   Row(
@@ -4713,6 +4734,20 @@ class _DevicesScreenState extends State<DevicesScreen>
       if (mounted) _showMessage('已发送 ${photo.name}');
     } catch (error) {
       if (mounted) _showMessage('发送失败：$error');
+    }
+  }
+
+  Future<Map<String, dynamic>> _loadPhotoMetadata(PhotoItem photo) async {
+    try {
+      return await widget.dataService.loadMediaMetadata(
+        uri: photo.uri,
+        name: photo.name,
+        mimeType: 'image/${_photoExtension(photo.name)}',
+      );
+    } catch (_) {
+      // Metadata is supplementary; a provider without EXIF must not break
+      // the normal high-resolution preview.
+      return const <String, dynamic>{};
     }
   }
 

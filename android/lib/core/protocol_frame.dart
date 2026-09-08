@@ -25,6 +25,7 @@ enum MessageType {
   notificationAction(0x0071),
   toolCommand(0x0080),
   toolResult(0x0081),
+  compressedControl(0x0082),
   unknown(0x0000);
 
   final int value;

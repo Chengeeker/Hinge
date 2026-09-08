@@ -64,7 +64,7 @@ git diff --check
 
 ## 6. 构建开发版
 
-当前开发版产品版本为 `1.0.17`，GitHub 标签为 `v1.0.17-dev.1`。Android build number 为 `18`，Windows AppX 版本为 `1.0.17.0`。
+当前开发版产品版本为 `1.0.17`，GitHub 标签为 `v1.0.17-dev.2`。Android build number 为 `18`，Windows 文件版本为 `1.0.17.0`。
 
 ```powershell
 $env:HINGE_KEYSTORE_PASSWORD = '<keystore-password>'
@@ -80,16 +80,16 @@ $env:HINGE_KEY_ALIAS = '<your-key-alias>'
 - `publish/android/Hinge.apk`；
 - `publish/windows/Hinge-Setup.exe`；
 - `publish/windows/Hinge-Windows.zip`；
-- 可用时还有 `publish/windows/Hinge-Installer.msix` 和 `Hinge-Installer.cer`。
+- Windows 发布只包含 `publish/windows/Hinge-Setup.exe` 和 `publish/windows/Hinge-Windows.zip`，不生成或上传 MSIX / 测试证书。
 
-发布前检查 Android APK 的 V2/V3 签名、包名 `com.hinge.office`、版本名/构建号，以及 AppX 清单版本。不要把密码、签名库、`publish/` 或 `tmp/` 加入 Git。
+发布前检查 Android APK 的 V2/V3 签名、包名 `com.hinge.office`、版本名/构建号，以及 Windows 文件版本。不要把密码、签名库、`publish/` 或 `tmp/` 加入 Git。
 
 ## 7. 版本与 GitHub 发布
 
 1. 同步 `android/pubspec.yaml`、`android/lib/core/constants.dart`、`windows/Hinge.Core/Constants.cs`、两个 Windows manifest 和 `CHANGELOG.md`；
 2. 运行双端测试和构建，计算发布资产 SHA-256；
 3. 提交源码、协议和文档到 `main`；
-4. 推送标签并创建 GitHub pre-release，上传 APK、EXE、ZIP，以及确实生成的 MSIX/CER；
+4. 推送标签并创建 GitHub pre-release，上传 APK、EXE 和 ZIP；
 5. 发布说明只写已经验证的内容，并明确真实设备仍需验收的边界。
 
 ## 8. 目前不能过度宣传的能力

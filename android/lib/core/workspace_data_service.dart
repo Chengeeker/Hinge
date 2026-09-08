@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -592,6 +593,23 @@ class WorkspaceDataService {
     return raw is Uint8List ? raw : null;
   }
 
+  /// Reads lightweight metadata without copying the media file into the
+  /// Android app cache. The native side inspects only headers/metadata and
+  /// returns dimensions, duration, bitrate and available EXIF fields.
+  Future<Map<String, dynamic>> loadMediaMetadata({
+    required String uri,
+    String name = '',
+    String mimeType = '',
+  }) async {
+    final raw = await _invoke('mediaMetadata', {
+      'uri': uri,
+      'name': name,
+      'mimeType': mimeType,
+    });
+    if (raw is! Map) return const <String, dynamic>{};
+    return Map<String, dynamic>.from(raw);
+  }
+
   Future<String?> copyUriToCache(String uri, String fileName) async {
     final raw = await _invoke('copyUriToCache', {
       'uri': uri,
@@ -749,14 +767,41 @@ class WorkspaceDataService {
   }
 }
 
+class _AsyncPermitPool {
+  final int _capacity;
+  int _available;
+  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+
+  _AsyncPermitPool(this._capacity) : _available = _capacity;
+
+  Future<void> acquire() {
+    if (_available > 0) {
+      _available--;
+      return Future<void>.value();
+    }
+    final waiter = Completer<void>();
+    _waiters.addLast(waiter);
+    return waiter.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeFirst().complete();
+      return;
+    }
+    _available = (_available + 1).clamp(0, _capacity);
+  }
+}
+
 class WorkspaceCommandRouter {
+  static const int _maxConcurrentCommandsPerConnection = 4;
   final SessionManager sessionManager;
   final WorkspaceDataService dataService;
   final PairingManager pairingManager;
   final TransferManager transferManager;
   StreamSubscription<SessionConnection>? _connectionsSubscription;
   final List<StreamSubscription<ProtocolFrame>> _frameSubscriptions = [];
-  final Map<SessionConnection, Future<void>> _connectionQueues = {};
+  final Map<SessionConnection, _AsyncPermitPool> _connectionGates = {};
 
   WorkspaceCommandRouter({
     required this.sessionManager,
@@ -772,24 +817,36 @@ class WorkspaceCommandRouter {
   }
 
   void _watchConnection(SessionConnection connection) {
+    final gate = _connectionGates.putIfAbsent(
+      connection,
+      () => _AsyncPermitPool(_maxConcurrentCommandsPerConnection),
+    );
     final subscription = connection.frames.listen((frame) {
-      // A single ordered queue per connection prevents several expensive
-      // ContentResolver queries from racing on the same TCP stream. Control
-      // responses remain paired with their command IDs on the Windows side.
-      final previous = _connectionQueues[connection] ?? Future<void>.value();
-      final next = previous
-          .catchError((_) {})
-          .then((_) => _handleFrame(connection, frame));
-      _connectionQueues[connection] = next;
-      unawaited(
-        next.whenComplete(() {
-          if (identical(_connectionQueues[connection], next)) {
-            _connectionQueues.remove(connection);
-          }
-        }),
-      );
+      if (frame.type != MessageType.toolCommand) return;
+      // ContentResolver and thumbnail work may run concurrently, but the
+      // bounded gate prevents a large grid from creating an unbounded number
+      // of native jobs. Windows matches responses by commandId, so response
+      // order does not need to match request order.
+      unawaited(_runCommandWithPermit(connection, gate, frame));
     });
     _frameSubscriptions.add(subscription);
+  }
+
+  Future<void> _runCommandWithPermit(
+    SessionConnection connection,
+    _AsyncPermitPool gate,
+    ProtocolFrame frame,
+  ) async {
+    await gate.acquire();
+    try {
+      await _handleFrame(connection, frame);
+    } catch (_) {
+      // The command handler sends a structured failure response. A detached
+      // handler must not become an unhandled future if the socket closes
+      // while that response is being written.
+    } finally {
+      gate.release();
+    }
   }
 
   Future<void> _handleFrame(
@@ -879,6 +936,12 @@ class WorkspaceCommandRouter {
           '${payload['uri'] ?? ''}',
         );
         return bytes == null ? null : base64Encode(bytes);
+      case 'mediaMetadata':
+        return await dataService.loadMediaMetadata(
+          uri: '${payload['uri'] ?? ''}',
+          name: '${payload['name'] ?? ''}',
+          mimeType: '${payload['mimeType'] ?? ''}',
+        );
       case 'sendMediaToComputer':
         final uri = '${payload['uri'] ?? ''}'.trim();
         final fileName = '${payload['fileName'] ?? '手机文件'}'.trim();
@@ -1005,7 +1068,7 @@ class WorkspaceCommandRouter {
       subscription.cancel();
     }
     _frameSubscriptions.clear();
-    _connectionQueues.clear();
+    _connectionGates.clear();
   }
 }
 

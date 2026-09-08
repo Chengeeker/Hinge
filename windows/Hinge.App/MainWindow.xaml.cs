@@ -3445,6 +3445,10 @@ public sealed partial class MainWindow : Window
         try
         {
             var localFile = await StorageFile.GetFileFromPathAsync(filePath);
+            // Metadata is requested in parallel with opening the cached file.
+            // A slow or older Android peer must never block the user's default
+            // Windows media app from launching.
+            var metadataTask = TryLoadRemoteMediaMetadataAsync(entry);
             // Let Windows choose the registered native media handler. This
             // avoids hosting a second MediaPlayerElement window in Hinge
             // Suite, so closing playback cannot race the main window's
@@ -3463,10 +3467,14 @@ public sealed partial class MainWindow : Window
 
             if (launched)
             {
+                var metadata = await metadataTask;
+                var description = FormatRemoteMediaMetadata(metadata);
+                var status = string.IsNullOrWhiteSpace(description)
+                    ? $"已交给 Windows 默认应用打开：{entry.Name}"
+                    : $"已交给 Windows 默认应用打开：{entry.Name} · {description}";
                 if (_filePage != null)
                 {
-                    _filePage.StatusText.Text =
-                        $"已交给 Windows 默认应用打开：{entry.Name}";
+                    _filePage.StatusText.Text = status;
                 }
                 return;
             }
@@ -3480,6 +3488,53 @@ public sealed partial class MainWindow : Window
         {
             await ShowDialogAsync($"无法打开{typeName}", exception.Message, false);
         }
+    }
+
+    private async Task<RemoteMediaMetadata?> TryLoadRemoteMediaMetadataAsync(
+        RemoteFileEntry entry)
+    {
+        var connection = GetConnectedConnection();
+        if (connection == null || string.IsNullOrWhiteSpace(entry.Uri)) return null;
+        try
+        {
+            return await _workspaceRemoteClient.LoadMediaMetadataAsync(
+                connection,
+                entry.Uri,
+                entry.Name,
+                entry.MimeType);
+        }
+        catch
+        {
+            // Metadata is enhancement-only. Opening the user's default app
+            // must continue to work with older APKs or restricted providers.
+            return null;
+        }
+    }
+
+    private static string FormatRemoteMediaMetadata(RemoteMediaMetadata? metadata)
+    {
+        if (metadata == null) return string.Empty;
+        var parts = new List<string>();
+        if (metadata.Width > 0 && metadata.Height > 0)
+        {
+            parts.Add($"{metadata.Width}×{metadata.Height}");
+        }
+        if (metadata.DurationMs > 0)
+        {
+            var duration = TimeSpan.FromMilliseconds(metadata.DurationMs);
+            parts.Add(duration.TotalHours >= 1
+                ? duration.ToString(@"h\:mm\:ss")
+                : duration.ToString(@"m\:ss"));
+        }
+        if (metadata.Bitrate > 0)
+        {
+            parts.Add($"{metadata.Bitrate / 1000} kbps");
+        }
+        var camera = string.Join(" ", new[] { metadata.CameraMake, metadata.CameraModel }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (!string.IsNullOrWhiteSpace(camera)) parts.Add(camera);
+        if (!string.IsNullOrWhiteSpace(metadata.Artist)) parts.Add(metadata.Artist);
+        return string.Join(" · ", parts);
     }
 
     private async Task SaveRemoteImageAsync(RemoteFileEntry entry, SessionConnection connection)

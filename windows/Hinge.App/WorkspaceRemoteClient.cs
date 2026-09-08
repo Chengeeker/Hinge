@@ -35,6 +35,51 @@ public sealed class RemoteFileEntry
     public string Category { get; set; } = string.Empty;
 }
 
+public sealed class RemoteMediaMetadata
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("mimeType")]
+    public string MimeType { get; set; } = "application/octet-stream";
+
+    [JsonPropertyName("durationMs")]
+    public long DurationMs { get; set; }
+
+    [JsonPropertyName("width")]
+    public int Width { get; set; }
+
+    [JsonPropertyName("height")]
+    public int Height { get; set; }
+
+    [JsonPropertyName("rotation")]
+    public int Rotation { get; set; }
+
+    [JsonPropertyName("bitrate")]
+    public long Bitrate { get; set; }
+
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [JsonPropertyName("artist")]
+    public string Artist { get; set; } = string.Empty;
+
+    [JsonPropertyName("album")]
+    public string Album { get; set; } = string.Empty;
+
+    [JsonPropertyName("cameraMake")]
+    public string CameraMake { get; set; } = string.Empty;
+
+    [JsonPropertyName("cameraModel")]
+    public string CameraModel { get; set; } = string.Empty;
+
+    [JsonPropertyName("dateTimeOriginal")]
+    public string DateTimeOriginal { get; set; } = string.Empty;
+
+    [JsonPropertyName("orientation")]
+    public int Orientation { get; set; }
+}
+
 public sealed class RemoteFilePage
 {
     public IReadOnlyList<RemoteFileEntry> Entries { get; init; } = Array.Empty<RemoteFileEntry>();
@@ -369,6 +414,26 @@ public sealed class WorkspaceRemoteClient
         {
             return Array.Empty<RemotePhotoItem>();
         }
+    }
+
+    public async Task<RemoteMediaMetadata?> LoadMediaMetadataAsync(
+        SessionConnection connection,
+        string uri,
+        string name,
+        string mimeType)
+    {
+        var raw = await InvokeAsync(
+            connection,
+            "mediaMetadata",
+            new Dictionary<string, object?>
+            {
+                ["uri"] = uri,
+                ["name"] = name,
+                ["mimeType"] = mimeType,
+            });
+        return raw.ValueKind == JsonValueKind.Object
+            ? JsonSerializer.Deserialize<RemoteMediaMetadata>(raw.GetRawText(), JsonOptions)
+            : null;
     }
 
     public Task<IReadOnlyList<RemoteWorkspaceNote>> LoadNotesAsync(SessionConnection connection) =>

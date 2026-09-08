@@ -133,8 +133,15 @@ public class PairingAndSessionTests
         }
         Assert.Equal("client-dev", incomingConnection?.RemoteDeviceId);
         Assert.Equal("server-dev", connection.RemoteDeviceId);
+        Assert.Contains(
+            ProtocolCompression.Capability,
+            incomingConnection?.PeerInfo?.Capabilities ?? Array.Empty<string>());
+        Assert.Contains(
+            ProtocolCompression.Capability,
+            connection.PeerInfo?.Capabilities ?? Array.Empty<string>());
 
-        byte[] payload = Encoding.UTF8.GetBytes("Hello Secure World");
+        byte[] payload = Encoding.UTF8.GetBytes(
+            string.Concat(Enumerable.Repeat("Hello Secure World ", 300)));
         await connection.SendFrameAsync(MessageType.TextMessage, payload);
 
         var received = await Task.WhenAny(tcs.Task, Task.Delay(3000));
@@ -142,7 +149,7 @@ public class PairingAndSessionTests
 
         var frame = await tcs.Task;
         Assert.Equal(MessageType.TextMessage, frame.Type);
-        Assert.Equal("Hello Secure World", Encoding.UTF8.GetString(frame.Payload));
+        Assert.Equal(payload, frame.Payload);
     }
 
     [Fact]

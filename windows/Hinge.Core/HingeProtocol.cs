@@ -27,6 +27,7 @@ public enum MessageType : ushort
     NotificationAction = 0x0071,
     ToolCommand     = 0x0080,
     ToolResult      = 0x0081,
+    CompressedControl = 0x0082,
 }
 
 public class ProtocolFrame

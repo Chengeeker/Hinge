@@ -6,7 +6,7 @@
 
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台。当前工程由三个相互配合的部分组成：
 
-- `android/`：Flutter 页面、工作区和设置，以及 Android 原生 MethodChannel、前台服务、MediaStore、CalendarContract、通知和系统设置跳转；
+- `android/`：Flutter 页面、工作区和设置，以及 Android 原生 MethodChannel、EventChannel、前台服务、MediaStore、CalendarContract、短信广播、通知和系统设置跳转；
 - `windows/`：WinUI 3 / Windows App SDK 桌面客户端、文件管理、相册、设置、托盘和 Windows 平台适配；
 - `protocol/`：发现、会话、传输、剪贴板、通知、配对和实验性投屏的跨端帧与状态说明。
 
@@ -64,7 +64,7 @@ git diff --check
 
 ## 6. 构建开发版
 
-当前开发版产品版本为 `1.0.17`，GitHub 标签为 `v1.0.17-dev.2`。Android build number 为 `18`，Windows 文件版本为 `1.0.17.0`。
+当前开发版产品版本为 `1.0.27`，GitHub 标签为 `v1.0.27-dev.1`。Android build number 为 `28`，Windows 文件版本为 `1.0.27.0`。
 
 ```powershell
 $env:HINGE_KEYSTORE_PASSWORD = '<keystore-password>'
@@ -81,6 +81,8 @@ $env:HINGE_KEY_ALIAS = '<your-key-alias>'
 - `publish/windows/Hinge-Setup.exe`；
 - `publish/windows/Hinge-Windows.zip`；
 - Windows 发布只包含 `publish/windows/Hinge-Setup.exe` 和 `publish/windows/Hinge-Windows.zip`，不生成或上传 MSIX / 测试证书。
+- EXE 安装器会给开始菜单快捷方式写入稳定的 `Hinge.Office` AppUserModelId；这是 unpackaged EXE 使用 Windows 原生 Toast 的必要身份信息。短信通知正常路径只显示在 Windows 通知中心，应用内卡片仅作为系统通知不可用时的诊断兜底。
+- 短信/彩信通知固定使用 `Win32TrayManager` 的 `NotifyIcon.ShowBalloonTip` 托盘气泡；只有识别为验证码时才绑定点击复制动作，普通通知点击仍打开 Hinge，不再显示右上角应用内浮层。
 
 发布前检查 Android APK 的 V2/V3 签名、包名 `com.hinge.office`、版本名/构建号，以及 Windows 文件版本。不要把密码、签名库、`publish/` 或 `tmp/` 加入 Git。
 

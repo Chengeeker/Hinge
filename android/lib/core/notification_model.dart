@@ -6,6 +6,12 @@ class NotificationEventMessage {
   final String appName;
   final String title;
   final String content;
+
+  /// Optional source discriminator for specialized relays such as SMS/MMS.
+  /// Generic notifications keep this empty for backwards compatibility.
+  final String source;
+  final bool isVerificationCode;
+  final String? verificationCode;
   final int timestamp;
   final bool canReply;
   final List<String> actions;
@@ -16,6 +22,9 @@ class NotificationEventMessage {
     this.appName = '',
     this.title = '',
     this.content = '',
+    this.source = '',
+    this.isVerificationCode = false,
+    this.verificationCode,
     int? timestamp,
     this.canReply = false,
     List<String>? actions,
@@ -30,6 +39,10 @@ class NotificationEventMessage {
     'appName': appName,
     'title': title,
     'content': content,
+    if (source.isNotEmpty) 'source': source,
+    if (isVerificationCode) 'isVerificationCode': true,
+    if (verificationCode != null && verificationCode!.isNotEmpty)
+      'verificationCode': verificationCode,
     'timestamp': timestamp,
     'canReply': canReply,
     'actions': actions,
@@ -46,6 +59,9 @@ class NotificationEventMessage {
         appName: map['appName'] as String? ?? '',
         title: map['title'] as String? ?? '',
         content: map['content'] as String? ?? '',
+        source: map['source'] as String? ?? '',
+        isVerificationCode: map['isVerificationCode'] as bool? ?? false,
+        verificationCode: map['verificationCode'] as String?,
         timestamp: (map['timestamp'] as num?)?.toInt(),
         canReply: map['canReply'] as bool? ?? false,
         actions: (map['actions'] as List<dynamic>?)

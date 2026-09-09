@@ -10,7 +10,7 @@
                     <TextBlock Text="应用设置" FontSize="18" FontWeight="SemiBold" />
                     <Button x:Name="PersonalizationButton" Content="个性化" HorizontalAlignment="Left" />
                     <StackPanel Spacing="8">
-                        <TextBlock Text="自定义存储位置" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Text="自定义存储位置" FontSize="15" FontWeight="SemiBold" />
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -31,6 +31,33 @@
                         </Grid>
                         <TextBlock
                             Text="批量保存文件和照片时使用此目录。更新应用不会清除该设置。"
+                            FontSize="14"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Windows 通知" FontSize="15" FontWeight="SemiBold" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                x:Name="NotificationStatusText"
+                                Grid.Column="0"
+                                VerticalAlignment="Center"
+                                Text="检查中…"
+                                FontSize="14"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap" />
+                            <Button
+                                x:Name="OpenNotificationSettingsButton"
+                                Grid.Column="1"
+                                Content="打开通知设置"
+                                HorizontalAlignment="Right" />
+                        </Grid>
+                        <TextBlock
+                            Text="即使 Windows 系统通知被关闭，Hinge 仍会在窗口内显示手机短信和验证码。"
                             FontSize="14"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             TextWrapping="Wrap" />

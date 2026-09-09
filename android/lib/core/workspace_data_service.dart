@@ -419,6 +419,61 @@ class WorkspaceDataService {
     await _invoke('setPersistentNotificationEnabled', {'enabled': enabled});
   }
 
+  Future<bool> smsRelayEnabled() async {
+    final raw = await _invoke('smsRelayEnabled');
+    return raw is bool ? raw : false;
+  }
+
+  Future<bool> setSmsRelayEnabled(bool enabled) async {
+    final raw = await _invoke('setSmsRelayEnabled', {'enabled': enabled});
+    return raw is bool ? raw : false;
+  }
+
+  Future<Map<String, bool>> smsPermissionStatus() async {
+    final raw = await _invoke('smsPermissionStatus');
+    if (raw is! Map) {
+      return const {'sms': false, 'readSms': false, 'mms': false};
+    }
+    return {
+      'sms': raw['sms'] == true,
+      'readSms': raw['readSms'] == true,
+      'mms': raw['mms'] == true,
+    };
+  }
+
+  Future<Map<String, bool>> requestSmsPermissions() async {
+    final raw = await _invoke('requestSmsPermissions');
+    if (raw is! Map) {
+      return const {'sms': false, 'readSms': false, 'mms': false};
+    }
+    return {
+      'sms': raw['sms'] == true,
+      'readSms': raw['readSms'] == true,
+      'mms': raw['mms'] == true,
+    };
+  }
+
+  Future<bool> smsNotificationAccessEnabled() async {
+    return await _invoke('smsNotificationAccessEnabled') == true;
+  }
+
+  Future<bool> openSmsNotificationAccessSettings() async {
+    return await _invoke('openSmsNotificationAccessSettings') == true;
+  }
+
+  Future<bool> sendSmsRelayTestEvent() async {
+    return await _invoke('sendSmsRelayTestEvent') == true;
+  }
+
+  Future<bool> smsPermissionPromptShown() async {
+    final raw = await _invoke('smsPermissionPromptShown');
+    return raw is bool ? raw : false;
+  }
+
+  Future<void> setSmsPermissionPromptShown(bool shown) async {
+    await _invoke('setSmsPermissionPromptShown', {'shown': shown});
+  }
+
   Future<Map<String, dynamic>> keepAliveStatus() async {
     final raw = await _invoke('keepAliveStatus');
     if (raw is! Map) return const {};

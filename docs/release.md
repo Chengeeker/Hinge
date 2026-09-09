@@ -4,8 +4,8 @@
 
 ## 版本约定
 
-- Android 应用版本来自 `android/pubspec.yaml`，当前开发版为 `1.0.17+18`；
-- Android 和 Windows 的产品版本名保持为 `1.0.17`；本次 GitHub 开发版标签为 `v1.0.17-dev.2`；
+- Android 应用版本来自 `android/pubspec.yaml`，当前开发版为 `1.0.27+28`；
+- Android 和 Windows 的产品版本名保持为 `1.0.27`；本次 GitHub 开发版标签为 `v1.0.27-dev.1`；
 - Windows 发布只提供自包含 EXE 安装器和便携 ZIP，不提供 MSIX 或测试证书。
 - EXE 安装器启用 .NET 单文件压缩；安装逻辑不变，发布前仍需验证安装、更新和目录选择。
 
@@ -45,7 +45,7 @@ $env:HINGE_KEY_PASSWORD = '<key-password>'
 ## GitHub Release
 
 1. 提交源码、协议和文档，不提交 `publish/` 二进制目录；
-2. 推送 `main` 和版本标签 `v1.0.17-dev.2`；
+2. 推送 `main` 和版本标签 `v1.0.27-dev.1`；
 3. 创建标记为 pre-release 的 GitHub Release；
 4. 上传 APK、EXE 和 ZIP；
 5. 使用 `CHANGELOG.md` 生成发布说明，并在发布页注明真机验收边界；

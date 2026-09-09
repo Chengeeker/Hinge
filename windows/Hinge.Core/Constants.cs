@@ -3,7 +3,7 @@ namespace Hinge.Core;
 public static class Constants
 {
     public const string AppName = "Hinge";
-    public const string AppVersion = "1.0.17";
+    public const string AppVersion = "1.0.27";
     public const string ProtocolVersion = "0.1";
 
     public const int DiscoveryUdpPort = 52830;

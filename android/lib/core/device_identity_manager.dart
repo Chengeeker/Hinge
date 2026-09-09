@@ -52,9 +52,7 @@ class DeviceIdentityManager {
               Platform.environment['APPDATA'] ??
               Directory.systemTemp.path)
         : (Platform.environment['HOME'] ?? Directory.systemTemp.path);
-    final dir = Directory(
-      Platform.isWindows ? '$home/Hinge' : '$home/.hinge',
-    );
+    final dir = Directory(Platform.isWindows ? '$home/Hinge' : '$home/.hinge');
     if (!dir.existsSync()) {
       dir.createSync(recursive: true);
     }
@@ -88,9 +86,8 @@ class DeviceIdentityManager {
               requestedName != id.name;
           final shouldRefreshHardwareInfo =
               requestedManufacturer.isNotEmpty &&
-              requestedManufacturer != id.manufacturer ||
-              requestedModel.isNotEmpty &&
-              requestedModel != id.model;
+                  requestedManufacturer != id.manufacturer ||
+              requestedModel.isNotEmpty && requestedModel != id.model;
           if (shouldRefreshAndroidName || shouldRefreshHardwareInfo) {
             final updated = DeviceIdentity(
               deviceId: id.deviceId,

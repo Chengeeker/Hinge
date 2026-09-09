@@ -11,6 +11,8 @@ public class Win32TrayManager : ITrayManager
     private bool _isVisible;
     private string _appName = "Hinge";
     private string _currentTooltip = "Hinge — LAN Cross-Device Hub";
+    private readonly object _notificationLock = new();
+    private Action? _balloonTipClickAction;
     private bool _disposed;
 
     public bool IsVisible => _isVisible;
@@ -50,7 +52,30 @@ public class Win32TrayManager : ITrayManager
                 Visible = true
             };
             _notifyIcon.DoubleClick += (_, _) => RequestOpen();
-            _notifyIcon.BalloonTipClicked += (_, _) => RequestOpen();
+            _notifyIcon.BalloonTipClicked += (_, _) =>
+            {
+                Action? clickAction;
+                lock (_notificationLock)
+                {
+                    clickAction = _balloonTipClickAction;
+                    _balloonTipClickAction = null;
+                }
+
+                if (clickAction != null)
+                {
+                    try
+                    {
+                        clickAction();
+                    }
+                    catch
+                    {
+                        // Notification actions must not take down the tray host.
+                    }
+                    return;
+                }
+
+                RequestOpen();
+            };
         }
         catch
         {
@@ -70,8 +95,17 @@ public class Win32TrayManager : ITrayManager
 
     public void ShowNotification(string title, string text)
     {
+        ShowNotification(title, text, null);
+    }
+
+    public void ShowNotification(string title, string text, Action? clickAction)
+    {
         if (_notifyIcon != null)
         {
+            lock (_notificationLock)
+            {
+                _balloonTipClickAction = clickAction;
+            }
             _notifyIcon.BalloonTipTitle = LimitTooltip(title);
             _notifyIcon.BalloonTipText = text;
             _notifyIcon.ShowBalloonTip(3000);
@@ -108,6 +142,10 @@ public class Win32TrayManager : ITrayManager
         }
         _contextMenu?.Dispose();
         _contextMenu = null;
+        lock (_notificationLock)
+        {
+            _balloonTipClickAction = null;
+        }
     }
 
     private static Icon LoadApplicationIcon()

@@ -248,7 +248,8 @@ public sealed partial class MainWindow : Window
         _clipboardManager = new ClipboardManager(_localIdentity, _clipboardAdapter);
         _inputInjector = new Win32InputInjector();
         _remoteInputManager = new RemoteInputManager(_inputInjector, _trustStore);
-        _notificationPresenter = new Win32NotificationPresenter();
+        _notificationPresenter = new Win32NotificationPresenter(
+            text => _ = _clipboardAdapter.SetTextAsync(text));
         _notificationManager = new NotificationManager(_notificationPresenter, _trustStore);
         _sessionManager = new SessionManager(_localIdentity, _trustStore);
         _registry = new DeviceRegistry();
@@ -694,6 +695,8 @@ public sealed partial class MainWindow : Window
         page.Personalization.Click += BtnPersonalization_Click;
         page.Storage.Click += BtnStorage_Click;
         page.StoragePath.Text = _receiveDirectory;
+        page.NotificationStatus.Text = _notificationPresenter.SystemNotificationStatus;
+        page.OpenNotificationSettings.Click += OpenNotificationSettings_Click;
         page.About.Click += BtnAbout_Click;
         page.MinimizeToTray.IsOn = _minimizeToTray;
         page.MinimizeToTray.Toggled += MinimizeToTray_Toggled;
@@ -1837,7 +1840,58 @@ public sealed partial class MainWindow : Window
 
     private void OnNotificationReceived(object? sender, NotificationEventMessage notification)
     {
-        DispatcherQueue.TryEnqueue(() => StatusText.Text = $"收到通知：{notification.AppName} · {notification.Title}");
+        var isSmsNotification = string.Equals(notification.Source, "sms", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(notification.Source, "mms", StringComparison.OrdinalIgnoreCase);
+        var useTrayNotification = isSmsNotification ||
+            !_notificationPresenter.IsSystemNotificationAvailable;
+
+        // SMS/MMS always uses the tray balloon so it is useful while Hinge is
+        // minimized. Only a recognized SMS/MMS verification code gets a
+        // copy-on-click action; all other notifications keep the normal open
+        // behavior.
+        if (useTrayNotification)
+        {
+            var hasVerificationCode = isSmsNotification &&
+                notification.IsVerificationCode &&
+                !string.IsNullOrWhiteSpace(notification.VerificationCode);
+            var fallbackText = hasVerificationCode
+                ? $"{notification.Title}\n{notification.Content}\n点击此通知复制验证码"
+                : $"{notification.Title}\n{notification.Content}";
+
+            if (hasVerificationCode)
+            {
+                _trayManager.ShowNotification(
+                    string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName,
+                    fallbackText,
+                    () =>
+                    {
+                        if (!_notificationPresenter.TryCopyVerificationCode(notification.NotificationId))
+                        {
+                            _ = _clipboardAdapter.SetTextAsync(notification.VerificationCode!);
+                        }
+                    });
+            }
+            else
+            {
+                _trayManager.ShowNotification(
+                    string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName,
+                    fallbackText);
+            }
+        }
+        DispatcherQueue.TryEnqueue(() =>
+            StatusText.Text = $"已收到远程通知：{notification.Title}");
+    }
+
+    private async void OpenNotificationSettings_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Launcher.LaunchUriAsync(new Uri("ms-settings:notifications"));
+        }
+        catch
+        {
+            SettingsStatusText.Text = "无法打开 Windows 通知设置，请手动搜索“通知”。";
+        }
     }
 
     private void RefreshDeviceList(IReadOnlyList<Device> devices)

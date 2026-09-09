@@ -13,6 +13,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'personalization_screen.dart';
 import 'keep_alive_settings_screen.dart';
 import 'default_apps_screen.dart';
+import 'sms_relay_settings_screen.dart';
 
 import '../core/clipboard_adapter.dart';
 import '../core/clipboard_manager.dart';
@@ -22,7 +23,9 @@ import '../core/device_model.dart';
 import '../core/device_registry.dart';
 import '../core/discovery_service.dart';
 import '../core/pairing_manager.dart';
+import '../core/notification_manager.dart';
 import '../core/session_manager.dart';
+import '../core/sms_relay_manager.dart';
 import '../core/transfer_manager.dart';
 import '../core/transfer_model.dart';
 import '../core/trust_store.dart';
@@ -648,6 +651,8 @@ class _DevicesScreenState extends State<DevicesScreen>
   final Set<SessionConnection> _watchedConnections = <SessionConnection>{};
   StreamSubscription? _clipboardSubscription;
   StreamSubscription? _urlSubscription;
+  late final NotificationManager _notificationManager;
+  late final SmsRelayManager _smsRelayManager;
   SessionConnection? _activeConnection;
   Device? _activeDevice;
   Device? _lastConnectedDevice;
@@ -705,6 +710,10 @@ class _DevicesScreenState extends State<DevicesScreen>
     _ownsWorkspaceState = widget.workspaceState == null;
     widget.transferManager.chooseReceiveDirectory =
         _chooseWindowsReceiveDirectory;
+    _notificationManager = NotificationManager();
+    _smsRelayManager = SmsRelayManager(
+      notificationManager: _notificationManager,
+    );
     _configureTransferStorage();
     widget.clipboardManager.autoSync = _workspaceState.clipboardSyncEnabled;
     _registryDevices = widget.discoveryService.registry.devices;
@@ -776,6 +785,8 @@ class _DevicesScreenState extends State<DevicesScreen>
     _incomingPeerSubscriptions.clear();
     _clipboardSubscription?.cancel();
     _urlSubscription?.cancel();
+    unawaited(_smsRelayManager.dispose());
+    _notificationManager.dispose();
     _activeConnection?.dispose();
     _ipController.dispose();
     super.dispose();
@@ -865,12 +876,15 @@ class _DevicesScreenState extends State<DevicesScreen>
           _photosPermission = photosGranted;
         });
       }
-      if (calendarGranted &&
-              photosGranted &&
-              mediaGranted &&
-              allFilesGranted &&
-              notificationGranted ||
-          !mounted) {
+      final basePermissionsGranted =
+          calendarGranted &&
+          photosGranted &&
+          mediaGranted &&
+          allFilesGranted &&
+          notificationGranted;
+      if (!mounted) return;
+      if (basePermissionsGranted) {
+        await _maybePromptSmsRelayPermission();
         return;
       }
 
@@ -893,29 +907,72 @@ class _DevicesScreenState extends State<DevicesScreen>
           ],
         ),
       );
-      if (shouldRequest != true || !mounted) return;
-
-      if (!calendarGranted) {
-        await widget.dataService.requestCalendarPermission();
+      if (shouldRequest == true && mounted) {
+        if (!calendarGranted) {
+          await widget.dataService.requestCalendarPermission();
+        }
+        if (!photosGranted) {
+          await widget.dataService.requestPhotosPermission();
+        }
+        if (!mediaGranted) {
+          await widget.dataService.requestMediaPermission();
+        }
+        if (!allFilesGranted) {
+          await widget.dataService.openAllFilesAccessSettings();
+        }
+        if (!notificationGranted) {
+          await widget.dataService.requestNotificationPermission();
+        }
       }
-      if (!photosGranted) {
-        await widget.dataService.requestPhotosPermission();
-      }
-      if (!mediaGranted) {
-        await widget.dataService.requestMediaPermission();
-      }
-      if (!allFilesGranted) {
-        await widget.dataService.openAllFilesAccessSettings();
-      }
-      if (!notificationGranted) {
-        await widget.dataService.requestNotificationPermission();
-      }
+      await _maybePromptSmsRelayPermission();
       await _refreshCalendar();
       await _refreshPhotoAlbums();
     } catch (error) {
       if (mounted) {
         _showMessage('权限请求未完成：$error');
       }
+    }
+  }
+
+  Future<void> _maybePromptSmsRelayPermission() async {
+    if (_isDesktop || !mounted) return;
+    final prompted = await widget.dataService.smsPermissionPromptShown();
+    if (prompted || !mounted) return;
+
+    final permissions = await widget.dataService.smsPermissionStatus();
+    if (permissions['sms'] == true && permissions['readSms'] == true) {
+      await widget.dataService.setSmsPermissionPromptShown(true);
+      return;
+    }
+
+    await widget.dataService.setSmsPermissionPromptShown(true);
+    if (!mounted) return;
+    final shouldOpen = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('开启短信同步'),
+        content: const Text(
+          '如果你希望在 Windows 上收到手机短信和验证码提醒，需要额外允许 Hinge 接收短信，并在系统允许时开启“访问短信/彩信”。这项功能默认关闭，不会读取历史短信。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('稍后处理'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('去授权'),
+          ),
+        ],
+      ),
+    );
+    if (shouldOpen == true && mounted) {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              SmsRelaySettingsScreen(dataService: widget.dataService),
+        ),
+      );
     }
   }
 
@@ -1158,6 +1215,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   void _watchConnectionData(SessionConnection connection) {
     if (!_watchedConnections.add(connection)) return;
     widget.clipboardManager.registerConnection(connection);
+    _smsRelayManager.registerConnection(connection);
     _incomingPeerSubscriptions.add(
       connection.frames.listen((frame) {
         unawaited(
@@ -1173,6 +1231,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         if (state == SessionState.disconnected) {
           _watchedConnections.remove(connection);
           widget.clipboardManager.unregisterConnection(connection);
+          _smsRelayManager.unregisterConnection(connection);
         }
       }),
     );
@@ -3643,6 +3702,22 @@ class _DevicesScreenState extends State<DevicesScreen>
                     MaterialPageRoute<void>(
                       builder: (_) =>
                           DefaultAppsScreen(dataService: widget.dataService),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
+                  leading: Icon(Symbols.sms_rounded, color: scheme.primary),
+                  title: const Text('短信同步'),
+                  subtitle: const Text('将新短信和验证码转发到 Windows'),
+                  trailing: const Icon(Symbols.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SmsRelaySettingsScreen(
+                        dataService: widget.dataService,
+                      ),
                     ),
                   ),
                 ),

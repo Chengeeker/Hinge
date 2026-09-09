@@ -20,6 +20,16 @@ public class NotificationEventMessage
     [JsonPropertyName("content")]
     public string Content { get; set; } = string.Empty;
 
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = string.Empty;
+
+    [JsonPropertyName("isVerificationCode")]
+    public bool IsVerificationCode { get; set; }
+
+    [JsonPropertyName("verificationCode")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? VerificationCode { get; set; }
+
     [JsonPropertyName("timestamp")]
     public long Timestamp { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 

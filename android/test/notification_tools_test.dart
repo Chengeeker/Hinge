@@ -20,6 +20,7 @@ void main() {
         appName: 'Slack',
         title: 'Design Lead',
         content: 'Figma mockups updated',
+        source: 'generic',
         timestamp: 1725450000000,
         canReply: true,
         actions: ['reply', 'dismiss'],
@@ -34,9 +35,32 @@ void main() {
       expect(parsed.appName, equals('Slack'));
       expect(parsed.title, equals('Design Lead'));
       expect(parsed.content, equals('Figma mockups updated'));
+      expect(parsed.source, equals('generic'));
       expect(parsed.timestamp, equals(1725450000000));
       expect(parsed.canReply, isTrue);
       expect(parsed.actions, equals(['reply', 'dismiss']));
+    });
+
+    test('SMS verification payload preserves local copy metadata', () {
+      final notif = NotificationEventMessage(
+        notificationId: 'sms-42',
+        packageName: 'android.provider.Telephony.SMS',
+        appName: '短信',
+        title: '1069xxxx',
+        content: '你的验证码是 123456，请勿泄露。',
+        source: 'sms',
+        isVerificationCode: true,
+        verificationCode: '123456',
+        actions: ['copy_code'],
+      );
+
+      final parsed = NotificationEventMessage.fromJson(notif.serialize());
+
+      expect(parsed, isNotNull);
+      expect(parsed!.source, equals('sms'));
+      expect(parsed.isVerificationCode, isTrue);
+      expect(parsed.verificationCode, equals('123456'));
+      expect(parsed.actions, equals(['copy_code']));
     });
 
     test('NotificationActionMessage JSON serialization roundtrip', () {

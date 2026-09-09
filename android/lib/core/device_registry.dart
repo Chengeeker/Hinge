@@ -200,10 +200,7 @@ class DeviceRegistry {
     final survivor = group.first;
     bool changed = false;
     for (final candidate in group.skip(1)) {
-      _records[survivor.key] = _mergeRecords(
-        survivor.value,
-        candidate.value,
-      );
+      _records[survivor.key] = _mergeRecords(survivor.value, candidate.value);
       _records.remove(candidate.key);
       changed = true;
     }
@@ -248,7 +245,8 @@ class DeviceRegistry {
       }
     }
 
-    final trustState = source.device.trustState == DeviceTrustState.trusted ||
+    final trustState =
+        source.device.trustState == DeviceTrustState.trusted ||
             source.device.trustState == DeviceTrustState.blocked
         ? source.device.trustState
         : target.device.trustState;

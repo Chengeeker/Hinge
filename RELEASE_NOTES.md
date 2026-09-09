@@ -1,20 +1,21 @@
-# Hinge v1.0.17-dev.1
+# Hinge v1.0.27-dev.1
 
-这是 Hinge 的双端开发版，安装包运行版本为 Android `1.0.17+18`、Windows `1.0.17.0`。
+这是 Hinge 的双端开发版，安装包运行版本为 Android `1.0.27+28`、Windows `1.0.27.0`。
 
 ## 本版内容
 
-- Android 与 Windows 版本号统一推进，保留稳定 Android 签名以支持覆盖更新；
-- Windows 文件管理、相册的分页加载、缩略图缓存、多选保存和自定义接收目录继续按当前实现打包；
-- Android Monet 动态配色、品牌资源、默认应用、保活设置和紧凑悬浮底栏随当前源码发布；
-- 补齐开发文档、构建验证、发布资产和真实设备验收边界说明。
+- Android 增加可选短信/彩信同步，明确授权后监听新消息并通过可信会话转发到 Windows；
+- Windows 短信/彩信使用托盘气泡，识别为验证码时点击整条气泡复制，普通通知不会复制；
+- 保留 ARM64 APK、稳定 Android 签名、自包含 EXE 安装器和便携 ZIP 的发布约定；
+- 同步开发文档、协议说明和当前版本的真实设备验收边界。
 
 ## 验证
 
-- Android Flutter tests：49 项通过；
-- Windows .NET tests：59 项通过；
-- Android APK 签名、Windows EXE 安装器、便携 ZIP 和可用 MSIX 已重新生成。
+- Android Flutter tests：53 项通过；
+- Windows .NET tests：63 项通过；
+- Android APK 包名、ARM64 架构、V2/V3 签名和 Windows 文件版本均已校验；
+- Windows 发布资产仅包含 EXE 安装器和便携 ZIP，不提供 MSIX。
 
 ## 已知边界
 
-这是开发版。投屏、通知回复、OCR、完整端到端加密握手，以及不同 Android 厂商后台策略仍不应视为已完成的生产能力；大型媒体库、弱网、多网卡和 Windows 防火墙场景仍需真实设备验收。
+这是开发版。传统托盘气泡不支持嵌入式按钮，验证码采用点击整条气泡复制；不同 Android 厂商短信权限、后台策略、弱网、多网卡和 Windows 防火墙场景仍需真实设备验收。

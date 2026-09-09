@@ -10,6 +10,7 @@ import android.database.Cursor
 import android.content.ContentResolver
 import android.content.Intent
 import android.content.Context
+import android.content.ComponentName
 import android.content.res.Configuration
 import android.content.ContentUris
 import android.content.ActivityNotFoundException
@@ -65,6 +66,7 @@ class MainActivity : FlutterActivity() {
     private val screenCapturePermissionRequest = 4201
     private val notificationPermissionRequest = 4103
     private val mediaPermissionRequest = 4104
+    private val smsPermissionRequest = 4105
     // MediaStore/Calendar work is off the UI thread. A small adaptive pool
     // keeps thumbnail and metadata requests responsive on modern phones while
     // avoiding an unbounded thread explosion on low-end devices.
@@ -88,6 +90,7 @@ class MainActivity : FlutterActivity() {
     private var photosPermissionResult: MethodChannel.Result? = null
     private var notificationPermissionResult: MethodChannel.Result? = null
     private var mediaPermissionResult: MethodChannel.Result? = null
+    private var smsPermissionResult: MethodChannel.Result? = null
     private data class StorageCacheEntry(
         val expiresAt: Long,
         val entries: List<Map<String, Any?>>,
@@ -142,11 +145,24 @@ class MainActivity : FlutterActivity() {
                 screenEventSink = null
             }
         })
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "hinge/sms/events",
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                SmsRelayBridge.attach(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                SmsRelayBridge.detach()
+            }
+        })
     }
 
     override fun onDestroy() {
         stopScreenCapture()
         releaseDiscoveryMulticastLock()
+        SmsRelayBridge.detach()
         contentExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -198,6 +214,15 @@ class MainActivity : FlutterActivity() {
             "requestNotificationPermission" -> requestNotificationPermission(result)
             "persistentNotificationEnabled" -> result.success(persistentNotificationEnabled())
             "setPersistentNotificationEnabled" -> setPersistentNotificationEnabled(call, result)
+            "smsRelayEnabled" -> result.success(smsRelayEnabled())
+            "setSmsRelayEnabled" -> setSmsRelayEnabled(call, result)
+            "smsPermissionStatus" -> result.success(smsPermissionStatus())
+            "requestSmsPermissions" -> requestSmsPermissions(result)
+            "smsNotificationAccessEnabled" -> result.success(smsNotificationAccessEnabled())
+            "openSmsNotificationAccessSettings" -> result.success(openSmsNotificationAccessSettings())
+            "sendSmsRelayTestEvent" -> result.success(sendSmsRelayTestEvent())
+            "smsPermissionPromptShown" -> result.success(smsPermissionPromptShown())
+            "setSmsPermissionPromptShown" -> setSmsPermissionPromptShown(call, result)
             "keepAliveStatus" -> result.success(keepAliveStatus())
             "openNotificationSettings" -> result.success(openNotificationSettings())
             "openBatteryOptimizationSettings" -> result.success(openBatteryOptimizationSettings())
@@ -409,6 +434,12 @@ class MainActivity : FlutterActivity() {
                 val pending = mediaPermissionResult
                 mediaPermissionResult = null
                 pending?.success(hasMediaPermission())
+            }
+            smsPermissionRequest -> {
+                val pending = smsPermissionResult
+                smsPermissionResult = null
+                startConnectionService()
+                pending?.success(smsPermissionStatus())
             }
         }
     }
@@ -980,6 +1011,118 @@ class MainActivity : FlutterActivity() {
             .putBoolean("persistent_notification_enabled", enabled)
             .apply()
         startConnectionService()
+        result.success(true)
+    }
+
+    private fun hasPermission(permission: String): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun smsPermissionStatus(): Map<String, Boolean> = mapOf(
+        "sms" to hasPermission(Manifest.permission.RECEIVE_SMS),
+        "readSms" to hasPermission(Manifest.permission.READ_SMS),
+        "mms" to (
+            hasPermission(Manifest.permission.RECEIVE_MMS) &&
+                hasPermission(Manifest.permission.RECEIVE_WAP_PUSH)
+            ),
+    )
+
+    private fun requestSmsPermissions(result: MethodChannel.Result) {
+        val current = smsPermissionStatus()
+        if (current["sms"] == true &&
+            current["readSms"] == true &&
+            current["mms"] == true
+        ) {
+            result.success(current)
+            return
+        }
+        if (smsPermissionResult != null) {
+            result.error("permission_in_progress", "短信权限请求正在进行", null)
+            return
+        }
+        smsPermissionResult = result
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            smsPermissionResult = null
+            result.success(current)
+            return
+        }
+        requestPermissions(
+            arrayOf(
+                Manifest.permission.RECEIVE_SMS,
+                Manifest.permission.READ_SMS,
+                Manifest.permission.RECEIVE_MMS,
+                Manifest.permission.RECEIVE_WAP_PUSH,
+            ),
+            smsPermissionRequest,
+        )
+    }
+
+    private fun smsRelayEnabled(): Boolean = getSharedPreferences("app_settings", MODE_PRIVATE)
+        .getBoolean("sms_relay_enabled", false)
+
+    private fun setSmsRelayEnabled(call: MethodCall, result: MethodChannel.Result) {
+        val requested = call.argument<Boolean>("enabled") ?: false
+        val enabled = requested && hasPermission(Manifest.permission.RECEIVE_SMS)
+        getSharedPreferences("app_settings", MODE_PRIVATE)
+            .edit()
+            .putBoolean("sms_relay_enabled", enabled)
+            .apply()
+        startConnectionService()
+        result.success(enabled)
+    }
+
+    private fun smsNotificationAccessEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            "enabled_notification_listeners",
+        ).orEmpty()
+        val component = ComponentName(this, SmsNotificationListenerService::class.java)
+        return enabled.split(':').any {
+            ComponentName.unflattenFromString(it)?.packageName == component.packageName &&
+                ComponentName.unflattenFromString(it)?.className == component.className
+        }
+    }
+
+    private fun openSmsNotificationAccessSettings(): Boolean = try {
+        startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+        true
+    } catch (_: Exception) {
+        try {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun sendSmsRelayTestEvent(): Boolean {
+        if (!smsRelayEnabled()) return false
+        SmsRelayBridge.emit(
+            mapOf(
+                "messageId" to "sms-test-${System.currentTimeMillis()}",
+                "source" to "sms",
+                "sender" to "Hinge 测试",
+                "body" to "验证码 123456，用于验证 Android 到 Windows 的短信同步链路。",
+                "timestamp" to System.currentTimeMillis(),
+                "isVerificationCode" to true,
+                "verificationCode" to "123456",
+            ),
+        )
+        return true
+    }
+
+    private fun smsPermissionPromptShown(): Boolean = getSharedPreferences(
+        "app_settings",
+        MODE_PRIVATE,
+    ).getBoolean("sms_permission_prompt_shown", false)
+
+    private fun setSmsPermissionPromptShown(call: MethodCall, result: MethodChannel.Result) {
+        val shown = call.argument<Boolean>("shown") ?: true
+        getSharedPreferences("app_settings", MODE_PRIVATE)
+            .edit()
+            .putBoolean("sms_permission_prompt_shown", shown)
+            .apply()
         result.success(true)
     }
 

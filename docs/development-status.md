@@ -1,8 +1,11 @@
 # 当前开发状态
 
-> 更新时间：2026-09-08
-> 当前开发版：`v1.0.17-dev.2`
-> 双端运行版本：Android `1.0.17+18` / Windows `1.0.17.0`
+> 更新时间：2026-09-09
+> 当前开发版：`v1.0.27-dev.1`
+> 双端运行版本：Android `1.0.27+28` / Windows `1.0.27.0`
+
+- 短信同步新增 Android 短信通知读取兼容模式、由前台服务持有的短信 Provider 观察器和端到端测试消息；
+- Windows 系统横幅不可用时，仍使用窗口内通知卡片，不再将其误报为整项功能不支持。
 
 本文只记录已在仓库或构建流程中确认的状态。真实手机、真实局域网和不同厂商系统仍需单独验收。
 
@@ -43,6 +46,7 @@
 - Windows 默认窗口尺寸按 1555×1000 设计，内容区域使用可用宽度布局；
 - Windows 提供 MICA/亚克力、背景图片、启动项、静默启动和关闭到托盘设置；
 - Android 提供通知、后台高耗电、锁定后台等系统保活引导。
+- Android 可选短信同步已接入：明确授权后监听新到 SMS；部分设备还会使用 `READ_SMS` 观察授权后的新收件箱记录作为验证码兼容回退，短信/彩信统一通过 Windows 托盘气泡显示，只有识别为验证码时点击才复制；Windows 系统通知状态可在设置中检查；彩信只转发到达提示，不读取历史收件箱或彩信正文。
 
 ## 发布产物
 
@@ -53,11 +57,11 @@
 
 ## 自动化验证
 
-- `flutter analyze --no-pub`：本轮在当前构建环境长时间无输出，未完成并已中止；
-- `flutter test --no-pub`：52 项通过；
+- `dart analyze --fatal-infos`：通过；
+- `flutter test --no-pub`：53 项通过；
 - `dotnet build windows/Hinge.sln --configuration Release --no-restore`：通过；
-- `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：62 项通过；
-- Windows 本次本地打包的文件版本为 `1.0.17.0`，同时生成 EXE 安装器和便携 ZIP；
+- `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：63 项通过；
+- Windows 本次本地打包的文件版本为 `1.0.27.0`，同时生成 EXE 安装器和便携 ZIP；
 - Android APK V2/V3 签名验证：通过。
 
 ## 仍需真实设备验收
@@ -67,7 +71,7 @@
 3. 多网卡、热点、IPv4 变化、防火墙和弱网恢复；
 4. Windows 默认文件关联应用不可用时的错误提示；
 5. 外部拖放在不同 UAC 权限级别、不同资源管理器和多显示器环境下的系统行为；
-6. 真实身份安全、端到端加密、通知回复、OCR 和投屏闭环。
+6. 真实身份安全、端到端加密、通用通知回复、OCR 和投屏闭环；短信同步仍需在不同 Android 厂商和安装来源上验收高敏感权限行为。
 
 ## 发布判断
 

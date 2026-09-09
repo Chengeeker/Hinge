@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前开发版：[v1.0.17-dev.2](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.2)（安装包运行版本为 `1.0.17`）
+- 当前开发版：`v1.0.27-dev.1`（安装包运行版本为 `1.0.27`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -34,6 +34,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - 相册按批次读取，避免大型媒体库一次性阻塞界面；
 - Material You / Monet 动态颜色、浅色/深色模式、纯黑深色模式和预置主题；
 - 自定义存储路径、通知常驻和后台保活设置入口；
+- 可选的短信同步：将新到 SMS 转发到可信 Windows 会话，并使用托盘气泡通知；只有识别为验证码的短信/彩信，点击整条气泡才会复制验证码，普通通知不会复制；默认关闭；可申请接收短信和访问短信/彩信权限，仅观察授权后的新消息，不扫描历史收件箱；
 - 使用稳定签名库生成可覆盖更新的 ARM64 APK。
 
 ### Windows
@@ -63,7 +64,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 
 ### Android
 
-从 [v1.0.17-dev.2 Release](https://github.com/Chengeeker/Hinge/releases/tag/v1.0.17-dev.2) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
+从 [GitHub Releases](https://github.com/Chengeeker/Hinge/releases) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；短信转发会额外引导申请 `RECEIVE_SMS` 和 `READ_SMS`，彩信还需要对应的 MMS/WAP 权限。Hinge 只观察授权之后的新消息，不扫描历史收件箱；部分 Android/厂商/安装来源可能拒绝高敏感短信权限，此时仍会保留系统允许的实时广播路径。若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
 
 ### Windows
 

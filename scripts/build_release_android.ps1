@@ -33,6 +33,30 @@ if (-not (Test-Path -LiteralPath $apkPath)) {
     exit 1
 }
 
+# Do not silently sign a stale multi-ABI APK when -SkipFlutterBuild is used.
+# Hinge's supported Android delivery target is arm64-v8a only.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$apkArchive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $apkPath))
+try {
+    $nativeEntries = @($apkArchive.Entries | Where-Object { $_.FullName -like 'lib/*/*.so' })
+    $unsupportedAbis = @(
+        $nativeEntries |
+            ForEach-Object { ($_.FullName -split '/')[1] } |
+            Where-Object { $_ -ne 'arm64-v8a' } |
+            Sort-Object -Unique
+    )
+    if ($nativeEntries.Count -eq 0 -or $unsupportedAbis.Count -gt 0) {
+        $details = if ($unsupportedAbis.Count -gt 0) {
+            "检测到不支持的 ABI：$($unsupportedAbis -join ', ')"
+        } else {
+            'APK 中没有找到 arm64-v8a 原生库'
+        }
+        throw "Android APK 架构校验失败。$details 请使用 --target-platform android-arm64 重新构建。"
+    }
+} finally {
+    $apkArchive.Dispose()
+}
+
 # Flutter currently produces the intermediate APK with the project's default
 # signing configuration. Re-sign it with the user's stable release key so
 # future updates keep the same Android certificate.

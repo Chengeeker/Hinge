@@ -1,7 +1,7 @@
 /// Hinge Core Constants
 class AppConstants {
   static const String appName = 'Hinge';
-  static const String appVersion = '1.0.17';
+  static const String appVersion = '1.0.27';
   static const String protocolVersion = '0.1';
 
   // Network Ports

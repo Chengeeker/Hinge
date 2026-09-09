@@ -158,33 +158,36 @@ void main() {
       registry.dispose();
     });
 
-    test('DeviceRegistry reconciles duplicate identities on one LAN address', () {
-      final registry = DeviceRegistry();
-      final first = DiscoveryMessage(
-        deviceId: 'phone-first-id',
-        name: 'vivo X200 Pro mini',
-        manufacturer: 'vivo',
-        model: 'V2419A',
-        platform: 'android',
-        timestamp: 1,
-      );
-      final second = DiscoveryMessage(
-        deviceId: 'phone-second-id',
-        name: 'vivo X200 Pro mini',
-        manufacturer: 'vivo',
-        model: 'V2419A',
-        platform: 'android',
-        timestamp: 2,
-      );
+    test(
+      'DeviceRegistry reconciles duplicate identities on one LAN address',
+      () {
+        final registry = DeviceRegistry();
+        final first = DiscoveryMessage(
+          deviceId: 'phone-first-id',
+          name: 'vivo X200 Pro mini',
+          manufacturer: 'vivo',
+          model: 'V2419A',
+          platform: 'android',
+          timestamp: 1,
+        );
+        final second = DiscoveryMessage(
+          deviceId: 'phone-second-id',
+          name: 'vivo X200 Pro mini',
+          manufacturer: 'vivo',
+          model: 'V2419A',
+          platform: 'android',
+          timestamp: 2,
+        );
 
-      // Neither record is offline yet. The registry should still collapse the
-      // stale identity instead of waiting for a prune cycle.
-      registry.upsertDevice(first, '192.168.3.27');
-      registry.upsertDevice(second, '192.168.3.27');
+        // Neither record is offline yet. The registry should still collapse the
+        // stale identity instead of waiting for a prune cycle.
+        registry.upsertDevice(first, '192.168.3.27');
+        registry.upsertDevice(second, '192.168.3.27');
 
-      expect(registry.devices, hasLength(1));
-      expect(registry.devices.single.deviceId, equals('phone-second-id'));
-      registry.dispose();
-    });
+        expect(registry.devices, hasLength(1));
+        expect(registry.devices.single.deviceId, equals('phone-second-id'));
+        registry.dispose();
+      },
+    );
   });
 }

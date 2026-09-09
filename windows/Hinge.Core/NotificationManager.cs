@@ -94,6 +94,12 @@ public class NotificationManager : IDisposable
 
     private void OnPresenterActionTriggered(object? sender, NotificationActionMessage action)
     {
+        // Copying an SMS verification code is a local Windows action. Never
+        // send the action back to the phone as a remote notification command.
+        if (string.Equals(action.ActionKey, "copy_code", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
         _ = SendActionToPeersAsync(action);
     }
 

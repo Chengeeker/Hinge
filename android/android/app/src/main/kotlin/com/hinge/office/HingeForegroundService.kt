@@ -21,12 +21,14 @@ import android.content.pm.ServiceInfo
 class HingeForegroundService : Service() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var smsContentObserver: SmsContentObserver? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         acquireMulticastLock()
         acquireWifiLock()
+        smsContentObserver = SmsContentObserver(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -35,6 +37,8 @@ class HingeForegroundService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+
+        refreshSmsContentObserver()
 
         val notificationBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
@@ -84,6 +88,8 @@ class HingeForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        smsContentObserver?.close()
+        smsContentObserver = null
         releaseMulticastLock()
         releaseWifiLock()
         super.onDestroy()
@@ -173,6 +179,14 @@ class HingeForegroundService : Service() {
     private fun persistentNotificationEnabled(): Boolean =
         getSharedPreferences("app_settings", MODE_PRIVATE)
             .getBoolean("persistent_notification_enabled", true)
+
+    private fun refreshSmsContentObserver() {
+        val observer = smsContentObserver ?: return
+        val canRead = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(android.Manifest.permission.READ_SMS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (SmsRelaySettings.isEnabled(this) && canRead) observer.start() else observer.stop()
+    }
 
     companion object {
         const val ACTION_START = "com.hinge.office.START_CONNECTION_SERVICE"

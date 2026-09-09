@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Hinge.Core\Hinge.Core.csproj" />
+    <!-- Reuse the Windows App SDK already used by the WinUI host for native
+         app notifications; no additional notification library is required. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
   </ItemGroup>
 
   <PropertyGroup>

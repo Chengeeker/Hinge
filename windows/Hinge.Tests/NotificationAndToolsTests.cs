@@ -45,6 +45,7 @@ public class NotificationAndToolsTests
             AppName = "Slack",
             Title = "Engineering Team",
             Content = "Release v1.0 ready for review",
+            Source = "generic",
             Timestamp = 1725450000000L,
             CanReply = true,
             Actions = new List<string> { "reply", "dismiss" }
@@ -59,6 +60,7 @@ public class NotificationAndToolsTests
         Assert.Equal("Slack", parsed.AppName);
         Assert.Equal("Engineering Team", parsed.Title);
         Assert.Equal("Release v1.0 ready for review", parsed.Content);
+        Assert.Equal("generic", parsed.Source);
         Assert.Equal(1725450000000L, parsed.Timestamp);
         Assert.True(parsed.CanReply);
         Assert.Equal(2, parsed.Actions.Count);
@@ -157,6 +159,46 @@ public class NotificationAndToolsTests
             Assert.True(handled);
             Assert.Single(presenter.DisplayedNotifications);
             Assert.Equal("Sprint sync starting in 5m", presenter.DisplayedNotifications[0].Content);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task NotificationManager_ForwardsSmsVerificationCode()
+    {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"trust_sms_{Guid.NewGuid():N}.json");
+        try
+        {
+            var trustStore = new TrustStore(tempFile);
+            using var presenter = new MockNotificationPresenter();
+            using var manager = new NotificationManager(presenter, trustStore);
+            var notif = new NotificationEventMessage
+            {
+                NotificationId = "sms-001",
+                PackageName = "android.provider.Telephony.SMS",
+                AppName = "短信",
+                Title = "1069",
+                Content = "验证码 123456",
+                Source = "sms",
+                IsVerificationCode = true,
+                VerificationCode = "123456",
+                Actions = new List<string> { "copy_code" }
+            };
+
+            var frame = new ProtocolFrame
+            {
+                Type = MessageType.NotificationEvent,
+                Payload = Encoding.UTF8.GetBytes(notif.ToJson())
+            };
+
+            Assert.True(await manager.HandleIncomingFrameAsync(null!, frame));
+            Assert.Single(presenter.DisplayedNotifications);
+            Assert.Equal("sms", presenter.DisplayedNotifications[0].Source);
+            Assert.Equal("123456", presenter.DisplayedNotifications[0].VerificationCode);
+            Assert.Contains("copy_code", presenter.DisplayedNotifications[0].Actions);
         }
         finally
         {

@@ -27,7 +27,7 @@ Android OS                   Windows OS
 ### Android
 
 - Flutter 负责页面、导航、主题、分页列表和工作区交互；
-- Android 原生 `MethodChannel` 负责 `StatFs`、`CalendarContract`、`MediaStore`、通知、前台服务和系统设置跳转；
+- Android 原生 `MethodChannel` 负责 `StatFs`、`CalendarContract`、`MediaStore`、通知、前台服务、短信接收/访问权限和系统设置跳转；短信广播以及获得访问权限后的新收件箱观察通过进程内 EventChannel 进入 Dart，再复用通知协议；
 - 前台服务使用 `connectedDevice` 类型、Wi-Fi/组播锁和 `START_STICKY`，但不承诺绕过厂商电池策略；
 - Monet 动态取色只在系统提供公开 `system_*` 颜色角色时应用，关闭后回退到预置主题。
 

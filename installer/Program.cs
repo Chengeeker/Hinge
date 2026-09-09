@@ -8,6 +8,7 @@ namespace Hinge.Setup;
 internal static class Program
 {
     private const string PayloadMarker = "HINGE_PAYLOAD_V1";
+    private const string AppUserModelId = "Hinge.Office";
     private const string UninstallRegistryPath =
         "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hinge";
 
@@ -476,9 +477,110 @@ internal static class Program
         shortcut.IconLocation = $"{executablePath},0";
         shortcut.Description = "Hinge 跨设备办公";
         shortcut.Save();
+        SetShortcutProperty(shortcutPath, AppUserModelId);
         try { Marshal.FinalReleaseComObject(shortcut); } catch { }
         try { Marshal.FinalReleaseComObject(shell); } catch { }
     }
+
+    private static void SetShortcutProperty(string shortcutPath, string appUserModelId)
+    {
+        IPropertyStore? propertyStore = null;
+        try
+        {
+            var propertyKey = new PropertyKey(
+                new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
+                5);
+            var propertyVariant = PropVariant.FromString(appUserModelId);
+            var iid = typeof(IPropertyStore).GUID;
+            var result = SHGetPropertyStoreFromParsingName(
+                shortcutPath,
+                IntPtr.Zero,
+                GetPropertyStoreFlags.ReadWrite,
+                ref iid,
+                out propertyStore);
+            if (result != 0 || propertyStore == null) return;
+            propertyStore.SetValue(ref propertyKey, ref propertyVariant);
+            propertyStore.Commit();
+            propertyVariant.Clear();
+        }
+        catch
+        {
+            // The shortcut is still usable without the identity property; the
+            // next installer run will retry it.
+        }
+        finally
+        {
+            if (propertyStore != null)
+            {
+                try { Marshal.FinalReleaseComObject(propertyStore); } catch { }
+            }
+        }
+    }
+
+    [Flags]
+    private enum GetPropertyStoreFlags : uint
+    {
+        ReadWrite = 0x00000002
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PropertyKey
+    {
+        public Guid FormatId;
+        public uint PropertyId;
+
+        public PropertyKey(Guid formatId, uint propertyId)
+        {
+            FormatId = formatId;
+            PropertyId = propertyId;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PropVariant
+    {
+        private ushort _valueType;
+        private ushort _reserved1;
+        private ushort _reserved2;
+        private ushort _reserved3;
+        private IntPtr _pointer;
+
+        public static PropVariant FromString(string value)
+        {
+            return new PropVariant
+            {
+                _valueType = 31, // VT_LPWSTR
+                _pointer = Marshal.StringToCoTaskMemUni(value)
+            };
+        }
+
+        public void Clear()
+        {
+            if (_pointer == IntPtr.Zero) return;
+            Marshal.FreeCoTaskMem(_pointer);
+            _pointer = IntPtr.Zero;
+        }
+    }
+
+    [ComImport]
+    [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IPropertyStore
+    {
+        int GetCount(out uint propertyCount);
+        int GetAt(uint propertyIndex, out PropertyKey key);
+        int GetValue(ref PropertyKey key, out PropVariant value);
+        int SetValue(ref PropertyKey key, ref PropVariant value);
+        int Commit();
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHGetPropertyStoreFromParsingName(
+        string path,
+        IntPtr bindContext,
+        GetPropertyStoreFlags flags,
+        ref Guid interfaceId,
+        out IPropertyStore propertyStore);
 
     private static void RegisterUninstaller(string installPath, string executablePath)
     {

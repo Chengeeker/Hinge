@@ -20,7 +20,6 @@ $publishArgs = @(
     '--runtime', 'win-x64',
     '--self-contained', 'true',
     '--output', $nativeOutput,
-    '-p:WindowsAppSDKSelfContained=true',
     '-p:WindowsPackageType=None',
     '-p:PublishSingleFile=false'
 )

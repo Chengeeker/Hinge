@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前开发版：`v1.0.27-dev.1`（安装包运行版本为 `1.0.27`）
+- 当前开发版：`v1.0.32-dev.1`（安装包运行版本为 `1.0.32`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -21,7 +21,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 ### 跨设备基础能力
 
 - UDP 局域网发现和手动设备发现；
-- 已知设备快速重连、心跳和断线状态恢复；
+- 已知设备快速重连、心跳和断线状态恢复；已经建立过会话且仍在信任库中的设备，在更新或短暂断线后重新上线时自动恢复连接，新设备仍需手动连接；
 - 文本、文件和剪贴板同步；
 - 前台服务、通知和厂商后台保活设置引导；
 - 统一的跨端协议、传输模型和测试基线。
@@ -35,12 +35,14 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - Material You / Monet 动态颜色、浅色/深色模式、纯黑深色模式和预置主题；
 - 自定义存储路径、通知常驻和后台保活设置入口；
 - 可选的短信同步：将新到 SMS 转发到可信 Windows 会话，并使用托盘气泡通知；只有识别为验证码的短信/彩信，点击整条气泡才会复制验证码，普通通知不会复制；默认关闭；可申请接收短信和访问短信/彩信权限，仅观察授权后的新消息，不扫描历史收件箱；
+- 工作区“通知历史”：在 Android 系统通知访问权限和采集开关都开启后，按时间记录应用通知、应用图标、应用名称、标题和正文，支持正序/倒序及按应用筛选；记录保存在应用私有数据库，默认关闭；
 - 使用稳定签名库生成可覆盖更新的 ARM64 APK。
 
 ### Windows
 
 - .NET 8 + Windows App SDK + WinUI 3 原生桌面客户端；
 - 独立的首页、文件管理、笔记、待办、日历、相册、工具和设置页面；
+- 侧边栏“手机历史通知”：从已连接的 Android 设备分页读取通知历史，支持时间顺序和应用筛选；微信/QQ只唤醒已运行的桌面客户端主窗口，避免重复启动到新的登录界面；
 - 显示手机设备名称、品牌标识和连接状态；
 - 文件管理支持最近文件、图片、视频、音频、文档、微信相册、QQ 相册和手机存储；
 - 文件分类不只依赖手机厂商返回的 MIME：对常见文档、压缩包、安装包和媒体扩展名做统一回退识别，未知类型在需要时再读取文件头；
@@ -64,7 +66,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 
 ### Android
 
-从 [GitHub Releases](https://github.com/Chengeeker/Hinge/releases) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；短信转发会额外引导申请 `RECEIVE_SMS` 和 `READ_SMS`，彩信还需要对应的 MMS/WAP 权限。Hinge 只观察授权之后的新消息，不扫描历史收件箱；部分 Android/厂商/安装来源可能拒绝高敏感短信权限，此时仍会保留系统允许的实时广播路径。若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
+从 [GitHub Releases](https://github.com/Chengeeker/Hinge/releases) 下载 `Hinge.apk`。首次运行时按系统提示授予日历、照片/视频、通知和后台运行相关权限；“通知历史”还需要在 Android 系统的“通知访问”设置中明确允许 Hinge，并在工作区内开启采集；短信转发会额外引导申请 `RECEIVE_SMS` 和 `READ_SMS`，彩信还需要对应的 MMS/WAP 权限。Hinge 只观察授权之后的新消息，不扫描历史收件箱；通知历史正文只保存在应用私有数据库。部分 Android/厂商/安装来源可能拒绝高敏感短信权限，此时仍会保留系统允许的实时广播路径。若设备使用严格的电池策略，还需要把应用加入后台高耗电或锁定后台清单。
 
 ### Windows
 
@@ -92,13 +94,18 @@ flutter run
 
 发布 APK 需要本机签名库，不要把签名库、密码或临时转换文件提交到仓库：
 
+第一次在本机复制 `android/android/key.properties.example` 为
+`android/android/key.properties`，填写本机签名库信息即可。这个文件已被
+`.gitignore` 忽略，之后构建不再弹出签名输入窗口；其他机器只需要各自配置
+自己的签名文件，不要复制或提交他人的签名信息。
+
 ```powershell
-$env:HINGE_KEYSTORE_PASSWORD = '<keystore-password>'
-$env:HINGE_KEY_PASSWORD = '<key-password>'
-.\scripts\build_release_android.ps1 `
-  -KeystorePath '<path-to-your-keystore.bks>' `
-  -KeyAlias '<your-key-alias>'
+Copy-Item android/android/key.properties.example android/android/key.properties
+# 编辑 android/android/key.properties，填写 storePassword、keyAlias、keyPassword
+.\scripts\build_release_android.ps1
 ```
+
+脚本会读取本机 `key.properties`，默认使用 `D:\Download\backup\infinitycm.bks`，并将签名后的 ARM64 APK 固定输出为 `publish/Hinge.apk`；`android/build/app/outputs/flutter-apk/app-release.apk` 只是中间产物，不要直接分发。BKS 会在构建期间转换为临时 PKCS12，完成后立即清理。缺少签名输入时脚本会停止，不会用调试签名覆盖发布包。APK 签名后不要再次手工压缩或重打包；Windows EXE/ZIP 的压缩由 Windows 发布脚本自动完成。签名库、密码和临时转换文件不会写入 README 或 Git。
 
 ### Windows
 

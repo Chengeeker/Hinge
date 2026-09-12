@@ -1,0 +1,47 @@
+<Page
+    x:Class="Hinge.App.NotificationHistoryPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <Grid x:Name="RootGrid">
+        <ScrollViewer
+            x:Name="HistoryScroll"
+            ViewChanged="HistoryScroll_ViewChanged"
+            HorizontalScrollBarVisibility="Disabled"
+            HorizontalContentAlignment="Stretch">
+            <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="手机历史通知" FontSize="28" FontWeight="SemiBold" />
+                        <TextBlock Text="读取 Android 通知访问权限开启后收到的应用通知。点击微信或 QQ 通知时，优先打开 Windows 本机客户端，无法打开时再使用 Android 原通知入口。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <ComboBox x:Name="ApplicationFilter" Width="180" PlaceholderText="全部应用" SelectionChanged="ApplicationFilter_SelectionChanged" />
+                        <ComboBox x:Name="SortOptions" Width="148" SelectedIndex="0" SelectionChanged="SortOptions_SelectionChanged">
+                            <ComboBoxItem Content="时间（早到晚）" Tag="asc" />
+                            <ComboBoxItem Content="时间（晚到早）" Tag="desc" />
+                        </ComboBox>
+                        <Button x:Name="ClearButton" Content="清空" Click="ClearButton_Click" />
+                        <Button x:Name="RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                    </StackPanel>
+                </Grid>
+
+                <InfoBar x:Name="StatusInfoBar" IsOpen="True" IsClosable="False" Severity="Informational" Title="手机历史通知" Message="等待连接设备。" />
+                <TextBlock x:Name="SummaryText" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <ProgressRing x:Name="LoadingIndicator" Width="32" Height="32" HorizontalAlignment="Center" IsActive="False" />
+
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
+                    <ListView
+                        x:Name="HistoryList"
+                        IsItemClickEnabled="True"
+                        SelectionMode="None"
+                        ItemClick="HistoryList_ItemClick" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

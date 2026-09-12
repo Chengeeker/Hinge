@@ -1,4 +1,5 @@
 import 'constants.dart';
+import 'discovery_message.dart';
 
 enum DevicePlatform { android, windows, linux, macos, ios, unknown }
 
@@ -22,6 +23,7 @@ class Device {
   final String appVersion;
   final String protocolVersion;
   final int sessionPort;
+  final int discoveryPort;
   final List<String> capabilities;
   final List<String> networkAddresses;
   final DeviceConnectionState connectionState;
@@ -36,6 +38,7 @@ class Device {
     required this.appVersion,
     required this.protocolVersion,
     this.sessionPort = AppConstants.sessionTcpPort,
+    this.discoveryPort = AppConstants.discoveryUdpPort,
     required this.capabilities,
     required this.networkAddresses,
     this.connectionState = DeviceConnectionState.discovered,
@@ -51,6 +54,7 @@ class Device {
     String? appVersion,
     String? protocolVersion,
     int? sessionPort,
+    int? discoveryPort,
     List<String>? capabilities,
     List<String>? networkAddresses,
     DeviceConnectionState? connectionState,
@@ -65,6 +69,7 @@ class Device {
       appVersion: appVersion ?? this.appVersion,
       protocolVersion: protocolVersion ?? this.protocolVersion,
       sessionPort: sessionPort ?? this.sessionPort,
+      discoveryPort: discoveryPort ?? this.discoveryPort,
       capabilities: capabilities ?? this.capabilities,
       networkAddresses: networkAddresses ?? this.networkAddresses,
       connectionState: connectionState ?? this.connectionState,
@@ -81,6 +86,7 @@ class Device {
     'appVersion': appVersion,
     'protocolVersion': protocolVersion,
     'port': sessionPort,
+    'discoveryPort': discoveryPort,
     'capabilities': capabilities,
     'networkAddresses': networkAddresses,
     'connectionState': connectionState.name,
@@ -99,8 +105,11 @@ class Device {
       ),
       appVersion: json['appVersion'] as String? ?? '1.0.1',
       protocolVersion: json['protocolVersion'] as String? ?? '0.1',
-      sessionPort:
-          (json['port'] as num?)?.toInt() ?? AppConstants.sessionTcpPort,
+      sessionPort: parseNetworkPort(json['port'], AppConstants.sessionTcpPort),
+      discoveryPort: parseNetworkPort(
+        json['discoveryPort'],
+        AppConstants.discoveryUdpPort,
+      ),
       capabilities: List<String>.from(json['capabilities'] as List? ?? []),
       networkAddresses: List<String>.from(
         json['networkAddresses'] as List? ?? [],

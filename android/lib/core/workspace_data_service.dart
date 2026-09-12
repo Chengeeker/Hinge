@@ -10,6 +10,7 @@ import 'protocol_frame.dart';
 import 'pairing_manager.dart';
 import 'session_manager.dart';
 import 'transfer_manager.dart';
+import 'notification_history_model.dart';
 
 class StorageInfo {
   final int totalBytes;
@@ -472,6 +473,67 @@ class WorkspaceDataService {
 
   Future<void> setSmsPermissionPromptShown(bool shown) async {
     await _invoke('setSmsPermissionPromptShown', {'shown': shown});
+  }
+
+  Future<bool> notificationHistoryAccessEnabled() async {
+    return await _invoke('notificationHistoryAccessEnabled') == true;
+  }
+
+  Future<bool> notificationHistoryEnabled() async {
+    final raw = await _invoke('notificationHistoryEnabled');
+    return raw is bool ? raw : false;
+  }
+
+  Future<bool> setNotificationHistoryEnabled(bool enabled) async {
+    final raw = await _invoke('setNotificationHistoryEnabled', {
+      'enabled': enabled,
+    });
+    return raw == true;
+  }
+
+  Future<bool> openNotificationHistorySettings() async {
+    return await _invoke('openNotificationHistorySettings') == true;
+  }
+
+  Future<NotificationHistoryPage> loadNotificationHistory({
+    int offset = 0,
+    int limit = 200,
+    bool ascending = true,
+    String? packageName,
+  }) async {
+    final raw = await _invoke('notificationHistory', {
+      'offset': offset,
+      'limit': limit,
+      'ascending': ascending,
+      'packageName': packageName ?? '',
+    });
+    return raw is Map
+        ? NotificationHistoryPage.fromJson(raw)
+        : const NotificationHistoryPage(
+            items: [],
+            total: 0,
+            accessEnabled: false,
+            enabled: false,
+            applications: [],
+          );
+  }
+
+  Future<bool> openNotificationHistoryItem(NotificationHistoryItem item) async {
+    final raw = await _invoke('openNotificationHistoryItem', {
+      'packageName': item.packageName,
+      'notificationKey': item.notificationKey,
+    });
+    return raw == true;
+  }
+
+  Future<bool> deleteNotificationHistoryItem(String id) async {
+    final raw = await _invoke('deleteNotificationHistoryItem', {'id': id});
+    return raw == true;
+  }
+
+  Future<int> clearNotificationHistory() async {
+    final raw = await _invoke('clearNotificationHistory');
+    return raw is num ? raw.toInt() : 0;
   }
 
   Future<Map<String, dynamic>> keepAliveStatus() async {
@@ -1061,6 +1123,71 @@ class WorkspaceCommandRouter {
                 .toList();
         return <String, dynamic>{
           'deleted': await dataService.deleteFiles(uris),
+        };
+      case 'notificationHistory':
+        final page = await dataService.loadNotificationHistory(
+          offset: (payload['offset'] as num?)?.toInt() ?? 0,
+          limit: (payload['limit'] as num?)?.toInt() ?? 200,
+          ascending: payload['ascending'] != false,
+          packageName: payload['packageName']?.toString(),
+        );
+        return <String, dynamic>{
+          'access': page.accessEnabled,
+          'enabled': page.enabled,
+          'items': page.items
+              .map(
+                (item) => {
+                  'id': item.id,
+                  'packageName': item.packageName,
+                  'appName': item.appName,
+                  'title': item.title,
+                  'content': item.content,
+                  'timestamp': item.timestamp,
+                  'category': item.category,
+                  'ongoing': item.ongoing,
+                  'notificationKey': item.notificationKey,
+                  'iconBase64': item.iconBase64,
+                },
+              )
+              .toList(),
+          'total': page.total,
+          'applications': page.applications
+              .map(
+                (app) => {
+                  'packageName': app.packageName,
+                  'appName': app.appName,
+                  'count': app.count,
+                  'iconBase64': app.iconBase64,
+                },
+              )
+              .toList(),
+        };
+      case 'notificationHistoryAction':
+        final action = '${payload['action'] ?? 'open'}';
+        if (action == 'delete') {
+          final deleted = await dataService.deleteNotificationHistoryItem(
+            '${payload['id'] ?? ''}',
+          );
+          return <String, dynamic>{'deleted': deleted};
+        }
+        if (action == 'clear') {
+          final deletedCount = await dataService.clearNotificationHistory();
+          return <String, dynamic>{
+            'cleared': true,
+            'deletedCount': deletedCount,
+          };
+        }
+        final item = NotificationHistoryItem(
+          id: '${payload['id'] ?? ''}',
+          packageName: '${payload['packageName'] ?? ''}',
+          appName: '${payload['appName'] ?? ''}',
+          title: '${payload['title'] ?? ''}',
+          content: '${payload['content'] ?? ''}',
+          timestamp: (payload['timestamp'] as num?)?.toInt() ?? 0,
+          notificationKey: '${payload['notificationKey'] ?? ''}',
+        );
+        return <String, dynamic>{
+          'opened': await dataService.openNotificationHistoryItem(item),
         };
       case 'loadNotes':
         return (await dataService.loadNotes())

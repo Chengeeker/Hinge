@@ -27,7 +27,7 @@ Android OS                   Windows OS
 ### Android
 
 - Flutter 负责页面、导航、主题、分页列表和工作区交互；
-- Android 原生 `MethodChannel` 负责 `StatFs`、`CalendarContract`、`MediaStore`、通知、前台服务、短信接收/访问权限和系统设置跳转；短信广播以及获得访问权限后的新收件箱观察通过进程内 EventChannel 进入 Dart，再复用通知协议；
+- Android 原生 `MethodChannel` 负责 `StatFs`、`CalendarContract`、`MediaStore`、通知、前台服务、短信接收/访问权限和系统设置跳转；`NotificationListenerService` 在用户主动授权并开启通知历史后，把通用通知写入应用私有 SQLite，并通过工作区命令分页读取；短信广播以及获得访问权限后的新收件箱观察通过进程内 EventChannel 进入 Dart，再复用通知协议；
 - 前台服务使用 `connectedDevice` 类型、Wi-Fi/组播锁和 `START_STICKY`，但不承诺绕过厂商电池策略；
 - Monet 动态取色只在系统提供公开 `system_*` 颜色角色时应用，关闭后回退到预置主题。
 
@@ -38,6 +38,7 @@ Android OS                   Windows OS
 - Win32 平台层负责托盘、通知、窗口和系统文件关联；
 - 文件管理和相册使用分页、取消旧请求、缩略图预算和 UI 线程外的网络读取；
 - 图片、视频、音频通过系统默认关联应用打开，避免在应用内维持第二套媒体生命周期。
+- Windows 的“手机历史通知”页通过当前可信会话读取 Android 私有通知历史，首屏分页并支持时间顺序和应用筛选；点击微信/QQ记录时只唤醒本机客户端主窗口或按需启动已安装客户端，不操作子窗口、不调用深链和 Android 原通知入口；页面支持单条删除和确认后清空。
 
 ## 3. 连接和请求路由
 

@@ -78,7 +78,7 @@ Hinge Protocol 采用分层解耦架构：
 
 | ID (Hex) | 枚举标识 | 载荷格式 | 对应模块 | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| `0x0001` | `DEVICE_DISCOVERY` | JSON | Discovery | UDP 52830 广播声明；发送端同时支持全局广播与各 IPv4 网卡定向广播 |
+| `0x0001` | `DEVICE_DISCOVERY` | JSON | Discovery | 默认向 UDP 52830 广播声明；报文中的可选 `discoveryPort` 用于固定端口被占用时的临时 UDP 回答端口；发送端同时支持全局广播与各 IPv4 网卡定向广播 |
 | `0x0002` | `PAIR_REQUEST` | JSON | Pairing | 设备配对申请 |
 | `0x0003` | `PAIR_CONFIRM` | JSON | Pairing | 设备配对确认 |
 | `0x0010` | `SESSION_INIT` | JSON | Session | 会话握手发起 |
@@ -102,6 +102,8 @@ Hinge Protocol 采用分层解耦架构：
 | `0x0080` | `TOOL_COMMAND` | JSON | Tools | 原生工具任务调度 |
 | `0x0081` | `TOOL_RESULT` | JSON | Tools | 原生工具任务执行结果 |
 | `0x0082` | `COMPRESSED_CONTROL` | 二进制封装 | Session/Tools | 双方协商后压缩大控制载荷，内部保留原消息类型 |
+
+`DEVICE_DISCOVERY` 的 JSON 报文中，`automaticReconnect` 是可选布尔字段：设备主动恢复一个已经信任的历史会话时置为 `true`；手动连接请求或旧客户端省略该字段时按 `false` 处理。接收端只有在本地信任库中找到相同 `deviceId` 时才接受带标记的自动连接请求，因此更新后仍可复用历史身份，同时不会让新设备跳过用户授权。
 
 ### 3.2 可选控制数据压缩
 
@@ -142,7 +144,7 @@ EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
 }
 ```
 
-当前实现的命令为 `getDeviceSummary`、`calendarEvents`、`photos`、`photoBytes`、`files`、`loadNotes`、`saveNote`、`deleteNote`、`loadTasks`、`saveTask`、`deleteTask` 和 `pairDevice`。失败时 `success` 为 `false` 并附带 `error` 文本；权限不足由 Android 平台层返回错误，不伪造空数据。
+当前实现的命令包括 `getDeviceSummary`、`calendarEvents`、`photos`、`photosPage`、`photoBytes`、`files`、`browseFiles`、`browseFilesPage`、`loadNotes`、`saveNote`、`deleteNote`、`loadTasks`、`saveTask`、`deleteTask`、`notificationHistory`、`notificationHistoryAction` 和 `pairDevice`。其中 `notificationHistoryAction` 根据 `payload.action` 执行打开、单条删除或清空历史。通知历史命令的分页字段、返回模型和隐私边界见 [`notification.md`](notification.md)。失败时 `success` 为 `false` 并附带 `error` 文本；权限不足由 Android 平台层返回错误，不伪造空数据。
 
 ---
 

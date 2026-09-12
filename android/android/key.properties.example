@@ -1,0 +1,10 @@
+# Copy this file to key.properties once on the build machine.
+# key.properties is ignored and must never be committed.
+#
+# Hinge's current stable signing source is a BKS file. storeType may be JKS,
+# PKCS12, or BKS when using another local keystore.
+storeFile=D:/Download/backup/infinitycm.bks
+storeType=BKS
+storePassword=<local-keystore-password>
+keyAlias=<local-key-alias>
+keyPassword=<local-key-password>

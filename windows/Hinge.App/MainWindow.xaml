@@ -85,6 +85,9 @@
                 <NavigationViewItem Content="相册" Tag="photos">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Pictures" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="手机历史通知" Tag="notificationHistory">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.Header>

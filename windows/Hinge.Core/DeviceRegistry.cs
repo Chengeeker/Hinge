@@ -87,6 +87,7 @@ public class DeviceRegistry
                         AppVersion = message.Version,
                         ProtocolVersion = message.ProtocolVersion,
                         SessionPort = message.Port > 0 ? message.Port : Constants.SessionTcpPort,
+                        DiscoveryPort = ValidDiscoveryPort(message.DiscoveryPort),
                         Capabilities = message.Capabilities,
                         NetworkAddresses = MergeAddresses(
                             replacedRecord?.Device.NetworkAddresses,
@@ -115,12 +116,14 @@ public class DeviceRegistry
                     if (dev.Name != displayName ||
                         dev.Manufacturer != message.Manufacturer ||
                         dev.Model != message.Model ||
-                        dev.SessionPort != (message.Port > 0 ? message.Port : Constants.SessionTcpPort))
+                        dev.SessionPort != (message.Port > 0 ? message.Port : Constants.SessionTcpPort) ||
+                        dev.DiscoveryPort != ValidDiscoveryPort(message.DiscoveryPort))
                     {
                         dev.Name = displayName;
                         dev.Manufacturer = message.Manufacturer;
                         dev.Model = message.Model;
                         dev.SessionPort = message.Port > 0 ? message.Port : Constants.SessionTcpPort;
+                        dev.DiscoveryPort = ValidDiscoveryPort(message.DiscoveryPort);
                         isNewOrChanged = true;
                     }
                     return existing;
@@ -281,6 +284,7 @@ public class DeviceRegistry
             target.Device.AppVersion = source.Device.AppVersion;
             target.Device.ProtocolVersion = source.Device.ProtocolVersion;
             target.Device.SessionPort = source.Device.SessionPort;
+            target.Device.DiscoveryPort = source.Device.DiscoveryPort;
             target.Device.Capabilities = source.Device.Capabilities;
         }
     }
@@ -327,6 +331,9 @@ public class DeviceRegistry
         if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return true;
         return string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
     }
+
+    private static int ValidDiscoveryPort(int port) =>
+        port > 0 && port <= 65535 ? port : Constants.DiscoveryUdpPort;
 
     private static List<string> MergeAddresses(
         IEnumerable<string>? previous,

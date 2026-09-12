@@ -59,6 +59,9 @@ public class Device
     [JsonPropertyName("port")]
     public int SessionPort { get; set; } = Constants.SessionTcpPort;
 
+    [JsonPropertyName("discoveryPort")]
+    public int DiscoveryPort { get; set; } = Constants.DiscoveryUdpPort;
+
     [JsonPropertyName("capabilities")]
     public List<string> Capabilities { get; set; } = new();
 

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hinge/core/device_identity_manager.dart';
 import 'package:hinge/core/notification_manager.dart';
 import 'package:hinge/core/notification_model.dart';
+import 'package:hinge/core/notification_history_model.dart';
 import 'package:hinge/core/ocr_engine.dart';
 import 'package:hinge/core/pdf_tools.dart';
 import 'package:hinge/core/protocol_frame.dart';
@@ -61,6 +62,40 @@ void main() {
       expect(parsed.isVerificationCode, isTrue);
       expect(parsed.verificationCode, equals('123456'));
       expect(parsed.actions, equals(['copy_code']));
+    });
+
+    test('Notification history page preserves paging and app metadata', () {
+      final page = NotificationHistoryPage.fromJson({
+        'access': true,
+        'enabled': true,
+        'total': 301,
+        'items': [
+          {
+            'id': 'com.tencent.mm|key|1',
+            'packageName': 'com.tencent.mm',
+            'appName': '微信',
+            'title': '联系人',
+            'content': '通知正文',
+            'timestamp': 1725450000000,
+            'notificationKey': '0|com.tencent.mm|key',
+          },
+        ],
+        'applications': [
+          {
+            'packageName': 'com.tencent.mm',
+            'appName': '微信',
+            'count': 301,
+            'iconBase64': 'icon',
+          },
+        ],
+      });
+
+      expect(page.accessEnabled, isTrue);
+      expect(page.enabled, isTrue);
+      expect(page.total, equals(301));
+      expect(page.items.single.content, equals('通知正文'));
+      expect(page.applications.single.count, equals(301));
+      expect(page.applications.single.iconBase64, equals('icon'));
     });
 
     test('NotificationActionMessage JSON serialization roundtrip', () {

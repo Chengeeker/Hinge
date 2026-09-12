@@ -72,8 +72,9 @@ public class DiscoveryService : IDisposable
         {
             LastError = $"无法监听 UDP {_listenPort}：{exception.Message}";
             IsListening = false;
-            // Keep a sender alive so manual probing can still be used.
-            _listener = new UdpClient { EnableBroadcast = true };
+            // Keep a real receive socket. Its actual port is advertised in
+            // discoveryPort so a peer can reply even when 52830 is occupied.
+            _listener = new UdpClient(0) { EnableBroadcast = true };
         }
 
         _listenTask = Task.Run(() => ListenLoopAsync(token), token);
@@ -113,9 +114,12 @@ public class DiscoveryService : IDisposable
 
     public async Task RequestReverseConnectionAsync(
         IPAddress targetIp,
-        int port = Constants.DiscoveryUdpPort)
+        int port = Constants.DiscoveryUdpPort,
+        bool automaticReconnect = false)
     {
-        var message = CreateDiscoveryMessage(connectionRequested: true);
+        var message = CreateDiscoveryMessage(
+            connectionRequested: true,
+            automaticReconnect: automaticReconnect);
         byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
         using var sender = new UdpClient();
         await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
@@ -244,7 +248,9 @@ public class DiscoveryService : IDisposable
         return targets;
     }
 
-    private DiscoveryMessage CreateDiscoveryMessage(bool connectionRequested = false)
+    private DiscoveryMessage CreateDiscoveryMessage(
+        bool connectionRequested = false,
+        bool automaticReconnect = false)
     {
         return new DiscoveryMessage
         {
@@ -256,9 +262,31 @@ public class DiscoveryService : IDisposable
             Capabilities = new List<string> { "file_transfer", "clipboard", "remote_control", "backup" },
             ProtocolVersion = Constants.ProtocolVersion,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            ConnectionRequested = connectionRequested
+            ConnectionRequested = connectionRequested,
+            AutomaticReconnect = automaticReconnect,
+            DiscoveryPort = GetDiscoveryPort()
         };
     }
+
+    private int GetDiscoveryPort()
+    {
+        try
+        {
+            if (_listener?.Client.LocalEndPoint is IPEndPoint endpoint &&
+                endpoint.Port > 0)
+            {
+                return endpoint.Port;
+            }
+        }
+        catch
+        {
+            // Socket may be closing during a network transition.
+        }
+        return _listenPort;
+    }
+
+    private static int ValidDiscoveryPort(int port) =>
+        port > 0 && port <= 65535 ? port : Constants.DiscoveryUdpPort;
 
     private int GetSessionPort()
     {
@@ -322,7 +350,9 @@ public class DiscoveryService : IDisposable
                         if (now - lastReply > TimeSpan.FromSeconds(5))
                         {
                             _lastPeerReplies[message.DeviceId] = now;
-                            _ = ProbeManualIpAsync(result.RemoteEndPoint.Address);
+                            _ = ProbeManualIpAsync(
+                                result.RemoteEndPoint.Address,
+                                ValidDiscoveryPort(message.DiscoveryPort));
                         }
                     }
                 }

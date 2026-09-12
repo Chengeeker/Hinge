@@ -1,11 +1,16 @@
 # 当前开发状态
 
-> 更新时间：2026-09-09
-> 当前开发版：`v1.0.27-dev.1`
-> 双端运行版本：Android `1.0.27+28` / Windows `1.0.27.0`
+> 更新时间：2026-09-13
+> 当前开发版：`v1.0.32-dev.1`
+> 双端运行版本：Android `1.0.32+33` / Windows `1.0.32.0`
 
 - 短信同步新增 Android 短信通知读取兼容模式、由前台服务持有的短信 Provider 观察器和端到端测试消息；
 - Windows 系统横幅不可用时，仍使用窗口内通知卡片，不再将其误报为整项功能不支持。
+- Android 新增“工作区 > 通知历史”：在通知访问权限和采集开关都开启后，将应用通知保存到私有 SQLite，支持时间顺序与应用筛选；Windows 新增“手机历史通知”页，按页读取并支持点击微信/QQ 原通知入口。
+- 修复 Windows 点击 QQ/微信历史通知时盲目打开未注册 `mqq://` 导致系统错误对话框的问题；客户端探测现在覆盖注册表安装信息、常见安装目录和当前运行进程，并在调用 URI 前先查询协议是否已注册。
+- 修复 Windows 在 QQ/微信客户端已经后台运行时重复启动进程的问题；现在会先恢复已存在的客户端窗口，避免弹出新的登录界面。
+- Android 与 Windows 的历史设备自动重连使用持久化设备身份和信任记录；自动请求带有 `automaticReconnect` 标记，失败后每 5 秒重试一次，旧客户端省略该字段时仍按手动连接兼容处理。
+- Windows QQ/微信通知点击链路收窄为只唤醒客户端主窗口或启动已安装客户端，不再枚举和操作子窗口，也不再调用深链或 Android 原通知入口。
 
 本文只记录已在仓库或构建流程中确认的状态。真实手机、真实局域网和不同厂商系统仍需单独验收。
 
@@ -14,7 +19,7 @@
 - Android：Flutter UI + Android 原生 MethodChannel / 前台服务，发布目标为 `arm64-v8a`；
 - Windows：.NET 8 + Windows App SDK + WinUI 3，使用原生 `NavigationView`、Win32 托盘和系统文件关联；
 - 协议：两端共享 `protocol/` 下的发现、会话、传输、剪贴板和工作区命令模型；
-- 网络：UDP `52830` 发现，TCP `52831` 会话，功能请求经过当前有效会话调度。
+- 网络：UDP `52830` 发现，TCP `52831` 会话；Android 创建 socket 前绑定 Wi‑Fi，发现报文通过可选 `discoveryPort` 支持临时 UDP 端口，功能请求经过当前有效会话调度。
 
 ## 已确认可用的代码路径
 
@@ -47,22 +52,29 @@
 - Windows 提供 MICA/亚克力、背景图片、启动项、静默启动和关闭到托盘设置；
 - Android 提供通知、后台高耗电、锁定后台等系统保活引导。
 - Android 可选短信同步已接入：明确授权后监听新到 SMS；部分设备还会使用 `READ_SMS` 观察授权后的新收件箱记录作为验证码兼容回退，短信/彩信统一通过 Windows 托盘气泡显示，只有识别为验证码时点击才复制；Windows 系统通知状态可在设置中检查；彩信只转发到达提示，不读取历史收件箱或彩信正文。
+- Android 通知历史与短信转发共用一个 `NotificationListenerService`，但开关和数据路径分离；通知访问权限独立于 `POST_NOTIFICATIONS`，历史正文只写入应用私有数据库。Windows 端不把历史正文落到本地文件；双端通知历史支持单条删除和确认后清空，Windows 点击微信/QQ会先探测本机客户端，再在确认 URI 已注册时调用协议，最后回退 Android 原通知入口。
 
 ## 发布产物
 
-- `publish/android/Hinge.apk`：Android ARM64 Release APK；
+- `publish/Hinge.apk`：使用固定发布签名校验后的 Android ARM64 Release APK；
 - `publish/windows/Hinge-Setup.exe`：自包含、可选安装目录的 EXE 安装器；
 - `publish/windows/Hinge-Windows.zip`：便携版；
 - Windows 发布不包含 MSIX 或测试证书；Windows 只发布自包含 EXE 安装器和便携 ZIP。
+- Android Flutter 构建目录中的 APK 只作为中间产物；正式包必须由 `scripts/build_release_android.ps1` 重新签名并复制到 `publish/Hinge.apk`。
+- 当前开发机签名库由脚本优先从 `D:\Download\backup\infinitycm.bks` 读取，别名和密码不记录在文档或日志中。
 
 ## 自动化验证
 
-- `dart analyze --fatal-infos`：通过；
-- `flutter test --no-pub`：53 项通过；
+- `flutter test --no-pub`：54 项通过；
+- `flutter analyze --no-pub`：无问题；
 - `dotnet build windows/Hinge.sln --configuration Release --no-restore`：通过；
 - `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：63 项通过；
-- Windows 本次本地打包的文件版本为 `1.0.27.0`，同时生成 EXE 安装器和便携 ZIP；
-- Android APK V2/V3 签名验证：通过。
+- Windows 本次 Release 构建的文件版本为 `1.0.32.0`；
+- Android 本次本地 Release APK 已核对包名 `com.hinge.office`、版本 `1.0.32`、`versionCode 33` 和仅包含 `arm64-v8a`；
+- Android 发布脚本已从本机配置读取签名信息并成功生成 `publish/Hinge.apk`；APK 为 20,171,937 字节，V2/V3 签名校验通过，且只包含 `arm64-v8a`；本次产物 SHA-256 为 `5098ABF60C8D82BFAC4F268E3E6E8A63A9DD7D177A38BC275E587FDBC378CDC1`。
+- Windows Release 已生成 `publish/windows/Hinge-Setup.exe`（200,823,472 字节，SHA-256 `72E24F214DE66758BA01E88287BDF73144AB4AE671E50EEEFAB6DB0B3DCDA917`）和 `publish/windows/Hinge-Windows.zip`（129,062,027 字节，SHA-256 `2B23560D689DDB5A4289EE3946450DA66AACB6E58E2C4D67667E1944651C5F34`）；EXE 文件版本为 `1.0.32.0`，便携包包含 `Hinge.exe` 且不含 MSIX。
+- 本版历史通知打开与历史设备自动重连修复已通过 Dart 分析、Flutter 54 项测试、Android ARM64 Release 集成构建、Windows .NET Release 构建和 63 项测试；当前开发机未连接真实 Android 调试设备，QQ/微信历史通知和更新后自动重连仍需在真实客户端、真实 Android 设备和真实局域网中最终验收。
+- Android 发布脚本支持 Review 风格的本地 `android/android/key.properties` 配置：首次填写后后续构建自动读取，不再重复弹出签名输入；固定 BKS 路径仍作为未配置路径时的回退。脚本在构建/复制前校验签名输入，失败时不会覆盖 `publish/Hinge.apk`。现有 `publish/android/Hinge.apk` 是历史遗留产物，不属于当前统一输出路径，也不得作为本版正式更新包。
 
 ## 仍需真实设备验收
 

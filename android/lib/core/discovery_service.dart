@@ -53,9 +53,36 @@ class DiscoveryService {
     this.sessionPortProvider,
   });
 
+  /// Android can keep cellular data and Wi-Fi active at the same time. Bind
+  /// the process before Dart creates its LAN sockets so discovery uses Wi-Fi.
+  Future<bool> prepareNetwork() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final result = await _platform.invokeMethod<dynamic>(
+        'bindDiscoveryToWifi',
+      );
+      if (result is Map) return result['bound'] == true;
+      return result == true;
+    } catch (_) {
+      // The Dart socket still has its normal route as a fallback.
+      return false;
+    }
+  }
+
+  Future<void> _bindSocket(int port) async {
+    _socket = await RawDatagramSocket.bind(
+      InternetAddress.anyIPv4,
+      port,
+      reuseAddress: true,
+    );
+    _socket?.broadcastEnabled = true;
+    _socket?.listen(_onSocketEvent, onError: _onSocketError);
+  }
+
   Future<void> start() async {
     if (_isRunning) return;
 
+    await prepareNetwork();
     if (Platform.isAndroid) {
       try {
         await _platform.invokeMethod<bool>('acquireDiscoveryMulticastLock');
@@ -65,22 +92,16 @@ class DiscoveryService {
     }
 
     try {
-      _socket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        _listenPort,
-        reuseAddress: true,
-      );
-      _socket?.broadcastEnabled = true;
-      _socket?.listen(_onSocketEvent);
+      await _bindSocket(_listenPort);
       _isListening = true;
       _lastError = null;
     } catch (error) {
       _lastError = '无法监听 UDP $_listenPort：$error';
       try {
-        _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-        _socket?.broadcastEnabled = true;
-        _socket?.listen(_onSocketEvent);
-        _isListening = false;
+        // A temporary port remains usable when it is advertised through the
+        // discoveryPort field. Older peers continue to use 52830.
+        await _bindSocket(0);
+        _isListening = true;
       } catch (fallbackError) {
         _socket = null;
         _isListening = false;
@@ -109,6 +130,39 @@ class DiscoveryService {
       const Duration(seconds: 2),
       (_) => _registry.pruneOffline(const Duration(seconds: 30)),
     );
+  }
+
+  void _onSocketError(Object error, StackTrace stackTrace) {
+    if (_isRunning) _lastError = '设备发现 UDP socket 错误：$error';
+  }
+
+  /// Rebinds only the UDP discovery socket after Android returns from the
+  /// background or moves to another Wi-Fi network. Active TCP sessions stay
+  /// untouched.
+  Future<void> refreshNetwork() async {
+    await prepareNetwork();
+    if (!_isRunning) return;
+
+    final previous = _socket;
+    _socket = null;
+    previous?.close();
+    try {
+      await _bindSocket(_listenPort);
+      _isListening = true;
+      _lastError = null;
+    } catch (error) {
+      _lastError = '无法重新绑定 UDP $_listenPort：$error';
+      try {
+        await _bindSocket(0);
+        _isListening = true;
+      } catch (fallbackError) {
+        _socket = null;
+        _isListening = false;
+        _lastError = '设备发现服务重新启动失败：$fallbackError';
+        return;
+      }
+    }
+    await broadcastOnce();
   }
 
   void _onSocketEvent(RawSocketEvent event) {
@@ -140,7 +194,7 @@ class DiscoveryService {
           final lastReply = _lastPeerReplies[message.deviceId];
           if (lastReply == null || now.difference(lastReply).inSeconds >= 5) {
             _lastPeerReplies[message.deviceId] = now;
-            probeManualIp(datagram.address.address);
+            probeManualIp(datagram.address.address, message.discoveryPort);
           }
         }
       } catch (_) {
@@ -282,7 +336,11 @@ class DiscoveryService {
     try {
       final message = _createDiscoveryMessage();
       final data = utf8.encode(jsonEncode(message.toJson()));
-      _socket?.send(data, InternetAddress(ip), port);
+      _socket?.send(
+        data,
+        InternetAddress(ip),
+        parseNetworkPort(port, AppConstants.discoveryUdpPort),
+      );
     } catch (_) {}
   }
 
@@ -292,16 +350,27 @@ class DiscoveryService {
   void requestReverseConnection(
     String ip, [
     int port = AppConstants.discoveryUdpPort,
+    bool automaticReconnect = false,
   ]) {
     if (_socket == null) return;
     try {
-      final message = _createDiscoveryMessage(connectionRequested: true);
+      final message = _createDiscoveryMessage(
+        connectionRequested: true,
+        automaticReconnect: automaticReconnect,
+      );
       final data = utf8.encode(jsonEncode(message.toJson()));
-      _socket?.send(data, InternetAddress(ip), port);
+      _socket?.send(
+        data,
+        InternetAddress(ip),
+        parseNetworkPort(port, AppConstants.discoveryUdpPort),
+      );
     } catch (_) {}
   }
 
-  DiscoveryMessage _createDiscoveryMessage({bool connectionRequested = false}) {
+  DiscoveryMessage _createDiscoveryMessage({
+    bool connectionRequested = false,
+    bool automaticReconnect = false,
+  }) {
     return DiscoveryMessage(
       version: AppConstants.appVersion,
       deviceId: _localIdentity.deviceId,
@@ -310,6 +379,7 @@ class DiscoveryService {
       model: _localIdentity.model,
       platform: _platformName,
       port: sessionPortProvider?.call() ?? AppConstants.sessionTcpPort,
+      discoveryPort: _socket?.port ?? _listenPort,
       capabilities: const [
         'file_transfer',
         'clipboard',
@@ -319,6 +389,7 @@ class DiscoveryService {
       protocolVersion: AppConstants.protocolVersion,
       timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       connectionRequested: connectionRequested,
+      automaticReconnect: automaticReconnect,
     );
   }
 

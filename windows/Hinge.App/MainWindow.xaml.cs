@@ -37,6 +37,7 @@ public sealed partial class MainWindow : Window
     private const int GwlpWndProc = -4;
     private const int DefaultWindowWidth = 1555;
     private const int DefaultWindowHeight = 1000;
+    private const int SwRestore = 9;
     private const string StartupRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string StartupRegistryValueName = "Hinge";
     private const string UserSettingsRegistryPath = @"Software\Hinge";
@@ -64,6 +65,7 @@ public sealed partial class MainWindow : Window
     private const int ThumbnailBudgetPerBatch = 80;
     private readonly HashSet<SessionConnection> _observedConnections = new();
     private readonly Dictionary<string, DateTime> _automaticConnectAttempts = new(StringComparer.OrdinalIgnoreCase);
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _historicalReconnectTimer;
     private Device? _activeDevice;
     private SessionConnection? _activeConnection;
     private string? _connectingDeviceId;
@@ -84,6 +86,7 @@ public sealed partial class MainWindow : Window
     private TodoPage? _todoPage;
     private CalendarPage? _calendarPage;
     private PhotosPage? _photosPage;
+    private NotificationHistoryPage? _notificationHistoryPage;
     private PersonalizationPage? _personalizationPage;
     private readonly HashSet<Page> _configuredPages = new();
     private bool _resizingPane;
@@ -162,6 +165,15 @@ public sealed partial class MainWindow : Window
     private static extern uint GetWindowThreadProcessId(
         IntPtr hWnd,
         out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int command);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetGUIThreadInfo(
@@ -360,6 +372,11 @@ public sealed partial class MainWindow : Window
                 _photosPage = photos;
                 ConfigurePhotosPage(photos);
                 _ = photos.LoadAsync(GetConnectedConnection());
+                break;
+            case NotificationHistoryPage notificationHistory:
+                _notificationHistoryPage = notificationHistory;
+                ConfigureNotificationHistoryPage(notificationHistory);
+                _ = notificationHistory.LoadAsync(GetConnectedConnection());
                 break;
             case FeaturePage feature:
                 ConfigureFeaturePage(feature);
@@ -754,6 +771,347 @@ public sealed partial class MainWindow : Window
             _workspaceRemoteClient,
             GetConnectedConnection,
             OpenRemotePhotoWithDefaultAppAsync);
+    }
+
+    private void ConfigureNotificationHistoryPage(NotificationHistoryPage page)
+    {
+        if (!_configuredPages.Add(page)) return;
+        page.Configure(
+            _workspaceRemoteClient,
+            GetConnectedConnection,
+            OpenRemoteNotificationAsync,
+            DeleteRemoteNotificationAsync,
+            ClearRemoteNotificationHistoryAsync);
+    }
+
+    private async Task<bool> OpenRemoteNotificationAsync(RemoteNotificationHistoryItem item)
+    {
+        // QQ/Weixin notifications intentionally have a very small action:
+        // wake the desktop client and leave navigation to that client. Do not
+        // send an Android PendingIntent or a deep link after the client is
+        // found; both can make a multi-process client create another window or
+        // enter an unauthenticated login surface.
+        if (IsDesktopChatPackage(item.PackageName))
+        {
+            return TryWakeOrStartDesktopChatApp(item.PackageName);
+        }
+
+        var connection = GetConnectedConnection();
+        if (connection != null)
+        {
+            try
+            {
+                if (await _workspaceRemoteClient.OpenNotificationHistoryItemAsync(connection, item))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // The Android notification listener may have stopped or the
+                // original PendingIntent may have expired. Continue to the
+                // local launcher below rather than surfacing a transport error.
+            }
+        }
+
+        return false;
+    }
+
+    private async Task<bool> DeleteRemoteNotificationAsync(RemoteNotificationHistoryItem item)
+    {
+        var connection = GetConnectedConnection();
+        if (connection == null) return false;
+        return await _workspaceRemoteClient.DeleteNotificationHistoryItemAsync(connection, item.Id);
+    }
+
+    private async Task<bool> ClearRemoteNotificationHistoryAsync()
+    {
+        var connection = GetConnectedConnection();
+        if (connection == null) return false;
+        return await _workspaceRemoteClient.ClearNotificationHistoryAsync(connection);
+    }
+
+    private static bool IsDesktopChatPackage(string packageName) =>
+        packageName.Equals("com.tencent.mm", StringComparison.OrdinalIgnoreCase) ||
+        packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryWakeOrStartDesktopChatApp(string packageName)
+    {
+        // QQ and Weixin are single-instance applications. Never start their
+        // executable while a matching client process is already resident.
+        // Waking only the main window avoids touching child WebView/rendering
+        // windows, which can make the client unresponsive.
+        if (TryWakeExistingDesktopChatProcess(packageName))
+        {
+            return true;
+        }
+
+        var candidates = DesktopChatExecutableCandidates(packageName).ToArray();
+        foreach (var executable in candidates)
+        {
+            if (!File.Exists(executable)) continue;
+            try
+            {
+                using var process = System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = executable,
+                        WorkingDirectory = Path.GetDirectoryName(executable) ?? string.Empty,
+                        UseShellExecute = true,
+                    });
+                if (process != null) return true;
+            }
+            catch
+            {
+                // Try the next installation location.
+            }
+        }
+        return false;
+    }
+
+    private static bool TryWakeExistingDesktopChatProcess(string packageName)
+    {
+        var executableNames = packageName.Equals(
+            "com.tencent.mm",
+            StringComparison.OrdinalIgnoreCase)
+            ? new[] { "Weixin", "WeChat" }
+            : packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase)
+                ? new[] { "QQ", "QQNT" }
+            : Array.Empty<string>();
+        if (executableNames.Length == 0) return false;
+
+        foreach (var executableName in executableNames)
+        {
+            System.Diagnostics.Process[] processes;
+            try
+            {
+                processes = System.Diagnostics.Process.GetProcessesByName(executableName);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var process in processes)
+            {
+                using (process)
+                {
+                    try
+                    {
+                        process.Refresh();
+                        var windowHandle = process.MainWindowHandle;
+                        if (windowHandle != IntPtr.Zero)
+                        {
+                            if (IsIconic(windowHandle))
+                            {
+                                ShowWindow(windowHandle, SwRestore);
+                            }
+                            SetForegroundWindow(windowHandle);
+                        }
+                        // A matching process without a visible main window is
+                        // still considered handled: do not start a second
+                        // instance and risk a fresh login surface.
+                        return true;
+                    }
+                    catch
+                    {
+                        // A process can exit between enumeration and window
+                        // inspection. It was still identified, so avoid a
+                        // duplicate launch in this click.
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static IEnumerable<string> DesktopChatExecutableCandidates(string packageName)
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddCandidate(string? path)
+        {
+            var normalized = NormalizeExecutablePath(path);
+            if (!string.IsNullOrWhiteSpace(normalized)) candidates.Add(normalized);
+        }
+
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var executableNames = Array.Empty<string>();
+        var registryTerms = Array.Empty<string>();
+
+        if (packageName.Equals("com.tencent.mm", StringComparison.OrdinalIgnoreCase))
+        {
+            executableNames = new[] { "Weixin.exe", "WeChat.exe" };
+            registryTerms = new[] { "微信", "微信桌面版", "Weixin", "WeChat" };
+            AddCandidate(Path.Combine(local, "Tencent", "Weixin", "Weixin.exe"));
+            AddCandidate(Path.Combine(local, "Tencent", "WeChat", "WeChat.exe"));
+            AddCandidate(Path.Combine(local, "Programs", "Tencent", "Weixin", "Weixin.exe"));
+            AddCandidate(Path.Combine(local, "Programs", "Tencent", "WeChat", "WeChat.exe"));
+            AddCandidate(Path.Combine(roaming, "Tencent", "Weixin", "Weixin.exe"));
+            AddCandidate(Path.Combine(roaming, "Tencent", "WeChat", "WeChat.exe"));
+            AddCandidate(Path.Combine(programFiles, "Tencent", "Weixin", "Weixin.exe"));
+            AddCandidate(Path.Combine(programFiles, "Tencent", "WeChat", "WeChat.exe"));
+            AddCandidate(Path.Combine(programFilesX86, "Tencent", "Weixin", "Weixin.exe"));
+            AddCandidate(Path.Combine(programFilesX86, "Tencent", "WeChat", "WeChat.exe"));
+        }
+        else if (packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase))
+        {
+            executableNames = new[] { "QQ.exe", "QQNT.exe" };
+            registryTerms = new[] { "QQ", "QQNT", "腾讯QQ", "Tencent QQ" };
+            AddCandidate(Path.Combine(local, "Tencent", "QQNT", "QQ.exe"));
+            AddCandidate(Path.Combine(local, "Tencent", "QQ", "Bin", "QQ.exe"));
+            AddCandidate(Path.Combine(local, "Programs", "Tencent", "QQNT", "QQ.exe"));
+            AddCandidate(Path.Combine(local, "Programs", "Tencent", "QQ", "Bin", "QQ.exe"));
+            AddCandidate(Path.Combine(roaming, "Tencent", "QQNT", "QQ.exe"));
+            AddCandidate(Path.Combine(roaming, "Tencent", "QQ", "Bin", "QQ.exe"));
+            AddCandidate(Path.Combine(programFiles, "Tencent", "QQNT", "QQ.exe"));
+            AddCandidate(Path.Combine(programFiles, "Tencent", "QQ", "Bin", "QQ.exe"));
+            AddCandidate(Path.Combine(programFilesX86, "Tencent", "QQNT", "QQ.exe"));
+            AddCandidate(Path.Combine(programFilesX86, "Tencent", "QQ", "Bin", "QQ.exe"));
+        }
+
+        if (executableNames.Length == 0) return candidates;
+
+        AddCandidatesFromAppPaths(executableNames, AddCandidate);
+        AddCandidatesFromUninstallEntries(executableNames, registryTerms, AddCandidate);
+        AddCandidatesFromRunningProcesses(executableNames, AddCandidate);
+        return candidates;
+    }
+
+    private static string? NormalizeExecutablePath(string? rawPath)
+    {
+        if (string.IsNullOrWhiteSpace(rawPath)) return null;
+        var value = rawPath.Trim();
+        if (value.StartsWith('"'))
+        {
+            var closingQuote = value.IndexOf('"', 1);
+            value = closingQuote > 1 ? value[1..closingQuote] : value.Trim('"');
+        }
+        else
+        {
+            var comma = value.IndexOf(',');
+            if (comma > 0) value = value[..comma];
+        }
+
+        value = Environment.ExpandEnvironmentVariables(value.Trim().Trim('"'));
+        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? value : null;
+    }
+
+    private static void AddCandidatesFromAppPaths(
+        IReadOnlyList<string> executableNames,
+        Action<string?> addCandidate)
+    {
+        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using var appPaths = baseKey.OpenSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\App Paths",
+                        writable: false);
+                    if (appPaths == null) continue;
+
+                    foreach (var executableName in executableNames)
+                    {
+                        using var executableKey = appPaths.OpenSubKey(executableName, writable: false);
+                        addCandidate(executableKey?.GetValue(string.Empty) as string);
+                    }
+                }
+                catch
+                {
+                    // Registry access is only an optional discovery source.
+                }
+            }
+        }
+    }
+
+    private static void AddCandidatesFromUninstallEntries(
+        IReadOnlyList<string> executableNames,
+        IReadOnlyList<string> displayNameTerms,
+        Action<string?> addCandidate)
+    {
+        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using var uninstall = baseKey.OpenSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+                        writable: false);
+                    if (uninstall == null) continue;
+
+                    foreach (var subKeyName in uninstall.GetSubKeyNames())
+                    {
+                        using var appKey = uninstall.OpenSubKey(subKeyName, writable: false);
+                        if (appKey == null) continue;
+                        var displayName = appKey.GetValue("DisplayName") as string;
+                        if (string.IsNullOrWhiteSpace(displayName) ||
+                            !displayNameTerms.Any(term => string.Equals(
+                                displayName.Trim(),
+                                term,
+                                StringComparison.OrdinalIgnoreCase)))
+                        {
+                            continue;
+                        }
+
+                        addCandidate(appKey.GetValue("DisplayIcon") as string);
+                        var installLocation = NormalizeExecutablePath(
+                            appKey.GetValue("InstallLocation") as string);
+                        if (installLocation != null)
+                        {
+                            addCandidate(installLocation);
+                            continue;
+                        }
+
+                        var rawLocation = appKey.GetValue("InstallLocation") as string;
+                        if (string.IsNullOrWhiteSpace(rawLocation)) continue;
+                        rawLocation = Environment.ExpandEnvironmentVariables(
+                            rawLocation.Trim().Trim('"'));
+                        foreach (var executableName in executableNames)
+                        {
+                            addCandidate(Path.Combine(rawLocation, executableName));
+                        }
+                    }
+                }
+                catch
+                {
+                    // Registry access is only an optional discovery source.
+                }
+            }
+        }
+    }
+
+    private static void AddCandidatesFromRunningProcesses(
+        IReadOnlyList<string> executableNames,
+        Action<string?> addCandidate)
+    {
+        foreach (var processName in executableNames.Select(Path.GetFileNameWithoutExtension).Distinct(
+            StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (var process in System.Diagnostics.Process.GetProcessesByName(processName))
+            {
+                using (process)
+                {
+                    try
+                    {
+                        addCandidate(process.MainModule?.FileName);
+                    }
+                    catch
+                    {
+                        // Some processes deny MainModule access; continue with
+                        // registry and conventional installation locations.
+                    }
+                }
+            }
+        }
     }
 
     private void PhotoSelectionStateChanged(object? sender, EventArgs e)
@@ -1715,6 +2073,15 @@ public sealed partial class MainWindow : Window
     {
         DispatcherQueue.TryEnqueue(async () =>
         {
+            // A reverse request marked as automatic is only valid for a peer
+            // already present in this installation's trust store. Requests
+            // without the marker remain manual-connect compatibility paths.
+            if (args.Message.AutomaticReconnect &&
+                !_trustStore.IsTrusted(args.Message.DeviceId))
+            {
+                return;
+            }
+
             if (_sessionManager.ConnectionForDevice(args.Message.DeviceId) != null)
             {
                 return;
@@ -1733,7 +2100,9 @@ public sealed partial class MainWindow : Window
 
             if (_registry.TryGetDevice(args.Message.DeviceId, out var device) && device != null)
             {
-                await ConnectDeviceAsync(device, automatic: true);
+                await ConnectDeviceAsync(
+                    device,
+                    automatic: args.Message.AutomaticReconnect);
             }
         });
     }
@@ -1741,6 +2110,8 @@ public sealed partial class MainWindow : Window
     private async Task TryAutoConnectHistoricalDeviceAsync(IReadOnlyList<Device> devices)
     {
         if (_activeConnection?.State == SessionState.Connected ||
+            _sessionManager.ActiveConnections.Any(connection =>
+                connection.State == SessionState.Connected) ||
             _connectingDeviceId != null)
         {
             return;
@@ -1754,7 +2125,7 @@ public sealed partial class MainWindow : Window
 
         DateTime now = DateTime.UtcNow;
         if (_automaticConnectAttempts.TryGetValue(candidate.DeviceId, out var lastAttempt) &&
-            now - lastAttempt < TimeSpan.FromSeconds(12))
+            now - lastAttempt < TimeSpan.FromSeconds(5))
         {
             return;
         }
@@ -1763,6 +2134,43 @@ public sealed partial class MainWindow : Window
         StatusText.Text = $"正在自动连接历史设备：{candidate.Name}";
         HeaderStatusText.Text = "自动连接中...";
         await ConnectDeviceAsync(candidate, automatic: true);
+
+        if (_sessionManager.ConnectionForDevice(candidate.DeviceId) != null)
+        {
+            _automaticConnectAttempts.Remove(candidate.DeviceId);
+        }
+        else
+        {
+            ScheduleHistoricalReconnect(candidate.DeviceId);
+        }
+    }
+
+    private void ScheduleHistoricalReconnect(string? deviceId = null)
+    {
+        if (deviceId != null && !_trustStore.IsTrusted(deviceId)) return;
+        if (_historicalReconnectTimer != null) return;
+
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(5);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (ReferenceEquals(_historicalReconnectTimer, timer))
+            {
+                _historicalReconnectTimer = null;
+            }
+
+            _ = TryAutoConnectHistoricalDeviceAsync(_registry.GetAllDevices());
+        };
+        _historicalReconnectTimer = timer;
+        timer.Start();
+    }
+
+    private void CancelHistoricalReconnect()
+    {
+        _historicalReconnectTimer?.Stop();
+        _historicalReconnectTimer = null;
     }
 
     private void OnClientConnected(object? sender, SessionConnection connection)
@@ -2047,7 +2455,13 @@ public sealed partial class MainWindow : Window
             // duplicate sockets deterministically after identity exchange.
             foreach (var address in addresses)
             {
-                try { await _discoveryService.RequestReverseConnectionAsync(address); }
+                try
+                {
+                    await _discoveryService.RequestReverseConnectionAsync(
+                        address,
+                        device.DiscoveryPort,
+                        automaticReconnect: automatic);
+                }
                 catch { }
             }
 
@@ -2248,6 +2662,9 @@ public sealed partial class MainWindow : Window
             case "photos":
                 NavigateTo("相册", 0);
                 break;
+            case "notificationHistory":
+                NavigateTo("手机历史通知", 0);
+                break;
             case "transfers":
                 NavigateTo("设备操作", 0);
                 break;
@@ -2372,6 +2789,9 @@ public sealed partial class MainWindow : Window
                 break;
             case "相册":
                 ContentFrame.Navigate(typeof(PhotosPage));
+                break;
+            case "手机历史通知":
+                ContentFrame.Navigate(typeof(NotificationHistoryPage));
                 break;
             case "设备操作":
                 NavigateToFeature("设备操作", "把常用的跨设备操作集中在这里，避免把剪贴板入口堆到标题栏。", "请选择一项操作", "\uE72D", "选择文件并发送", "发送文字或链接");
@@ -2537,8 +2957,11 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            _registry.MarkSessionDisconnected(
-                connection.RemoteDeviceId ?? _activeDevice?.DeviceId ?? string.Empty);
+            var disconnectedDeviceId =
+                connection.RemoteDeviceId ?? _activeDevice?.DeviceId ?? string.Empty;
+            _registry.MarkSessionDisconnected(disconnectedDeviceId);
+            DispatcherQueue.TryEnqueue(() =>
+                ScheduleHistoricalReconnect(disconnectedDeviceId));
 
             DispatcherQueue.TryEnqueue(() =>
             {
@@ -4362,6 +4785,7 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        CancelHistoricalReconnect();
         UninitializeNativeFileDrop();
         if (_appWindow != null)
         {

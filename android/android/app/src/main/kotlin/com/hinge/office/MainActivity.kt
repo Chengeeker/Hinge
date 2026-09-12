@@ -15,10 +15,13 @@ import android.content.res.Configuration
 import android.content.ContentUris
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.bluetooth.BluetoothAdapter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -53,6 +56,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.LinkedHashMap
 import java.util.Locale
+import java.net.Inet4Address
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -86,6 +90,7 @@ class MainActivity : FlutterActivity() {
     private var encodingFrame = false
     private var screenEventSink: EventChannel.EventSink? = null
     private var discoveryMulticastLock: WifiManager.MulticastLock? = null
+    private var discoveryNetworkBound = false
     private var calendarPermissionResult: MethodChannel.Result? = null
     private var photosPermissionResult: MethodChannel.Result? = null
     private var notificationPermissionResult: MethodChannel.Result? = null
@@ -103,6 +108,7 @@ class MainActivity : FlutterActivity() {
 
     private val storageDirectoryCache = ConcurrentHashMap<String, StorageCacheEntry>()
     private val mediaTotalCache = ConcurrentHashMap<String, CountCacheEntry>()
+    private val notificationIconCache = ConcurrentHashMap<String, String>()
     private val documentFileExtensions = arrayOf(
         "pdf", "doc", "docx", "docm", "dot", "dotx", "odt",
         "xls", "xlsx", "xlsm", "xlt", "xltx", "ods",
@@ -157,12 +163,25 @@ class MainActivity : FlutterActivity() {
                 SmsRelayBridge.detach()
             }
         })
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "hinge/notification_history/events",
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                NotificationHistoryBridge.attach(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                NotificationHistoryBridge.detach()
+            }
+        })
     }
 
     override fun onDestroy() {
         stopScreenCapture()
         releaseDiscoveryMulticastLock()
         SmsRelayBridge.detach()
+        NotificationHistoryBridge.detach()
         contentExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -198,6 +217,7 @@ class MainActivity : FlutterActivity() {
 
     private fun handleMethod(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "bindDiscoveryToWifi" -> result.success(bindDiscoveryToWifi())
             "acquireDiscoveryMulticastLock" -> result.success(acquireDiscoveryMulticastLock())
             "releaseDiscoveryMulticastLock" -> result.success(releaseDiscoveryMulticastLock())
             "storageInfo" -> result.success(readStorageInfo())
@@ -223,6 +243,14 @@ class MainActivity : FlutterActivity() {
             "sendSmsRelayTestEvent" -> result.success(sendSmsRelayTestEvent())
             "smsPermissionPromptShown" -> result.success(smsPermissionPromptShown())
             "setSmsPermissionPromptShown" -> setSmsPermissionPromptShown(call, result)
+            "notificationHistoryAccessEnabled" -> result.success(notificationHistoryAccessEnabled())
+            "notificationHistoryEnabled" -> result.success(notificationHistoryEnabled())
+            "setNotificationHistoryEnabled" -> setNotificationHistoryEnabled(call, result)
+            "openNotificationHistorySettings" -> result.success(openNotificationHistorySettings())
+            "notificationHistory" -> readNotificationHistory(call, result)
+            "openNotificationHistoryItem" -> openNotificationHistoryItem(call, result)
+            "deleteNotificationHistoryItem" -> deleteNotificationHistoryItem(call, result)
+            "clearNotificationHistory" -> clearNotificationHistory(result)
             "keepAliveStatus" -> result.success(keepAliveStatus())
             "openNotificationSettings" -> result.success(openNotificationSettings())
             "openBatteryOptimizationSettings" -> result.success(openBatteryOptimizationSettings())
@@ -456,6 +484,49 @@ class MainActivity : FlutterActivity() {
             discoveryMulticastLock?.isHeld == true
         } catch (_: Exception) {
             false
+        }
+    }
+
+    /**
+     * Android can keep cellular data and Wi-Fi active at the same time. Bind
+     * the process before Dart creates its LAN sockets so discovery uses Wi-Fi.
+     * Validated internet access is intentionally not required: a local-only
+     * Wi-Fi network is still a valid Hinge network.
+     */
+    private fun bindDiscoveryToWifi(): Map<String, Any> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return mapOf("bound" to false, "wifi" to false)
+        }
+        return try {
+            val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE)
+                as ConnectivityManager
+            val wifi = connectivity.allNetworks.firstOrNull { network ->
+                val capabilities = connectivity.getNetworkCapabilities(network)
+                val properties = connectivity.getLinkProperties(network)
+                capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                    properties?.linkAddresses?.any { linkAddress ->
+                        val address = linkAddress.address
+                        address is Inet4Address &&
+                            !address.isLoopbackAddress &&
+                            !address.isLinkLocalAddress
+                    } == true
+            }
+
+            if (wifi == null) {
+                if (discoveryNetworkBound) connectivity.bindProcessToNetwork(null)
+                discoveryNetworkBound = false
+                return mapOf("bound" to false, "wifi" to false)
+            }
+
+            val bound = connectivity.bindProcessToNetwork(wifi)
+            if (bound) discoveryNetworkBound = true
+            mapOf("bound" to bound, "wifi" to true)
+        } catch (error: Exception) {
+            mapOf(
+                "bound" to false,
+                "wifi" to false,
+                "error" to (error.javaClass.simpleName ?: "unknown"),
+            )
         }
     }
 
@@ -1073,6 +1144,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun smsNotificationAccessEnabled(): Boolean {
+        return notificationListenerAccessEnabled()
+    }
+
+    private fun notificationHistoryAccessEnabled(): Boolean {
+        return notificationListenerAccessEnabled()
+    }
+
+    private fun notificationListenerAccessEnabled(): Boolean {
         val enabled = Settings.Secure.getString(
             contentResolver,
             "enabled_notification_listeners",
@@ -1085,7 +1164,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun openSmsNotificationAccessSettings(): Boolean = try {
-        startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         true
     } catch (_: Exception) {
         try {
@@ -1094,6 +1173,160 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun openNotificationHistorySettings(): Boolean =
+        openSmsNotificationAccessSettings()
+
+    private fun notificationHistoryEnabled(): Boolean =
+        NotificationHistorySettings.isEnabled(this)
+
+    private fun setNotificationHistoryEnabled(call: MethodCall, result: MethodChannel.Result) {
+        val requested = call.argument<Boolean>("enabled") ?: false
+        val enabled = requested && notificationHistoryAccessEnabled()
+        NotificationHistorySettings.setEnabled(this, enabled)
+        if (enabled) SmsNotificationListenerService.captureActiveNotifications()
+        result.success(enabled)
+    }
+
+    private fun readNotificationHistory(call: MethodCall, result: MethodChannel.Result) {
+        val offset = (call.argument<Number>("offset")?.toInt() ?: 0).coerceAtLeast(0)
+        val limit = (call.argument<Number>("limit")?.toInt() ?: 200).coerceIn(1, 200)
+        val ascending = call.argument<Boolean>("ascending") ?: true
+        val packageName = call.argument<String>("packageName")?.trim().orEmpty()
+            .ifBlank { null }
+        contentExecutor.execute {
+            try {
+                val access = notificationHistoryAccessEnabled()
+                val enabled = notificationHistoryEnabled()
+                if (!access || !enabled) {
+                    runOnUiThread {
+                        result.success(
+                            mapOf(
+                                "access" to access,
+                                "enabled" to enabled,
+                                "items" to emptyList<Map<String, Any?>>(),
+                                "total" to 0,
+                                "applications" to emptyList<Map<String, Any?>>(),
+                            ),
+                        )
+                    }
+                    return@execute
+                }
+
+                val store = NotificationHistoryStore(applicationContext)
+                try {
+                    val records = store.query(offset, limit, ascending, packageName)
+                    val applications = store.applications().map { app ->
+                        mapOf<String, Any?>(
+                            "packageName" to app.packageName,
+                            "appName" to app.appName,
+                            "count" to app.count,
+                            "iconBase64" to notificationIconBase64(app.packageName),
+                        )
+                    }
+                    val items = records.map { record ->
+                        mapOf<String, Any?>(
+                            "id" to record.id,
+                            "packageName" to record.packageName,
+                            "appName" to record.appName,
+                            "title" to record.title,
+                            "content" to record.content,
+                            "timestamp" to record.timestamp,
+                            "category" to record.category,
+                            "ongoing" to record.ongoing,
+                            "notificationKey" to record.notificationKey,
+                            "iconBase64" to notificationIconBase64(record.packageName),
+                        )
+                    }
+                    val total = store.count(packageName)
+                    runOnUiThread {
+                        result.success(
+                            mapOf(
+                                "access" to true,
+                                "enabled" to true,
+                                "items" to items,
+                                "total" to total,
+                                "applications" to applications,
+                            ),
+                        )
+                    }
+                } finally {
+                    store.close()
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("NOTIFICATION_HISTORY", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun openNotificationHistoryItem(call: MethodCall, result: MethodChannel.Result) {
+        val packageName = call.argument<String>("packageName")?.trim().orEmpty()
+        val notificationKey = call.argument<String>("notificationKey")?.trim().orEmpty()
+        result.success(
+            SmsNotificationListenerService.openHistoryItem(
+                this,
+                packageName,
+                notificationKey,
+            ),
+        )
+    }
+
+    private fun deleteNotificationHistoryItem(call: MethodCall, result: MethodChannel.Result) {
+        val id = call.argument<String>("id")?.trim().orEmpty()
+        if (id.isBlank()) {
+            result.success(false)
+            return
+        }
+        contentExecutor.execute {
+            try {
+                val store = NotificationHistoryStore(applicationContext)
+                val deleted = try {
+                    store.delete(id)
+                } finally {
+                    store.close()
+                }
+                runOnUiThread { result.success(deleted) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("NOTIFICATION_HISTORY", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun clearNotificationHistory(result: MethodChannel.Result) {
+        contentExecutor.execute {
+            try {
+                val store = NotificationHistoryStore(applicationContext)
+                val deleted = try {
+                    store.clear()
+                } finally {
+                    store.close()
+                }
+                runOnUiThread { result.success(deleted) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("NOTIFICATION_HISTORY", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun notificationIconBase64(packageName: String): String {
+        if (packageName.isBlank()) return ""
+        val cached = notificationIconCache[packageName]
+        if (cached != null) return cached
+        val encoded = try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            drawableIconBase64(appInfo.loadIcon(packageManager), 64)
+        } catch (_: Exception) {
+            ""
+        }
+        notificationIconCache[packageName] = encoded
+        return encoded
     }
 
     private fun sendSmsRelayTestEvent(): Boolean {
@@ -1338,17 +1571,23 @@ class MainActivity : FlutterActivity() {
 
     private fun appIconBase64(resolveInfo: android.content.pm.ResolveInfo): String? {
         return try {
-            val drawable = resolveInfo.loadIcon(packageManager)
-            val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+            drawableIconBase64(resolveInfo.loadIcon(packageManager), 96)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun drawableIconBase64(drawable: Drawable, size: Int): String {
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        try {
             val canvas = Canvas(bitmap)
             drawable.setBounds(0, 0, bitmap.width, bitmap.height)
             drawable.draw(canvas)
             val output = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            return Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+        } finally {
             bitmap.recycle()
-            Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
-        } catch (_: Exception) {
-            null
         }
     }
 

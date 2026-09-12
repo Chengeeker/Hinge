@@ -161,6 +161,74 @@ public sealed class RemotePhotoPage
     public int Total { get; init; }
 }
 
+public sealed class RemoteNotificationHistoryApplication
+{
+    [JsonPropertyName("packageName")]
+    public string PackageName { get; set; } = string.Empty;
+
+    [JsonPropertyName("appName")]
+    public string AppName { get; set; } = string.Empty;
+
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
+
+    [JsonPropertyName("iconBase64")]
+    public string IconBase64 { get; set; } = string.Empty;
+}
+
+public sealed class RemoteNotificationHistoryItem
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("packageName")]
+    public string PackageName { get; set; } = string.Empty;
+
+    [JsonPropertyName("appName")]
+    public string AppName { get; set; } = string.Empty;
+
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    [JsonPropertyName("content")]
+    public string Content { get; set; } = string.Empty;
+
+    [JsonPropertyName("timestamp")]
+    public long Timestamp { get; set; }
+
+    [JsonPropertyName("category")]
+    public string Category { get; set; } = string.Empty;
+
+    [JsonPropertyName("ongoing")]
+    public bool Ongoing { get; set; }
+
+    [JsonPropertyName("notificationKey")]
+    public string NotificationKey { get; set; } = string.Empty;
+
+    [JsonPropertyName("iconBase64")]
+    public string IconBase64 { get; set; } = string.Empty;
+}
+
+public sealed class RemoteNotificationHistoryPage
+{
+    [JsonPropertyName("access")]
+    public bool AccessEnabled { get; set; }
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    [JsonPropertyName("items")]
+    public IReadOnlyList<RemoteNotificationHistoryItem> Items { get; set; } =
+        Array.Empty<RemoteNotificationHistoryItem>();
+
+    [JsonPropertyName("total")]
+    public int Total { get; set; }
+
+    [JsonPropertyName("applications")]
+    public IReadOnlyList<RemoteNotificationHistoryApplication> Applications { get; set; } =
+        Array.Empty<RemoteNotificationHistoryApplication>();
+}
+
 public sealed class RemoteWorkspaceNote
 {
     [JsonPropertyName("id")]
@@ -327,6 +395,89 @@ public sealed class WorkspaceRemoteClient
 
     public Task<IReadOnlyList<RemoteCalendarEvent>> LoadCalendarAsync(SessionConnection connection) =>
         InvokeListAsync<RemoteCalendarEvent>(connection, "calendarEvents", null);
+
+    public async Task<RemoteNotificationHistoryPage> LoadNotificationHistoryAsync(
+        SessionConnection connection,
+        int offset,
+        int limit,
+        bool ascending,
+        string? packageName = null)
+    {
+        var raw = await InvokeAsync(
+            connection,
+            "notificationHistory",
+            new Dictionary<string, object?>
+            {
+                ["offset"] = Math.Max(0, offset),
+                ["limit"] = Math.Clamp(limit, 1, 200),
+                ["ascending"] = ascending,
+                ["packageName"] = packageName ?? string.Empty,
+            });
+        if (raw.ValueKind != JsonValueKind.Object)
+        {
+            return new RemoteNotificationHistoryPage();
+        }
+
+        return JsonSerializer.Deserialize<RemoteNotificationHistoryPage>(
+                   raw.GetRawText(),
+                   JsonOptions) ??
+            new RemoteNotificationHistoryPage();
+    }
+
+    public async Task<bool> OpenNotificationHistoryItemAsync(
+        SessionConnection connection,
+        RemoteNotificationHistoryItem item)
+    {
+        var raw = await InvokeAsync(
+            connection,
+            "notificationHistoryAction",
+            new Dictionary<string, object?>
+            {
+                ["action"] = "open",
+                ["id"] = item.Id,
+                ["packageName"] = item.PackageName,
+                ["appName"] = item.AppName,
+                ["title"] = item.Title,
+                ["content"] = item.Content,
+                ["timestamp"] = item.Timestamp,
+                ["notificationKey"] = item.NotificationKey,
+            });
+        if (raw.ValueKind == JsonValueKind.True) return true;
+        return raw.ValueKind == JsonValueKind.Object &&
+            raw.TryGetProperty("opened", out var opened) &&
+            opened.ValueKind == JsonValueKind.True;
+    }
+
+    public async Task<bool> DeleteNotificationHistoryItemAsync(
+        SessionConnection connection,
+        string id)
+    {
+        var raw = await InvokeAsync(
+            connection,
+            "notificationHistoryAction",
+            new Dictionary<string, object?>
+            {
+                ["action"] = "delete",
+                ["id"] = id,
+            });
+        return raw.ValueKind == JsonValueKind.Object &&
+            raw.TryGetProperty("deleted", out var deleted) &&
+            deleted.ValueKind == JsonValueKind.True;
+    }
+
+    public async Task<bool> ClearNotificationHistoryAsync(SessionConnection connection)
+    {
+        var raw = await InvokeAsync(
+            connection,
+            "notificationHistoryAction",
+            new Dictionary<string, object?>
+            {
+                ["action"] = "clear",
+            });
+        return raw.ValueKind == JsonValueKind.Object &&
+            raw.TryGetProperty("cleared", out var cleared) &&
+            cleared.ValueKind == JsonValueKind.True;
+    }
 
     public Task<IReadOnlyList<RemotePhotoAlbum>> LoadPhotoAlbumsAsync(SessionConnection connection) =>
         InvokeListAsync<RemotePhotoAlbum>(connection, "photoAlbums", null);

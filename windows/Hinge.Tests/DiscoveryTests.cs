@@ -42,8 +42,10 @@ public class DiscoveryTests
             Name = "Galaxy S24",
             Platform = "android",
             Port = 52831,
+            DiscoveryPort = 52930,
             Capabilities = new List<string> { "file_transfer", "clipboard" },
-            ConnectionRequested = true
+            ConnectionRequested = true,
+            AutomaticReconnect = true
         };
 
         string json = JsonSerializer.Serialize(msg);
@@ -54,8 +56,25 @@ public class DiscoveryTests
         Assert.Equal("Galaxy S24", parsed.Name);
         Assert.Equal("android", parsed.Platform);
         Assert.Equal(52831, parsed.Port);
+        Assert.Equal(52930, parsed.DiscoveryPort);
         Assert.Equal(2, parsed.Capabilities.Count);
         Assert.True(parsed.ConnectionRequested);
+        Assert.True(parsed.AutomaticReconnect);
+
+        var legacyJson = JsonSerializer.Serialize(new
+        {
+            version = parsed.Version,
+            deviceId = parsed.DeviceId,
+            name = parsed.Name,
+            platform = parsed.Platform,
+            port = parsed.Port,
+            discoveryPort = parsed.DiscoveryPort,
+            capabilities = parsed.Capabilities,
+            connectionRequested = parsed.ConnectionRequested
+        });
+        var legacyParsed = JsonSerializer.Deserialize<DiscoveryMessage>(legacyJson);
+        Assert.NotNull(legacyParsed);
+        Assert.False(legacyParsed!.AutomaticReconnect);
     }
 
     [Fact]

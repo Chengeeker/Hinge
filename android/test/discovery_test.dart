@@ -36,9 +36,11 @@ void main() {
         name: 'My Laptop',
         platform: 'windows',
         port: 52831,
+        discoveryPort: 52930,
         capabilities: ['file_transfer', 'clipboard'],
         timestamp: 1756992000,
         connectionRequested: true,
+        automaticReconnect: true,
       );
 
       final json = msg.toJson();
@@ -47,9 +49,18 @@ void main() {
       expect(parsed.deviceId, equals('uuid-1234-5678'));
       expect(parsed.platform, equals('windows'));
       expect(parsed.port, equals(52831));
+      expect(parsed.discoveryPort, equals(52930));
       expect(parsed.capabilities, contains('clipboard'));
       expect(parsed.timestamp, equals(1756992000));
       expect(parsed.connectionRequested, isTrue);
+      expect(parsed.automaticReconnect, isTrue);
+
+      final legacyJson = Map<String, dynamic>.from(json)
+        ..remove('automaticReconnect');
+      expect(
+        DiscoveryMessage.fromJson(legacyJson).automaticReconnect,
+        isFalse,
+      );
     });
 
     test('DiscoveryService emits reverse connection requests', () async {

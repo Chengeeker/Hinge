@@ -25,6 +25,9 @@ public class DiscoveryMessage
     [JsonPropertyName("port")]
     public int Port { get; set; } = Constants.SessionTcpPort;
 
+    [JsonPropertyName("discoveryPort")]
+    public int DiscoveryPort { get; set; } = Constants.DiscoveryUdpPort;
+
     [JsonPropertyName("capabilities")]
     public List<string> Capabilities { get; set; } = new();
 
@@ -36,4 +39,10 @@ public class DiscoveryMessage
 
     [JsonPropertyName("connectionRequested")]
     public bool ConnectionRequested { get; set; }
+
+    // Distinguishes a trusted-device reconnect from a user-initiated request.
+    // Older peers omit this field and therefore remain compatible as manual
+    // connection requests.
+    [JsonPropertyName("automaticReconnect")]
+    public bool AutomaticReconnect { get; set; }
 }

@@ -14,6 +14,7 @@ import 'personalization_screen.dart';
 import 'keep_alive_settings_screen.dart';
 import 'default_apps_screen.dart';
 import 'sms_relay_settings_screen.dart';
+import 'notification_history_screen.dart';
 
 import '../core/clipboard_adapter.dart';
 import '../core/clipboard_manager.dart';
@@ -159,13 +160,23 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   }
 
   Future<void> _startNetworkServices() async {
-    // Bind the TCP listener before the first UDP announcement. This guarantees
-    // that discovery never advertises the fallback/default port while the
-    // Android socket is still being created.
-    await _sessionManager.startListener();
+    // Android may have cellular and Wi-Fi networks active together. Bind the
+    // process before creating either listener so LAN sockets use Wi-Fi.
+    if (Platform.isAndroid) await _discoveryService.prepareNetwork();
+    try {
+      await _sessionManager.startListener();
+    } catch (_) {
+      // SessionManager records its own error and discovery can still start.
+    }
     if (!mounted) return;
     _commandRouter.start();
-    if (_ownsDiscovery) await _discoveryService.start();
+    if (_ownsDiscovery) {
+      try {
+        await _discoveryService.start();
+      } catch (_) {
+        // A transient network transition must not abort app startup.
+      }
+    }
   }
 
   @override
@@ -186,6 +197,9 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && Platform.isAndroid) {
+      unawaited(_discoveryService.prepareNetwork());
+    }
     if (state == AppLifecycleState.resumed &&
         Platform.isAndroid &&
         _workspaceState.dynamicColorEnabled) {
@@ -695,6 +709,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   bool _userDisconnected = false;
   bool _resumeReconnectScheduled = false;
   final Map<String, DateTime> _automaticConnectAttempts = <String, DateTime>{};
+  Timer? _historicalReconnectTimer;
   int _connectionAttemptGeneration = 0;
 
   final TextEditingController _ipController = TextEditingController();
@@ -779,6 +794,8 @@ class _DevicesScreenState extends State<DevicesScreen>
     _fileReceivedSubscription?.cancel();
     _listenerStatusTimer?.cancel();
     _listenerStatusTimer = null;
+    _historicalReconnectTimer?.cancel();
+    _historicalReconnectTimer = null;
     for (final subscription in _incomingPeerSubscriptions) {
       subscription.cancel();
     }
@@ -799,7 +816,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     // backgrounded. Refresh discovery and repair a stale Dart socket when the
     // activity becomes visible again, which also covers OEMs that reclaim the
     // Flutter process despite the service notification.
-    unawaited(widget.discoveryService.broadcastOnce());
+    unawaited(widget.discoveryService.refreshNetwork());
     unawaited(_reconnectAfterResume());
   }
 
@@ -824,7 +841,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         orElse: () => _lastConnectedDevice,
       );
       if (target != null && target.networkAddresses.isNotEmpty) {
-        await _connect(target);
+        await _connect(target, automatic: true);
       }
     } finally {
       _resumeReconnectScheduled = false;
@@ -851,13 +868,51 @@ class _DevicesScreenState extends State<DevicesScreen>
     final now = DateTime.now();
     final lastAttempt = _automaticConnectAttempts[candidate.deviceId];
     if (lastAttempt != null &&
-        now.difference(lastAttempt) < const Duration(seconds: 12)) {
+        now.difference(lastAttempt) < const Duration(seconds: 5)) {
       return;
     }
     _automaticConnectAttempts[candidate.deviceId] = now;
 
     _showMessage('正在自动连接历史设备：${candidate.name}…');
     await _connect(candidate, automatic: true);
+
+    if (_activeConnection?.state == SessionState.connected) {
+      _automaticConnectAttempts.remove(candidate.deviceId);
+    } else {
+      _scheduleHistoricalReconnect(candidate.deviceId);
+    }
+  }
+
+  void _scheduleHistoricalReconnect(String? deviceId) {
+    if (!mounted ||
+        _userDisconnected ||
+        (deviceId != null && !widget.trustStore.isTrusted(deviceId)) ||
+        _historicalReconnectTimer != null) {
+      return;
+    }
+
+    Timer? timer;
+    timer = Timer(const Duration(seconds: 5), () {
+      if (identical(_historicalReconnectTimer, timer)) {
+        _historicalReconnectTimer = null;
+      }
+      if (!mounted ||
+          _userDisconnected ||
+          _activeConnection?.state == SessionState.connected) {
+        return;
+      }
+      unawaited(
+        _maybeAutoConnectHistoricalDevice(
+          widget.discoveryService.registry.devices,
+        ),
+      );
+    });
+    _historicalReconnectTimer = timer;
+  }
+
+  void _cancelHistoricalReconnect() {
+    _historicalReconnectTimer?.cancel();
+    _historicalReconnectTimer = null;
   }
 
   Future<void> _maybeRequestAndroidPermissions() async {
@@ -1194,9 +1249,9 @@ class _DevicesScreenState extends State<DevicesScreen>
     _incomingPeerSubscriptions.add(
       connection.stateStream.listen((state) {
         if (!mounted || state != SessionState.disconnected) return;
-        widget.discoveryService.registry.markSessionDisconnected(
-          connection.peerInfo?.deviceId ?? '',
-        );
+        final deviceId = connection.peerInfo?.deviceId ?? '';
+        widget.discoveryService.registry.markSessionDisconnected(deviceId);
+        _scheduleHistoricalReconnect(deviceId);
         if (_activeConnection == connection) {
           setState(() {
             _activeConnection = null;
@@ -1242,6 +1297,8 @@ class _DevicesScreenState extends State<DevicesScreen>
   ) async {
     if (!mounted ||
         request.message.deviceId == widget.localIdentity.deviceId ||
+        (request.message.automaticReconnect &&
+            !widget.trustStore.isTrusted(request.message.deviceId)) ||
         widget.sessionManager.connectionForDevice(request.message.deviceId) !=
             null) {
       return;
@@ -1265,9 +1322,12 @@ class _DevicesScreenState extends State<DevicesScreen>
         .firstWhere(
           (candidate) => candidate?.deviceId == request.message.deviceId,
           orElse: () => null,
-        );
+    );
     if (device != null) {
-      await _connect(device, automatic: true);
+      await _connect(
+        device,
+        automatic: request.message.automaticReconnect,
+      );
     }
   }
 
@@ -1468,7 +1528,11 @@ class _DevicesScreenState extends State<DevicesScreen>
       // SessionManager after the identity handshake, while the first usable
       // path wins without waiting for an inbound TCP timeout.
       for (final address in addresses) {
-        widget.discoveryService.requestReverseConnection(address);
+        widget.discoveryService.requestReverseConnection(
+          address,
+          device.discoveryPort,
+          automatic,
+        );
       }
       for (final address in addresses) {
         for (final port in {device.sessionPort, AppConstants.sessionTcpPort}) {
@@ -1523,6 +1587,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       _connectionSubscription = connection.stateStream.listen((state) {
         if (!mounted || state != SessionState.disconnected) return;
         widget.discoveryService.registry.markSessionDisconnected(peer.deviceId);
+        _scheduleHistoricalReconnect(peer.deviceId);
         setState(() {
           if (identical(_activeConnection, connection)) {
             _activeConnection = null;
@@ -1599,6 +1664,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   void _disconnect() {
     final name = _activeDevice?.name ?? '设备';
     _connectionAttemptGeneration++;
+    _cancelHistoricalReconnect();
     _connectionSubscription?.cancel();
     _connectionSubscription = null;
     _activeConnection?.dispose();
@@ -2782,6 +2848,17 @@ class _DevicesScreenState extends State<DevicesScreen>
             title: '相册',
             subtitle: '${_photoAlbums.length} 个相册集，按最新照片显示封面',
             onTap: () => _setPage(5),
+          ),
+          _mobileWorkspaceEntry(
+            icon: Symbols.notifications_rounded,
+            title: '通知历史',
+            subtitle: '收集手机应用通知，支持按时间和应用筛选',
+            onTap: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    NotificationHistoryScreen(dataService: widget.dataService),
+              ),
+            ),
           ),
         ],
       ),

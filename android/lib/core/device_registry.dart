@@ -48,6 +48,7 @@ class DeviceRegistry {
             appVersion: message.version,
             protocolVersion: message.protocolVersion,
             sessionPort: message.port,
+            discoveryPort: message.discoveryPort,
             capabilities: message.capabilities,
             networkAddresses: dev.networkAddresses,
             connectionState: DeviceConnectionState.discovered,
@@ -59,7 +60,8 @@ class DeviceRegistry {
       } else if (dev.name != message.name ||
           dev.manufacturer != message.manufacturer ||
           dev.model != message.model ||
-          dev.sessionPort != message.port) {
+          dev.sessionPort != message.port ||
+          dev.discoveryPort != message.discoveryPort) {
         _records[message.deviceId] = _DeviceRecord(
           device: Device(
             deviceId: dev.deviceId,
@@ -70,6 +72,7 @@ class DeviceRegistry {
             appVersion: message.version,
             protocolVersion: message.protocolVersion,
             sessionPort: message.port,
+            discoveryPort: message.discoveryPort,
             capabilities: message.capabilities,
             networkAddresses: dev.networkAddresses,
             connectionState: dev.connectionState,
@@ -89,6 +92,7 @@ class DeviceRegistry {
         appVersion: message.version,
         protocolVersion: message.protocolVersion,
         sessionPort: message.port,
+        discoveryPort: message.discoveryPort,
         capabilities: message.capabilities,
         networkAddresses: [remoteAddress],
         connectionState: DeviceConnectionState.discovered,
@@ -131,6 +135,7 @@ class DeviceRegistry {
             manufacturer: record.device.manufacturer,
             model: record.device.model,
             sessionPort: record.device.sessionPort,
+            discoveryPort: record.device.discoveryPort,
             platform: record.device.platform,
             appVersion: record.device.appVersion,
             protocolVersion: record.device.protocolVersion,
@@ -265,6 +270,9 @@ class DeviceRegistry {
       sessionPort: sourceIsNewer
           ? source.device.sessionPort
           : target.device.sessionPort,
+      discoveryPort: sourceIsNewer
+          ? source.device.discoveryPort
+          : target.device.discoveryPort,
       capabilities: sourceIsNewer
           ? source.device.capabilities
           : target.device.capabilities,

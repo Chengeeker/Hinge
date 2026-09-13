@@ -8,8 +8,8 @@
 
 ## 版本约定
 
-- Android 应用版本来自 `android/pubspec.yaml`，当前历史开发版为 `1.0.32+33`；
-- Android 和 Windows 的产品版本名保持为 `1.0.32`；本次历史开发版标签为 `v1.0.32-dev.1`。后续可交付版本直接使用稳定版本号（例如 `1.0.33`），GitHub Release 直接标记为 `Latest`，不再使用 `-dev`、`-pre` 后缀或 Pre-release 标签；
+- Android 应用版本来自 `android/pubspec.yaml`，当前可交付版本为 `1.0.38+39`；
+- Android 和 Windows 的产品版本名保持为 `1.0.38`；后续 GitHub 标签使用稳定版本号（例如 `v1.0.38`），Release 直接标记为 `Latest`，不使用 `-dev`、`-pre` 后缀或 Pre-release 标签；
 - Windows 发布只提供自包含 EXE 安装器和便携 ZIP，不提供 MSIX 或测试证书。
 - EXE 安装器启用 .NET 单文件压缩；安装逻辑不变，发布前仍需验证安装、更新和目录选择。
 
@@ -57,7 +57,7 @@ Android 发布只使用 `android-arm64`，脚本在复制前检查 APK 只包含
 ## GitHub Release
 
 1. 提交源码、协议和文档，不提交 `publish/` 二进制目录；
-2. 后续稳定版本推送 `main` 和稳定版本标签（例如 `v1.0.33`）；
+2. 推送 `main` 和稳定版本标签（例如 `v1.0.38`）；
 3. 创建 GitHub Release 并直接标记为 `Latest`；不再创建 Pre-release，除非明确发布需要保留的历史测试快照；
 4. 上传 `publish/Hinge.apk`、`publish/windows/Hinge-Setup.exe` 和 `publish/windows/Hinge-Windows.zip`；
 5. 使用 `CHANGELOG.md` 生成发布说明，并在发布页注明真机验收边界；

@@ -37,7 +37,13 @@ public sealed partial class MainWindow : Window
     private const int GwlpWndProc = -4;
     private const int DefaultWindowWidth = 1555;
     private const int DefaultWindowHeight = 1000;
-    private const int SwRestore = 9;
+    private const uint GwOwner = 4;
+    private const int GwlStyle = -16;
+    private const long WsCaption = 0x00C00000L;
+    private const uint ElectronNotifyIconMessage = 0x8001;
+    private const int WmLeftButtonDown = 0x0201;
+    private const uint ElectronFirstNotifyIconId = 3;
+    private const uint MaxNotifyIconIdProbe = 32;
     private const string StartupRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string StartupRegistryValueName = "Hinge";
     private const string UserSettingsRegistryPath = @"Software\Hinge";
@@ -118,6 +124,11 @@ public sealed partial class MainWindow : Window
         IntPtr wParam,
         IntPtr lParam);
 
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate bool EnumWindowsProc(
+        IntPtr hWnd,
+        IntPtr lParam);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint
     {
@@ -167,13 +178,55 @@ public sealed partial class MainWindow : Window
         out uint processId);
 
     [DllImport("user32.dll")]
-    private static extern bool IsIconic(IntPtr hWnd);
+    private static extern bool EnumWindows(
+        EnumWindowsProc callback,
+        IntPtr lParam);
 
     [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int command);
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(
+        IntPtr hWnd,
+        StringBuilder className,
+        int maxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(
+        IntPtr hWnd,
+        StringBuilder text,
+        int maxCount);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(
+        IntPtr hWnd,
+        uint command);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr GetWindowLongPtr(
+        IntPtr hWnd,
+        int index);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostMessage(
+        IntPtr hWnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam);
+
+    [DllImport("shell32.dll")]
+    private static extern int Shell_NotifyIconGetRect(
+        ref NotifyIconIdentifier identifier,
+        out NativeRect iconLocation);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetGUIThreadInfo(
@@ -196,6 +249,15 @@ public sealed partial class MainWindow : Window
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NotifyIconIdentifier
+    {
+        public uint Size;
+        public IntPtr WindowHandle;
+        public uint IconId;
+        public Guid GuidItem;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -835,15 +897,37 @@ public sealed partial class MainWindow : Window
         packageName.Equals("com.tencent.mm", StringComparison.OrdinalIgnoreCase) ||
         packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase);
 
+    private enum DesktopChatWakeResult
+    {
+        NotRunning,
+        Activated,
+        AlreadyRunning,
+    }
+
     private static bool TryWakeOrStartDesktopChatApp(string packageName)
     {
-        // QQ and Weixin are single-instance applications. Never start their
-        // executable while a matching client process is already resident.
-        // Waking only the main window avoids touching child WebView/rendering
-        // windows, which can make the client unresponsive.
-        if (TryWakeExistingDesktopChatProcess(packageName))
+        // QQ and Weixin are single-instance applications. If a matching
+        // process is resident, never start its executable: doing so can open
+        // a second login surface when the client's main window is hidden.
+        var wakeResult = TryWakeExistingDesktopChatProcess(packageName);
+        if (wakeResult == DesktopChatWakeResult.Activated)
         {
             return true;
+        }
+
+        if (wakeResult == DesktopChatWakeResult.AlreadyRunning)
+        {
+            return false;
+        }
+
+        // Discovery and process startup are separate operations. Re-check
+        // immediately before launching so a client that appeared during the
+        // first scan cannot be mistaken for a missing client and started a
+        // second time.
+        var recheckResult = TryWakeExistingDesktopChatProcess(packageName);
+        if (recheckResult != DesktopChatWakeResult.NotRunning)
+        {
+            return recheckResult == DesktopChatWakeResult.Activated;
         }
 
         var candidates = DesktopChatExecutableCandidates(packageName).ToArray();
@@ -869,23 +953,20 @@ public sealed partial class MainWindow : Window
         return false;
     }
 
-    private static bool TryWakeExistingDesktopChatProcess(string packageName)
+    private static DesktopChatWakeResult TryWakeExistingDesktopChatProcess(
+        string packageName)
     {
-        var executableNames = packageName.Equals(
-            "com.tencent.mm",
-            StringComparison.OrdinalIgnoreCase)
-            ? new[] { "Weixin", "WeChat" }
-            : packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase)
-                ? new[] { "QQ", "QQNT" }
-            : Array.Empty<string>();
-        if (executableNames.Length == 0) return false;
+        var processNames = DesktopChatProcessNames(packageName);
+        if (processNames.Length == 0) return DesktopChatWakeResult.NotRunning;
 
-        foreach (var executableName in executableNames)
+        var foundProcess = false;
+
+        foreach (var processName in processNames)
         {
             System.Diagnostics.Process[] processes;
             try
             {
-                processes = System.Diagnostics.Process.GetProcessesByName(executableName);
+                processes = System.Diagnostics.Process.GetProcessesByName(processName);
             }
             catch
             {
@@ -894,36 +975,293 @@ public sealed partial class MainWindow : Window
 
             foreach (var process in processes)
             {
+                foundProcess = true;
                 using (process)
                 {
                     try
                     {
                         process.Refresh();
-                        var windowHandle = process.MainWindowHandle;
-                        if (windowHandle != IntPtr.Zero)
+                        var processId = unchecked((uint)process.Id);
+                        var preferredWindow = process.MainWindowHandle;
+                        foreach (var windowHandle in FindDesktopChatWindows(
+                            packageName,
+                            processId,
+                            preferredWindow))
                         {
-                            if (IsIconic(windowHandle))
+                            if (TryActivateDesktopChatWindow(windowHandle))
                             {
-                                ShowWindow(windowHandle, SwRestore);
+                                return DesktopChatWakeResult.Activated;
                             }
-                            SetForegroundWindow(windowHandle);
                         }
-                        // A matching process without a visible main window is
-                        // still considered handled: do not start a second
-                        // instance and risk a fresh login surface.
-                        return true;
+
+                        // Tray-hidden Electron clients keep internal Chromium
+                        // windows that are not taskbar windows. Never show
+                        // those HWNDs directly. Deliver the same callback as a
+                        // real click on the client's notification-area icon so
+                        // the client creates/restores its own UI correctly.
+                        if (TryInvokeElectronTrayIcon(processId))
+                        {
+                            return DesktopChatWakeResult.Activated;
+                        }
                     }
                     catch
                     {
                         // A process can exit between enumeration and window
-                        // inspection. It was still identified, so avoid a
-                        // duplicate launch in this click.
-                        return true;
+                        // inspection. Continue with the other processes; if
+                        // it remains resident, the caller will keep the
+                        // no-second-instance guard in place.
                     }
                 }
             }
         }
+        return foundProcess
+            ? DesktopChatWakeResult.AlreadyRunning
+            : DesktopChatWakeResult.NotRunning;
+    }
+
+    private static string[] DesktopChatProcessNames(string packageName) =>
+        packageName.Equals("com.tencent.mm", StringComparison.OrdinalIgnoreCase)
+            ? new[] { "Weixin", "WeChat", "WeixinAppEx", "WeChatAppEx" }
+            : packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase)
+                ? new[] { "QQ", "QQNT", "QQEX" }
+                : Array.Empty<string>();
+
+    private static IReadOnlyList<IntPtr> FindDesktopChatWindows(
+        string packageName,
+        uint processId,
+        IntPtr preferredWindow)
+    {
+        var windows = new List<IntPtr>();
+
+        void AddWindow(IntPtr windowHandle)
+        {
+            if (windowHandle == IntPtr.Zero ||
+                !IsWindow(windowHandle) ||
+                windows.Contains(windowHandle))
+            {
+                return;
+            }
+
+            windows.Add(windowHandle);
+        }
+
+        // Process.MainWindowHandle is the best signal when the client is
+        // minimized normally. Keep it first, then inspect only top-level
+        // windows owned by that process for tray-hidden/multi-process clients.
+        AddWindowIfUsable(preferredWindow);
+        EnumWindows((windowHandle, _) =>
+        {
+            if (GetWindowThreadProcessId(windowHandle, out var ownerProcessId) == 0 ||
+                ownerProcessId != processId ||
+                GetWindow(windowHandle, GwOwner) != IntPtr.Zero)
+            {
+                return true;
+            }
+
+            // EnumWindows never returns child controls. Only accept a
+            // user-facing top-level window here. Chromium clients also create
+            // titleless Chrome_WidgetWin_0 surfaces for rendering and login
+            // plumbing; showing those surfaces produces a blank/black window.
+            AddWindowIfUsable(windowHandle);
+            return true;
+        }, IntPtr.Zero);
+
+        return OrderDesktopChatWindows(packageName, windows, preferredWindow).ToArray();
+
+        void AddWindowIfUsable(IntPtr windowHandle)
+        {
+            if (!IsUsableDesktopChatWindow(packageName, windowHandle)) return;
+            AddWindow(windowHandle);
+        }
+    }
+
+    private static IEnumerable<IntPtr> OrderDesktopChatWindows(
+        string packageName,
+        IEnumerable<IntPtr> windows,
+        IntPtr preferredWindow = default)
+    {
+        return windows
+            .OrderByDescending(windowHandle => windowHandle == preferredWindow)
+            .ThenByDescending(IsWindowVisible)
+            .ThenByDescending(windowHandle => HasExpectedDesktopChatTitle(
+                packageName,
+                windowHandle))
+            .ThenByDescending(HasSubstantialDesktopChatWindow)
+            .ThenByDescending(GetDesktopChatWindowArea)
+            .ThenByDescending(GetWindowTextLength);
+    }
+
+    private static bool IsUsableDesktopChatWindow(
+        string packageName,
+        IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero ||
+            !IsWindow(windowHandle) ||
+            GetWindow(windowHandle, GwOwner) != IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var className = GetWindowString(windowHandle, getClassName: true);
+        var title = GetWindowString(windowHandle, getClassName: false);
+        if (string.IsNullOrWhiteSpace(className) || string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        // Never surface Chromium's titleless renderer/host surface. The
+        // visible QQ/Weixin application window is a captioned top-level window.
+        if (className.Equals("Chrome_WidgetWin_0", StringComparison.OrdinalIgnoreCase) ||
+            className.Equals("Electron_NotifyIconHostWindow", StringComparison.OrdinalIgnoreCase) ||
+            className.Equals("Base_PowerMessageWindow", StringComparison.OrdinalIgnoreCase) ||
+            className.Equals("IME", StringComparison.OrdinalIgnoreCase) ||
+            className.Equals("MSCTFIME UI", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var style = GetWindowLongPtr(windowHandle, GwlStyle).ToInt64();
+        if ((style & WsCaption) == 0) return false;
+
+        if (packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase) &&
+            (!className.Equals("Chrome_WidgetWin_1", StringComparison.OrdinalIgnoreCase) ||
+             !title.Equals("QQ", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        if (packageName.Equals("com.tencent.mm", StringComparison.OrdinalIgnoreCase) &&
+            !className.Equals("WeChatMainWndForPC", StringComparison.OrdinalIgnoreCase) &&
+            (!className.Equals("Chrome_WidgetWin_1", StringComparison.OrdinalIgnoreCase) ||
+             (!title.Contains("微信", StringComparison.OrdinalIgnoreCase) &&
+              !title.Contains("WeChat", StringComparison.OrdinalIgnoreCase) &&
+              !title.Contains("Weixin", StringComparison.OrdinalIgnoreCase))))
+        {
+            return false;
+        }
+
+        // Hidden Electron BrowserWindows are implementation details rather
+        // than user-facing taskbar windows. They must be restored by the
+        // client's own tray handler instead of ShowWindow/ShowWindowAsync.
+        return IsWindowVisible(windowHandle);
+    }
+
+    private static bool TryInvokeElectronTrayIcon(uint processId)
+    {
+        var trayWindows = new List<IntPtr>();
+        EnumWindows((windowHandle, _) =>
+        {
+            if (GetWindowThreadProcessId(windowHandle, out var ownerProcessId) != 0 &&
+                ownerProcessId == processId &&
+                GetWindowString(windowHandle, getClassName: true).Equals(
+                    "Electron_NotifyIconHostWindow",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                trayWindows.Add(windowHandle);
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        foreach (var trayWindow in trayWindows)
+        {
+            var iconId = FindNotifyIconId(trayWindow);
+            if (iconId == 0)
+            {
+                // Electron's first tray icon is ID 3. Keep this fallback for
+                // clients using a GUID icon that Shell_NotifyIconGetRect
+                // cannot identify by numeric ID.
+                iconId = ElectronFirstNotifyIconId;
+            }
+
+            if (PostMessage(
+                trayWindow,
+                ElectronNotifyIconMessage,
+                new IntPtr(iconId),
+                new IntPtr(WmLeftButtonDown)))
+            {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    private static uint FindNotifyIconId(IntPtr trayWindow)
+    {
+        for (uint iconId = 1; iconId <= MaxNotifyIconIdProbe; iconId++)
+        {
+            var identifier = new NotifyIconIdentifier
+            {
+                Size = unchecked((uint)Marshal.SizeOf<NotifyIconIdentifier>()),
+                WindowHandle = trayWindow,
+                IconId = iconId,
+                GuidItem = Guid.Empty,
+            };
+
+            if (Shell_NotifyIconGetRect(ref identifier, out _) == 0)
+            {
+                return iconId;
+            }
+        }
+
+        return 0;
+    }
+
+    private static string GetWindowString(IntPtr windowHandle, bool getClassName)
+    {
+        var buffer = new StringBuilder(256);
+        var length = getClassName
+            ? GetClassName(windowHandle, buffer, buffer.Capacity)
+            : GetWindowText(windowHandle, buffer, buffer.Capacity);
+        return length > 0 ? buffer.ToString() : string.Empty;
+    }
+
+    private static bool HasExpectedDesktopChatTitle(
+        string packageName,
+        IntPtr windowHandle)
+    {
+        var title = GetWindowString(windowHandle, getClassName: false);
+        if (packageName.Equals("com.tencent.mobileqq", StringComparison.OrdinalIgnoreCase))
+        {
+            return title.Equals("QQ", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return title.Contains("微信", StringComparison.OrdinalIgnoreCase) ||
+            title.Contains("WeChat", StringComparison.OrdinalIgnoreCase) ||
+            title.Contains("Weixin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasSubstantialDesktopChatWindow(IntPtr windowHandle)
+    {
+        if (!GetWindowRect(windowHandle, out var rect)) return false;
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        return width >= 320 && height >= 240;
+    }
+
+    private static long GetDesktopChatWindowArea(IntPtr windowHandle)
+    {
+        if (!GetWindowRect(windowHandle, out var rect)) return 0;
+        var width = Math.Max(0, rect.Right - rect.Left);
+        var height = Math.Max(0, rect.Bottom - rect.Top);
+        return (long)width * height;
+    }
+
+    private static bool TryActivateDesktopChatWindow(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero ||
+            !IsWindow(windowHandle) ||
+            !IsWindowVisible(windowHandle))
+        {
+            return false;
+        }
+
+        // The client has already made this window visible, so foregrounding
+        // it is safe. Hidden windows are handled exclusively through the
+        // client's own tray callback above.
+        _ = SetForegroundWindow(windowHandle);
+        return true;
     }
 
     private static IEnumerable<string> DesktopChatExecutableCandidates(string packageName)
@@ -978,7 +1316,9 @@ public sealed partial class MainWindow : Window
 
         AddCandidatesFromAppPaths(executableNames, AddCandidate);
         AddCandidatesFromUninstallEntries(executableNames, registryTerms, AddCandidate);
-        AddCandidatesFromRunningProcesses(executableNames, AddCandidate);
+        AddCandidatesFromRunningProcesses(
+            DesktopChatProcessNames(packageName),
+            AddCandidate);
         return candidates;
     }
 

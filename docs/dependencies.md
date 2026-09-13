@@ -34,3 +34,7 @@
 - Windows 继续使用 WinRT `Launcher`、文件属性和 .NET BCL，不新增媒体 JavaScript/WASM 运行时。
 
 因此，这次功能改动没有新增第三方许可证或 NOTICE 文件。上面这些项目只是候选方案和实现思路的对照，不应被误写成 Hinge 的运行时依赖。真正随 Hinge 发布的依赖必须同时登记在 `THIRD_PARTY_LICENSES.md`。
+
+## 5. Electron 托盘兼容实现参考
+
+Windows 端 QQ/微信托盘唤醒参考 Electron 项目（MIT License）的公开实现：`shell/browser/ui/win/notify_icon_host.cc` 和 `notify_icon.cc`。Hinge 只依据其公开消息约定识别 `Electron_NotifyIconHostWindow`、`WM_APP + 1` 回调与通知图标 ID，并结合 Windows 原生 `Shell_NotifyIconGetRect`/`PostMessage` 完成兼容；没有复制、链接或打包 Electron 源码和二进制，因此不新增运行时依赖或许可证文件。

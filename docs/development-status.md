@@ -1,8 +1,8 @@
 # 当前开发状态
 
 > 更新时间：2026-09-13
-> 当前开发版：`v1.0.32-dev.1`
-> 双端运行版本：Android `1.0.32+33` / Windows `1.0.32.0`
+> 当前版本：`v1.0.38`
+> 双端运行版本：Android `1.0.38+39` / Windows `1.0.38.0`
 
 > 后续发行策略：通过验收的版本直接使用稳定版本号并标记 GitHub `Latest`，不再使用 `-dev`、`-pre` 后缀或 Pre-release 标签；当前开发版仅作为历史记录保留。
 
@@ -12,7 +12,10 @@
 - 修复 Windows 点击 QQ/微信历史通知时盲目打开未注册 `mqq://` 导致系统错误对话框的问题；客户端探测现在覆盖注册表安装信息、常见安装目录和当前运行进程，并在调用 URI 前先查询协议是否已注册。
 - 修复 Windows 在 QQ/微信客户端已经后台运行时重复启动进程的问题；现在会先恢复已存在的客户端窗口，避免弹出新的登录界面。
 - Android 与 Windows 的历史设备自动重连使用持久化设备身份和信任记录；自动请求带有 `automaticReconnect` 标记，失败后每 5 秒重试一次，旧客户端省略该字段时仍按手动连接兼容处理。
-- Windows QQ/微信通知点击链路收窄为只唤醒客户端主窗口或启动已安装客户端，不再枚举和操作子窗口，也不再调用深链或 Android 原通知入口。
+- Windows QQ/微信通知点击链路只唤醒客户端真实界面：已显示窗口只请求前台激活；隐藏状态通过同进程的 Electron 托盘宿主和实际通知图标 ID 投递托盘单击回调，由客户端自己恢复窗口。
+- 隐藏的 `Chrome_WidgetWin_0`/`Chrome_WidgetWin_1` 不再由 Hinge 调用 `ShowWindow` 或 `ShowWindowAsync`，避免产生没有任务栏入口、渲染未初始化或无法交互的假主窗口；托盘宿主只接收回调，不作为界面显示。
+- 只要 QQ/微信窗口或进程已经存在就不启动第二个实例，真正启动前还会再次检查运行状态；不绑定跨进程输入队列、不强制置顶、不调用深链或 Android 原通知入口。
+- Windows 安装器更新时只结束 Hinge 进程本身，不再结束其整个子进程树；由 Hinge 启动过的 QQ、微信或其他用户应用不会随 Hinge 更新而被关闭。
 
 本文只记录已在仓库或构建流程中确认的状态。真实手机、真实局域网和不同厂商系统仍需单独验收。
 
@@ -54,7 +57,7 @@
 - Windows 提供 MICA/亚克力、背景图片、启动项、静默启动和关闭到托盘设置；
 - Android 提供通知、后台高耗电、锁定后台等系统保活引导。
 - Android 可选短信同步已接入：明确授权后监听新到 SMS；部分设备还会使用 `READ_SMS` 观察授权后的新收件箱记录作为验证码兼容回退，短信/彩信统一通过 Windows 托盘气泡显示，只有识别为验证码时点击才复制；Windows 系统通知状态可在设置中检查；彩信只转发到达提示，不读取历史收件箱或彩信正文。
-- Android 通知历史与短信转发共用一个 `NotificationListenerService`，但开关和数据路径分离；通知访问权限独立于 `POST_NOTIFICATIONS`，历史正文只写入应用私有数据库。Windows 端不把历史正文落到本地文件；双端通知历史支持单条删除和确认后清空，Windows 点击微信/QQ会先探测本机客户端，再在确认 URI 已注册时调用协议，最后回退 Android 原通知入口。
+- Android 通知历史与短信转发共用一个 `NotificationListenerService`，但开关和数据路径分离；通知访问权限独立于 `POST_NOTIFICATIONS`，历史正文只写入应用私有数据库。Windows 端不把历史正文落到本地文件；双端通知历史支持单条删除和确认后清空，Windows 点击微信/QQ只探测并唤醒本机客户端，不调用协议深链或回退 Android 原通知入口。
 
 ## 发布产物
 
@@ -71,10 +74,10 @@
 - `flutter analyze --no-pub`：无问题；
 - `dotnet build windows/Hinge.sln --configuration Release --no-restore`：通过；
 - `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：63 项通过；
-- Windows 本次 Release 构建的文件版本为 `1.0.32.0`；
-- Android 本次本地 Release APK 已核对包名 `com.hinge.office`、版本 `1.0.32`、`versionCode 33` 和仅包含 `arm64-v8a`；
-- Android 发布脚本已从本机配置读取签名信息并成功生成 `publish/Hinge.apk`；APK 为 20,171,937 字节，V2/V3 签名校验通过，且只包含 `arm64-v8a`；本次产物 SHA-256 为 `5098ABF60C8D82BFAC4F268E3E6E8A63A9DD7D177A38BC275E587FDBC378CDC1`。
-- Windows Release 已生成 `publish/windows/Hinge-Setup.exe`（200,823,472 字节，SHA-256 `72E24F214DE66758BA01E88287BDF73144AB4AE671E50EEEFAB6DB0B3DCDA917`）和 `publish/windows/Hinge-Windows.zip`（129,062,027 字节，SHA-256 `2B23560D689DDB5A4289EE3946450DA66AACB6E58E2C4D67667E1944651C5F34`）；EXE 文件版本为 `1.0.32.0`，便携包包含 `Hinge.exe` 且不含 MSIX。
+- Windows 本次 Release 构建的文件版本为 `1.0.38.0`；
+- Android 本次本地 Release APK 已核对包名 `com.hinge.office`、版本 `1.0.38`、`versionCode 39` 和仅包含 `arm64-v8a`；
+- Android 发布脚本已从本机配置读取签名信息并成功生成 `publish/Hinge.apk`；APK 为 20,171,937 字节，V2/V3 签名校验通过，且只包含 `arm64-v8a`；本次产物 SHA-256 为 `47387C1940BD95DE4386A422158E76657671587DDFBC308F241EDFC7B13A3E03`。
+- Windows Release 已生成 `publish/windows/Hinge-Setup.exe`（200,826,807 字节，SHA-256 `AF9579988747FD6E68B3F01821ACF9C8B7BAA53B37712C731A899817B5366935`，文件版本 `1.0.38.0`）和 `publish/windows/Hinge-Windows.zip`（129,065,362 字节，SHA-256 `D90933A73E00D0CF5F2B9B444294E3E34AB1F234EB23FCFD70F151E546A4A33F`）；便携包包含 `Hinge.exe` 且不含 MSIX。
 - 本版历史通知打开与历史设备自动重连修复已通过 Dart 分析、Flutter 54 项测试、Android ARM64 Release 集成构建、Windows .NET Release 构建和 63 项测试；当前开发机未连接真实 Android 调试设备，QQ/微信历史通知和更新后自动重连仍需在真实客户端、真实 Android 设备和真实局域网中最终验收。
 - Android 发布脚本支持 Review 风格的本地 `android/android/key.properties` 配置：首次填写后后续构建自动读取，不再重复弹出签名输入；固定 BKS 路径仍作为未配置路径时的回退。脚本在构建/复制前校验签名输入，失败时不会覆盖 `publish/Hinge.apk`。现有 `publish/android/Hinge.apk` 是历史遗留产物，不属于当前统一输出路径，也不得作为本版正式更新包。
 

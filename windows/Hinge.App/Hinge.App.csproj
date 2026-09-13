@@ -6,10 +6,10 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>Hinge.App</RootNamespace>
     <AssemblyName>Hinge</AssemblyName>
-    <Version>1.0.32</Version>
-    <AssemblyVersion>1.0.32.0</AssemblyVersion>
-    <FileVersion>1.0.32.0</FileVersion>
-    <InformationalVersion>1.0.32</InformationalVersion>
+    <Version>1.0.38</Version>
+    <AssemblyVersion>1.0.38.0</AssemblyVersion>
+    <FileVersion>1.0.38.0</FileVersion>
+    <InformationalVersion>1.0.38</InformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
     <Platforms>x64</Platforms>

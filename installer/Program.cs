@@ -437,7 +437,11 @@ internal static class Program
                 process.CloseMainWindow();
                 if (process.WaitForExit(3000)) continue;
 
-                process.Kill(entireProcessTree: true);
+                // Hinge may have launched a user application such as QQ or
+                // Weixin earlier. Those applications must outlive a Hinge
+                // update, so force-close only Hinge itself rather than its
+                // entire descendant process tree.
+                process.Kill(entireProcessTree: false);
                 if (!process.WaitForExit(5000))
                 {
                     throw new InvalidOperationException("无法关闭正在运行的 Hinge 进程。");

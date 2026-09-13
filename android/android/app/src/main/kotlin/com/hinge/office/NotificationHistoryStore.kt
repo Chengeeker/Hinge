@@ -22,6 +22,8 @@ class NotificationHistoryStore(context: Context) :
         val category: String,
         val ongoing: Boolean,
         val notificationKey: String,
+        val isVerificationCode: Boolean = false,
+        val verificationCode: String? = null,
     )
 
     data class ApplicationSummary(
@@ -42,7 +44,9 @@ class NotificationHistoryStore(context: Context) :
                 $COLUMN_TIMESTAMP INTEGER NOT NULL,
                 $COLUMN_CATEGORY TEXT NOT NULL,
                 $COLUMN_ONGOING INTEGER NOT NULL,
-                $COLUMN_NOTIFICATION_KEY TEXT NOT NULL
+                $COLUMN_NOTIFICATION_KEY TEXT NOT NULL,
+                $COLUMN_IS_VERIFICATION_CODE INTEGER NOT NULL DEFAULT 0,
+                $COLUMN_VERIFICATION_CODE TEXT
             )
             """.trimIndent(),
         )
@@ -57,8 +61,23 @@ class NotificationHistoryStore(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Version 1 is the initial schema. Keep this method explicit so a
-        // future schema change does not silently delete a user's history.
+        if (oldVersion < 2) {
+            // Some 1.x builds shipped the v2 columns while the database
+            // version was still incorrectly left at 1. Check each column so
+            // upgrading either schema is safe and repeatable.
+            if (!hasColumn(db, COLUMN_IS_VERIFICATION_CODE)) {
+                db.execSQL(
+                    "ALTER TABLE $TABLE_NOTIFICATIONS " +
+                        "ADD COLUMN $COLUMN_IS_VERIFICATION_CODE INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+            if (!hasColumn(db, COLUMN_VERIFICATION_CODE)) {
+                db.execSQL(
+                    "ALTER TABLE $TABLE_NOTIFICATIONS " +
+                        "ADD COLUMN $COLUMN_VERIFICATION_CODE TEXT",
+                )
+            }
+        }
     }
 
     fun upsert(record: Record): Boolean {
@@ -72,6 +91,12 @@ class NotificationHistoryStore(context: Context) :
             put(COLUMN_CATEGORY, record.category)
             put(COLUMN_ONGOING, if (record.ongoing) 1 else 0)
             put(COLUMN_NOTIFICATION_KEY, record.notificationKey)
+            put(COLUMN_IS_VERIFICATION_CODE, if (record.isVerificationCode) 1 else 0)
+            if (record.verificationCode.isNullOrBlank()) {
+                putNull(COLUMN_VERIFICATION_CODE)
+            } else {
+                put(COLUMN_VERIFICATION_CODE, record.verificationCode)
+            }
         }
         return writableDatabase.insertWithOnConflict(
             TABLE_NOTIFICATIONS,
@@ -124,17 +149,33 @@ class NotificationHistoryStore(context: Context) :
             val category = cursor.getColumnIndexOrThrow(COLUMN_CATEGORY)
             val ongoing = cursor.getColumnIndexOrThrow(COLUMN_ONGOING)
             val notificationKey = cursor.getColumnIndexOrThrow(COLUMN_NOTIFICATION_KEY)
+            val isVerificationCode = cursor.getColumnIndexOrThrow(COLUMN_IS_VERIFICATION_CODE)
+            val verificationCode = cursor.getColumnIndexOrThrow(COLUMN_VERIFICATION_CODE)
             while (cursor.moveToNext()) {
+                val packageValue = cursor.getString(packageIndex)
+                val contentValue = cursor.getString(content)
+                val storedCode = cursor.getString(verificationCode)?.trim().orEmpty()
+                // Records written before verification fields were persisted
+                // can still be recovered. The extractor itself is strict:
+                // it requires a verification keyword and a standalone code,
+                // so ordinary notification numbers do not gain a copy action.
+                val recoveredCode = if (storedCode.isNotEmpty()) {
+                    storedCode
+                } else {
+                    VerificationCodeExtractor.find(contentValue).orEmpty()
+                }
                 result += Record(
                     id = cursor.getString(id),
-                    packageName = cursor.getString(packageIndex),
+                    packageName = packageValue,
                     appName = cursor.getString(appName),
                     title = cursor.getString(title),
-                    content = cursor.getString(content),
+                    content = contentValue,
                     timestamp = cursor.getLong(timestamp),
                     category = cursor.getString(category),
                     ongoing = cursor.getInt(ongoing) != 0,
                     notificationKey = cursor.getString(notificationKey),
+                    isVerificationCode = cursor.getInt(isVerificationCode) != 0 || recoveredCode.isNotEmpty(),
+                    verificationCode = recoveredCode.ifEmpty { null },
                 )
             }
         }
@@ -180,7 +221,7 @@ class NotificationHistoryStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "notification_history.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
         private const val TABLE_NOTIFICATIONS = "notifications"
         private const val COLUMN_ID = "id"
         private const val COLUMN_PACKAGE_NAME = "package_name"
@@ -191,6 +232,8 @@ class NotificationHistoryStore(context: Context) :
         private const val COLUMN_CATEGORY = "category"
         private const val COLUMN_ONGOING = "ongoing"
         private const val COLUMN_NOTIFICATION_KEY = "notification_key"
+        private const val COLUMN_IS_VERIFICATION_CODE = "is_verification_code"
+        private const val COLUMN_VERIFICATION_CODE = "verification_code"
 
         private val COLUMNS = arrayOf(
             COLUMN_ID,
@@ -202,6 +245,19 @@ class NotificationHistoryStore(context: Context) :
             COLUMN_CATEGORY,
             COLUMN_ONGOING,
             COLUMN_NOTIFICATION_KEY,
+            COLUMN_IS_VERIFICATION_CODE,
+            COLUMN_VERIFICATION_CODE,
         )
+
+        private fun hasColumn(db: SQLiteDatabase, column: String): Boolean {
+            db.rawQuery("PRAGMA table_info($TABLE_NOTIFICATIONS)", null).use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                if (nameIndex < 0) return false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == column) return true
+                }
+            }
+            return false
+        }
     }
 }

@@ -20,6 +20,7 @@ Backup*/
 upgrade_backup*/
 Generated\ Files/
 [Tt]est[Rr]esults/
+/windows/Hinge.ShellExtension/x64/
 *.suo
 *.user
 *.userosscache

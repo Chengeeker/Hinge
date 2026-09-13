@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -18,7 +19,10 @@ import java.util.concurrent.ConcurrentHashMap
 class SmsNotificationListenerService : NotificationListenerService() {
     private val recentlyForwarded = LinkedHashMap<String, Long>()
     private val activeContentIntents = ConcurrentHashMap<String, PendingIntent>()
-    private val historyStore by lazy { NotificationHistoryStore(applicationContext) }
+    // Do not construct SQLiteOpenHelper from onDestroy when history was never
+    // used. This also keeps a transient database problem isolated to history
+    // instead of making service teardown the source of a process crash.
+    private var historyStore: NotificationHistoryStore? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -31,13 +35,17 @@ class SmsNotificationListenerService : NotificationListenerService() {
         // the listener. This is useful without pretending Android can rebuild
         // notifications that were already dismissed before authorization.
         if (NotificationHistorySettings.isEnabled(this)) {
-            activeNotifications?.forEach(::handleNotification)
+            try {
+                activeNotifications?.forEach(::safelyHandleNotification)
+            } catch (error: Exception) {
+                Log.w(TAG, "Unable to enumerate active notifications", error)
+            }
         }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val posted = sbn ?: return
-        handleNotification(posted)
+        safelyHandleNotification(posted)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -46,9 +54,21 @@ class SmsNotificationListenerService : NotificationListenerService() {
 
     override fun onDestroy() {
         activeContentIntents.clear()
-        historyStore.close()
+        historyStore?.close()
+        historyStore = null
         if (instance === this) instance = null
         super.onDestroy()
+    }
+
+    private fun safelyHandleNotification(posted: StatusBarNotification) {
+        try {
+            handleNotification(posted)
+        } catch (error: Exception) {
+            // A malformed vendor notification must not bring down the
+            // notification-listener process or stop SMS forwarding for all
+            // other applications.
+            Log.e(TAG, "Unable to process notification", error)
+        }
     }
 
     private fun handleNotification(posted: StatusBarNotification) {
@@ -65,6 +85,7 @@ class SmsNotificationListenerService : NotificationListenerService() {
 
         if (NotificationHistorySettings.isEnabled(this)) {
             val appName = applicationLabel(posted.packageName)
+            val verificationCode = VerificationCodeExtractor.find(body)
             val record = NotificationHistoryStore.Record(
                 id = "${posted.packageName}|${posted.key}|${posted.postTime}",
                 packageName = posted.packageName,
@@ -75,8 +96,10 @@ class SmsNotificationListenerService : NotificationListenerService() {
                 category = notification.category.orEmpty(),
                 ongoing = notification.flags and Notification.FLAG_ONGOING_EVENT != 0,
                 notificationKey = posted.key,
+                isVerificationCode = verificationCode != null,
+                verificationCode = verificationCode,
             )
-            if (historyStore.upsert(record)) {
+            if (notificationHistoryStore().upsert(record)) {
                 NotificationHistoryBridge.emit(
                     mapOf(
                         "id" to record.id,
@@ -85,6 +108,8 @@ class SmsNotificationListenerService : NotificationListenerService() {
                         "title" to record.title,
                         "content" to record.content,
                         "timestamp" to record.timestamp,
+                        "isVerificationCode" to record.isVerificationCode,
+                        "verificationCode" to record.verificationCode,
                     ),
                 )
             }
@@ -164,6 +189,8 @@ class SmsNotificationListenerService : NotificationListenerService() {
     }
 
     companion object {
+        private const val TAG = "HingeNotifications"
+
         @Volatile
         private var instance: SmsNotificationListenerService? = null
 
@@ -196,7 +223,13 @@ class SmsNotificationListenerService : NotificationListenerService() {
         fun captureActiveNotifications() {
             instance?.takeIf { NotificationHistorySettings.isEnabled(it) }
                 ?.activeNotifications
-                ?.forEach { instance?.handleNotification(it) }
+                ?.forEach { instance?.safelyHandleNotification(it) }
+        }
+    }
+
+    private fun notificationHistoryStore(): NotificationHistoryStore {
+        return historyStore ?: NotificationHistoryStore(applicationContext).also {
+            historyStore = it
         }
     }
 
@@ -219,4 +252,5 @@ class SmsNotificationListenerService : NotificationListenerService() {
         "com.samsung.android.messaging",
         "com.huawei.message",
     )
+
 }

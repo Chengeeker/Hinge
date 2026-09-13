@@ -1192,7 +1192,7 @@ class MainActivity : FlutterActivity() {
     private fun readNotificationHistory(call: MethodCall, result: MethodChannel.Result) {
         val offset = (call.argument<Number>("offset")?.toInt() ?: 0).coerceAtLeast(0)
         val limit = (call.argument<Number>("limit")?.toInt() ?: 200).coerceIn(1, 200)
-        val ascending = call.argument<Boolean>("ascending") ?: true
+        val ascending = call.argument<Boolean>("ascending") ?: false
         val packageName = call.argument<String>("packageName")?.trim().orEmpty()
             .ifBlank { null }
         contentExecutor.execute {
@@ -1237,6 +1237,8 @@ class MainActivity : FlutterActivity() {
                             "ongoing" to record.ongoing,
                             "notificationKey" to record.notificationKey,
                             "iconBase64" to notificationIconBase64(record.packageName),
+                            "isVerificationCode" to record.isVerificationCode,
+                            "verificationCode" to record.verificationCode,
                         )
                     }
                     val total = store.count(packageName)

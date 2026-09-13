@@ -40,6 +40,14 @@ public sealed partial class MainWindow : Window
     private const uint GwOwner = 4;
     private const int GwlStyle = -16;
     private const long WsCaption = 0x00C00000L;
+    private const uint WmSetIcon = 0x0080;
+    private const int GclpHicon = -14;
+    private const int GclpHiconSm = -34;
+    private const nint IconSmall = 0;
+    private const nint IconBig = 1;
+    private const uint ImageIcon = 1;
+    private const uint LrLoadFromFile = 0x00000010;
+    private const uint LrDefaultSize = 0x00000040;
     private const uint ElectronNotifyIconMessage = 0x8001;
     private const int WmLeftButtonDown = 0x0201;
     private const uint ElectronFirstNotifyIconId = 3;
@@ -48,6 +56,7 @@ public sealed partial class MainWindow : Window
     private const string StartupRegistryValueName = "Hinge";
     private const string UserSettingsRegistryPath = @"Software\Hinge";
     private const string ReceiveDirectorySettingName = "ReceiveDirectory";
+    private const string ShowTrayBackgroundNoticeSettingName = "ShowTrayBackgroundNotice";
     private const string StartupArgument = "--startup";
 
     private readonly DeviceIdentity _localIdentity;
@@ -100,6 +109,7 @@ public sealed partial class MainWindow : Window
     private AppWindow? _appWindow;
     private bool _allowClose;
     private bool _minimizeToTray;
+    private bool _showTrayBackgroundNotice;
     private string _receiveDirectory;
     private readonly SemaphoreSlim _remoteMediaReceiveGate = new(1, 1);
     private TaskCompletionSource<string>? _pendingRemoteMedia;
@@ -116,6 +126,15 @@ public sealed partial class MainWindow : Window
     private bool _nativeExternalDragActive;
     private DateTime _nativeExternalDragCandidateSince;
     private CancellationTokenSource? _computerDropCancellation;
+    private readonly SemaphoreSlim _shellSendGate = new(1, 1);
+    private readonly ShellSendPipeServer _shellSendPipeServer;
+    private IntPtr _windowIconLarge;
+    private IntPtr _windowIconSmall;
+    private IntPtr _windowIconClassWindowHandle;
+    private IntPtr _previousClassIconLarge;
+    private IntPtr _previousClassIconSmall;
+    private bool _classIconLargeApplied;
+    private bool _classIconSmallApplied;
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate IntPtr WindowProcDelegate(
@@ -154,6 +173,12 @@ public sealed partial class MainWindow : Window
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
     private static extern IntPtr SetWindowLongPtr(
+        IntPtr hWnd,
+        int index,
+        IntPtr newLong);
+
+    [DllImport("user32.dll", EntryPoint = "SetClassLongPtrW", SetLastError = true)]
+    private static extern IntPtr SetClassLongPtr(
         IntPtr hWnd,
         int index,
         IntPtr newLong);
@@ -212,6 +237,25 @@ public sealed partial class MainWindow : Window
     private static extern IntPtr GetWindowLongPtr(
         IntPtr hWnd,
         int index);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(
+        IntPtr hWnd,
+        uint message,
+        nint wParam,
+        IntPtr lParam);
+
+    [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr LoadImage(
+        IntPtr hInstance,
+        string name,
+        uint imageType,
+        int width,
+        int height,
+        uint loadFlags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr hIcon);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -301,6 +345,7 @@ public sealed partial class MainWindow : Window
             new PointerEventHandler(PageRoot_PointerReleased),
             true);
         _minimizeToTray = LoadMinimizeToTray();
+        _showTrayBackgroundNotice = LoadShowTrayBackgroundNotice();
         _receiveDirectory = LoadReceiveDirectory();
         AppNavigation.OpenPaneLength = 200;
         ApplyWindowTheme(LoadWindowTheme());
@@ -389,6 +434,25 @@ public sealed partial class MainWindow : Window
             HeaderStatusText.Text = "发现服务异常";
         }
         RefreshDeviceList(_registry.GetAllDevices());
+        RefreshExplorerSendMenu();
+        _shellSendPipeServer = new ShellSendPipeServer(arguments =>
+        {
+            HandleActivationArguments(arguments);
+        });
+    }
+
+    public bool HandleActivationArguments(string? arguments)
+    {
+        if (!ShellSendRequest.IsMarked(arguments)) return false;
+
+        if (!ShellSendRequest.TryParse(arguments, out var request) || request == null)
+        {
+            _trayManager.ShowNotification("Hinge", "无法读取资源管理器选中的文件。请重试。");
+            return true;
+        }
+
+        DispatcherQueue.TryEnqueue(() => _ = SendShellFilesAsync(request));
+        return true;
     }
 
     private void ContentFrame_Navigated(object sender, NavigationEventArgs e)
@@ -779,6 +843,9 @@ public sealed partial class MainWindow : Window
         page.About.Click += BtnAbout_Click;
         page.MinimizeToTray.IsOn = _minimizeToTray;
         page.MinimizeToTray.Toggled += MinimizeToTray_Toggled;
+        page.ShowTrayBackgroundNotice.IsOn = _showTrayBackgroundNotice;
+        page.ShowTrayBackgroundNotice.IsEnabled = _minimizeToTray;
+        page.ShowTrayBackgroundNotice.Toggled += ShowTrayBackgroundNotice_Toggled;
         page.StartWithWindows.IsOn = LoadStartWithWindows();
         page.SilentStartup.IsOn = LoadSilentStartup();
         page.SilentStartup.IsEnabled = page.StartWithWindows.IsOn;
@@ -843,7 +910,19 @@ public sealed partial class MainWindow : Window
             GetConnectedConnection,
             OpenRemoteNotificationAsync,
             DeleteRemoteNotificationAsync,
+            CopyNotificationVerificationCodeAsync,
             ClearRemoteNotificationHistoryAsync);
+    }
+
+    private async Task<bool> CopyNotificationVerificationCodeAsync(RemoteNotificationHistoryItem item)
+    {
+        if (!item.IsVerificationCode || string.IsNullOrWhiteSpace(item.VerificationCode))
+        {
+            return false;
+        }
+
+        await _clipboardAdapter.SetTextAsync(item.VerificationCode);
+        return true;
     }
 
     private async Task<bool> OpenRemoteNotificationAsync(RemoteNotificationHistoryItem item)
@@ -1670,15 +1749,122 @@ public sealed partial class MainWindow : Window
         try
         {
             var hwnd = WindowNative.GetWindowHandle(this);
+            ConfigureWindowIcon(hwnd);
             InitializeNativeFileDrop(hwnd);
             var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
+            ConfigureAppWindowIcons(_appWindow);
             ApplyDefaultWindowSize(_appWindow, windowId);
             _appWindow.Closing += AppWindow_Closing;
         }
         catch
         {
             // Unpackaged test hosts may not expose an AppWindow until activation.
+        }
+    }
+
+    private void ConfigureAppWindowIcons(AppWindow appWindow)
+    {
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico");
+        if (!File.Exists(iconPath)) return;
+
+        // Give AppWindow an icon handle that has already been scaled to the
+        // native small-icon size. This avoids relying on a single 256px PNG
+        // entry inside the .ico when Windows creates the taskbar button.
+        if (_windowIconSmall != IntPtr.Zero)
+        {
+            try
+            {
+                var iconId = Win32Interop.GetIconIdFromIcon(_windowIconSmall);
+                appWindow.SetIcon(iconId);
+                appWindow.SetTaskbarIcon(iconId);
+                return;
+            }
+            catch
+            {
+                // Fall back to the documented .ico path for older runtimes.
+            }
+        }
+
+        try { appWindow.SetIcon(iconPath); }
+        catch
+        {
+            // The native WM_SETICON path remains available for unpackaged hosts.
+        }
+
+        try { appWindow.SetTaskbarIcon(iconPath); }
+        catch
+        {
+            // The embedded EXE icon is still the final fallback.
+        }
+    }
+
+    private void ConfigureWindowIcon(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return;
+
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico");
+        if (!File.Exists(iconPath)) return;
+
+        var large = LoadImage(
+            IntPtr.Zero,
+            iconPath,
+            ImageIcon,
+            32,
+            32,
+            LrLoadFromFile | LrDefaultSize);
+        var small = LoadImage(
+            IntPtr.Zero,
+            iconPath,
+            ImageIcon,
+            16,
+            16,
+            LrLoadFromFile | LrDefaultSize);
+
+        _windowIconClassWindowHandle = hwnd;
+
+        if (large != IntPtr.Zero)
+        {
+            _previousClassIconLarge = SetClassLongPtr(hwnd, GclpHicon, large);
+            _classIconLargeApplied = true;
+            SendMessage(hwnd, WmSetIcon, IconBig, large);
+            _windowIconLarge = large;
+        }
+        if (small != IntPtr.Zero)
+        {
+            _previousClassIconSmall = SetClassLongPtr(hwnd, GclpHiconSm, small);
+            _classIconSmallApplied = true;
+            SendMessage(hwnd, WmSetIcon, IconSmall, small);
+            _windowIconSmall = small;
+        }
+    }
+
+    private void ReleaseWindowIcons()
+    {
+        if (_windowIconClassWindowHandle != IntPtr.Zero)
+        {
+            if (_classIconLargeApplied)
+            {
+                SetClassLongPtr(_windowIconClassWindowHandle, GclpHicon, _previousClassIconLarge);
+                _classIconLargeApplied = false;
+            }
+            if (_classIconSmallApplied)
+            {
+                SetClassLongPtr(_windowIconClassWindowHandle, GclpHiconSm, _previousClassIconSmall);
+                _classIconSmallApplied = false;
+            }
+            _windowIconClassWindowHandle = IntPtr.Zero;
+        }
+
+        if (_windowIconLarge != IntPtr.Zero)
+        {
+            DestroyIcon(_windowIconLarge);
+            _windowIconLarge = IntPtr.Zero;
+        }
+        if (_windowIconSmall != IntPtr.Zero)
+        {
+            DestroyIcon(_windowIconSmall);
+            _windowIconSmall = IntPtr.Zero;
         }
     }
 
@@ -2016,7 +2202,10 @@ public sealed partial class MainWindow : Window
 
         args.Cancel = true;
         sender.Hide();
-        _trayManager.ShowNotification("Hinge", "应用仍在后台运行，可从系统托盘恢复或退出。");
+        if (_showTrayBackgroundNotice)
+        {
+            _trayManager.ShowNotification("Hinge", "应用仍在后台运行，可从系统托盘恢复或退出。");
+        }
     }
 
     private static string DefaultReceiveDirectory() => Path.Combine(
@@ -2287,6 +2476,34 @@ public sealed partial class MainWindow : Window
         WriteUserSetting("MinimizeToTray", value ? 1 : 0);
     }
 
+    private static bool LoadShowTrayBackgroundNotice()
+    {
+        try
+        {
+            if (ReadUserSetting(ShowTrayBackgroundNoticeSettingName) is int registryValue)
+            {
+                return registryValue != 0;
+            }
+            if (ApplicationData.Current.LocalSettings.Values[ShowTrayBackgroundNoticeSettingName] is bool value)
+            {
+                WriteUserSetting(ShowTrayBackgroundNoticeSettingName, value ? 1 : 0);
+                return value;
+            }
+            return false;
+        }
+        catch
+        {
+            return ReadUserSetting(ShowTrayBackgroundNoticeSettingName) is int registryValue && registryValue != 0;
+        }
+    }
+
+    private static void SaveShowTrayBackgroundNotice(bool value)
+    {
+        try { ApplicationData.Current.LocalSettings.Values[ShowTrayBackgroundNoticeSettingName] = value; }
+        catch { }
+        WriteUserSetting(ShowTrayBackgroundNoticeSettingName, value ? 1 : 0);
+    }
+
     public static bool ShouldStartSilently(string? arguments)
     {
         return !string.IsNullOrWhiteSpace(arguments) &&
@@ -2403,6 +2620,7 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             RefreshDeviceList(devices);
+            RefreshExplorerSendMenu();
             _ = TryAutoConnectHistoricalDeviceAsync(devices);
         });
     }
@@ -3220,6 +3438,7 @@ public sealed partial class MainWindow : Window
             ActivityInfoBar.Title = "设备连接正常";
             ActivityInfoBar.Message = $"已连接到 {device.Name}，双向身份握手已完成。";
             ActivityInfoBar.Severity = InfoBarSeverity.Success;
+            RefreshExplorerSendMenu();
             RefreshCurrentWorkspacePage(connection);
         });
 
@@ -3286,6 +3505,7 @@ public sealed partial class MainWindow : Window
         }
 
         _clipboardManager.UnregisterConnection(connection);
+        DispatcherQueue.TryEnqueue(RefreshExplorerSendMenu);
         if (ReferenceEquals(_activeConnection, connection))
         {
             SessionConnection? replacement = connection.RemoteDeviceId is { } remoteId
@@ -4810,9 +5030,24 @@ public sealed partial class MainWindow : Window
     {
         _minimizeToTray = sender is ToggleSwitch { IsOn: true };
         SaveMinimizeToTray(_minimizeToTray);
+        if (_settingsPage != null)
+        {
+            _settingsPage.ShowTrayBackgroundNotice.IsEnabled = _minimizeToTray;
+        }
         SettingsStatusText.Text = _minimizeToTray
             ? "关闭窗口时将隐藏到系统托盘，可从托盘恢复或退出。"
             : "关闭窗口时直接退出应用。";
+    }
+
+    private void ShowTrayBackgroundNotice_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle) return;
+
+        _showTrayBackgroundNotice = toggle.IsOn;
+        SaveShowTrayBackgroundNotice(_showTrayBackgroundNotice);
+        SettingsStatusText.Text = _showTrayBackgroundNotice
+            ? "已启用后台运行提示；关闭窗口时会显示托盘通知。"
+            : "已关闭后台运行提示；应用仍会保留在系统托盘。";
     }
 
     private void StartWithWindows_Toggled(object sender, RoutedEventArgs e)
@@ -5034,9 +5269,98 @@ public sealed partial class MainWindow : Window
         }
 
         var destination = args.DestinationPath.Trim('/');
+        await SendFilesToConnectionAsync(
+            connection,
+            args.FilePaths,
+            destination,
+            cancellationToken,
+            showFailureDialog: true);
+    }
+
+    private async Task SendShellFilesAsync(ShellSendRequest request)
+    {
+        await _shellSendGate.WaitAsync();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            var connection = await WaitForConnectionForDeviceAsync(request.DeviceId, timeout.Token);
+            if (connection == null)
+            {
+                _trayManager.ShowNotification(
+                    "Hinge",
+                    "目标设备当前未连接，无法发送。请先让 Hinge 与手机建立会话。");
+                return;
+            }
+
+            var result = await SendFilesToConnectionAsync(
+                connection,
+                request.FilePaths,
+                "Download/Hinge",
+                timeout.Token,
+                showFailureDialog: false);
+            if (result == null) return;
+
+            var message = result.Failures.Count == 0
+                ? $"已发送 {result.Completed} 个文件到 {result.DestinationLabel}。"
+                : $"已发送 {result.Completed} 个文件，失败 {result.Failures.Count} 个。";
+            _trayManager.ShowNotification("Hinge", message);
+        }
+        catch (OperationCanceledException)
+        {
+            _trayManager.ShowNotification("Hinge", "发送已超时或被取消。");
+        }
+        catch (Exception exception)
+        {
+            _trayManager.ShowNotification("Hinge", $"文件发送失败：{exception.Message}");
+        }
+        finally
+        {
+            _shellSendGate.Release();
+        }
+    }
+
+    private async Task<SessionConnection?> WaitForConnectionForDeviceAsync(
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var connection = _sessionManager.ConnectionForDevice(deviceId);
+            if (connection != null) return connection;
+            await Task.Delay(250, cancellationToken);
+        }
+
+        return _sessionManager.ConnectionForDevice(deviceId);
+    }
+
+    private sealed record TransferBatchResult(
+        int Completed,
+        IReadOnlyList<string> Failures,
+        string DestinationLabel);
+
+    private async Task<TransferBatchResult?> SendFilesToConnectionAsync(
+        SessionConnection connection,
+        IEnumerable<string> filePaths,
+        string destination,
+        CancellationToken cancellationToken,
+        bool showFailureDialog)
+    {
+        var paths = filePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (paths.Length == 0)
+        {
+            if (showFailureDialog)
+            {
+                await ShowDialogAsync("无法发送文件", "没有找到可发送的本地文件。", false);
+            }
+            return null;
+        }
+
         var completed = 0;
         var failures = new List<string>();
-        foreach (var path in args.FilePaths)
+        foreach (var path in paths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -5047,6 +5371,10 @@ public sealed partial class MainWindow : Window
                     cancellationToken: cancellationToken,
                     destinationPath: destination);
                 completed++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception exception)
             {
@@ -5059,18 +5387,37 @@ public sealed partial class MainWindow : Window
         var destinationLabel = string.IsNullOrWhiteSpace(destination)
             ? "手机默认目录"
             : $"手机 /{destination}";
+
+        var result = new TransferBatchResult(completed, failures, destinationLabel);
         if (failures.Count == 0)
         {
             StatusText.Text = $"已发送 {completed} 个文件到 {destinationLabel}";
             if (_filePage != null) _filePage.StatusText.Text = StatusText.Text;
-            return;
+            return result;
         }
 
         var summary = $"已发送 {completed} 个文件到 {destinationLabel}。\n失败 {failures.Count} 个：\n" +
             string.Join("\n", failures.Take(5));
         StatusText.Text = $"发送完成：成功 {completed}，失败 {failures.Count}";
         if (_filePage != null) _filePage.StatusText.Text = StatusText.Text;
-        await ShowDialogAsync("部分文件发送失败", summary, false);
+        if (showFailureDialog)
+        {
+            await ShowDialogAsync("部分文件发送失败", summary, false);
+        }
+        return result;
+    }
+
+    private void RefreshExplorerSendMenu()
+    {
+        var devices = _sessionManager.ActiveConnections
+            .Where(connection =>
+                connection.State == SessionState.Connected &&
+                !string.IsNullOrWhiteSpace(connection.RemoteDeviceId))
+            .Select(connection => new ExplorerSendDevice(
+                connection.RemoteDeviceId!,
+                connection.PeerInfo?.Name ?? "已连接设备"))
+            .ToArray();
+        ExplorerSendMenu.Refresh(Environment.ProcessPath, devices);
     }
 
     private SessionConnection? GetConnectedConnection()
@@ -5126,6 +5473,8 @@ public sealed partial class MainWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         CancelHistoricalReconnect();
+        ExplorerSendMenu.Clear();
+        ReleaseWindowIcons();
         UninitializeNativeFileDrop();
         if (_appWindow != null)
         {
@@ -5138,6 +5487,8 @@ public sealed partial class MainWindow : Window
         _notificationManager.Dispose();
         _remoteInputManager.Dispose();
         _trayManager.Dispose();
+        _shellSendPipeServer.Dispose();
+        _shellSendGate.Dispose();
     }
 
     public void RestoreFromTray()

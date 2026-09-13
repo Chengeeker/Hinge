@@ -498,7 +498,7 @@ class WorkspaceDataService {
   Future<NotificationHistoryPage> loadNotificationHistory({
     int offset = 0,
     int limit = 200,
-    bool ascending = true,
+    bool ascending = false,
     String? packageName,
   }) async {
     final raw = await _invoke('notificationHistory', {
@@ -1144,11 +1144,13 @@ class WorkspaceCommandRouter {
                   'content': item.content,
                   'timestamp': item.timestamp,
                   'category': item.category,
-                  'ongoing': item.ongoing,
-                  'notificationKey': item.notificationKey,
-                  'iconBase64': item.iconBase64,
-                },
-              )
+                   'ongoing': item.ongoing,
+                   'notificationKey': item.notificationKey,
+                   'iconBase64': item.iconBase64,
+                   'isVerificationCode': item.isVerificationCode,
+                   'verificationCode': item.verificationCode,
+                 },
+               )
               .toList(),
           'total': page.total,
           'applications': page.applications

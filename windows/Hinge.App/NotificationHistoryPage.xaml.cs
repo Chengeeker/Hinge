@@ -15,13 +15,14 @@ public sealed partial class NotificationHistoryPage : Page
     private Func<SessionConnection?>? _connectionProvider;
     private Func<RemoteNotificationHistoryItem, Task<bool>>? _openItem;
     private Func<RemoteNotificationHistoryItem, Task<bool>>? _deleteItem;
+    private Func<RemoteNotificationHistoryItem, Task<bool>>? _copyVerificationCode;
     private Func<Task<bool>>? _clearItems;
     private SessionConnection? _connection;
     private readonly List<RemoteNotificationHistoryItem> _items = new();
     private int _total;
     private int _loadVersion;
     private bool _loading;
-    private bool _ascending = true;
+    private bool _ascending;
     private bool _suppressFilterEvents;
     private string? _packageName;
 
@@ -36,12 +37,14 @@ public sealed partial class NotificationHistoryPage : Page
         Func<SessionConnection?> connectionProvider,
         Func<RemoteNotificationHistoryItem, Task<bool>> openItem,
         Func<RemoteNotificationHistoryItem, Task<bool>> deleteItem,
+        Func<RemoteNotificationHistoryItem, Task<bool>> copyVerificationCode,
         Func<Task<bool>> clearItems)
     {
         _client = client;
         _connectionProvider = connectionProvider;
         _openItem = openItem;
         _deleteItem = deleteItem;
+        _copyVerificationCode = copyVerificationCode;
         _clearItems = clearItems;
     }
 
@@ -242,6 +245,17 @@ public sealed partial class NotificationHistoryPage : Page
             Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        if (item.IsVerificationCode && !string.IsNullOrWhiteSpace(item.VerificationCode))
+        {
+            var copy = new Button
+            {
+                Content = "复制验证码",
+                Tag = item,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            copy.Click += CopyVerificationCodeButton_Click;
+            actions.Children.Add(copy);
+        }
         if (IsChatApp(item.PackageName))
         {
             var open = new Button
@@ -287,6 +301,31 @@ public sealed partial class NotificationHistoryPage : Page
         if (sender is Button { Tag: RemoteNotificationHistoryItem item })
         {
             await DeleteItemAsync(item);
+        }
+    }
+
+    private async void CopyVerificationCodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: RemoteNotificationHistoryItem item } ||
+            _copyVerificationCode == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (await _copyVerificationCode(item))
+            {
+                SetStatus("验证码已复制", "验证码已经复制到 Windows 剪贴板。", InfoBarSeverity.Success);
+            }
+            else
+            {
+                SetStatus("复制失败", "这条通知没有可用的验证码。", InfoBarSeverity.Warning);
+            }
+        }
+        catch (Exception exception)
+        {
+            SetStatus("复制验证码失败", exception.Message, InfoBarSeverity.Error);
         }
     }
 

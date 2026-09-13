@@ -13,6 +13,7 @@ public class Win32TrayManager : ITrayManager
     private string _currentTooltip = "Hinge — LAN Cross-Device Hub";
     private readonly object _notificationLock = new();
     private Action? _balloonTipClickAction;
+    private DateTime _suppressOpenUntilUtc;
     private bool _disposed;
 
     public bool IsVisible => _isVisible;
@@ -37,7 +38,7 @@ public class Win32TrayManager : ITrayManager
         {
             _contextMenu = new Forms.ContextMenuStrip();
             var open = new Forms.ToolStripMenuItem("打开 Hinge");
-            open.Click += (_, _) => RequestOpen();
+            open.Click += (_, _) => RequestOpen(bypassBalloonSuppression: true);
             _contextMenu.Items.Add(open);
             _contextMenu.Items.Add(new Forms.ToolStripSeparator());
             var exit = new Forms.ToolStripMenuItem("退出");
@@ -59,6 +60,14 @@ public class Win32TrayManager : ITrayManager
                 {
                     clickAction = _balloonTipClickAction;
                     _balloonTipClickAction = null;
+                    if (clickAction != null)
+                    {
+                        // NotifyIcon can report the balloon click and a tray
+                        // double-click for the same physical interaction on
+                        // some Windows shells. Keep that second event from
+                        // restoring the Hinge window after a copy action.
+                        _suppressOpenUntilUtc = DateTime.UtcNow.AddSeconds(2);
+                    }
                 }
 
                 if (clickAction != null)
@@ -105,6 +114,18 @@ public class Win32TrayManager : ITrayManager
             lock (_notificationLock)
             {
                 _balloonTipClickAction = clickAction;
+                if (clickAction != null)
+                {
+                    // Arm this before ShowBalloonTip. Some Windows shell
+                    // versions deliver the tray double-click before the
+                    // BalloonTipClicked callback; either order must remain a
+                    // copy-only interaction for verification messages.
+                    _suppressOpenUntilUtc = DateTime.UtcNow.AddSeconds(4);
+                }
+                else
+                {
+                    _suppressOpenUntilUtc = DateTime.MinValue;
+                }
             }
             _notifyIcon.BalloonTipTitle = LimitTooltip(title);
             _notifyIcon.BalloonTipText = text;
@@ -114,8 +135,15 @@ public class Win32TrayManager : ITrayManager
         Console.WriteLine($"\n[Tray Balloon - {title}]: {text}");
     }
 
-    public void RequestOpen()
+    public void RequestOpen(bool bypassBalloonSuppression = false)
     {
+        if (!bypassBalloonSuppression)
+        {
+            lock (_notificationLock)
+            {
+                if (_suppressOpenUntilUtc > DateTime.UtcNow) return;
+            }
+        }
         OpenRequested?.Invoke(this, EventArgs.Empty);
     }
 
@@ -145,6 +173,7 @@ public class Win32TrayManager : ITrayManager
         lock (_notificationLock)
         {
             _balloonTipClickAction = null;
+            _suppressOpenUntilUtc = DateTime.MinValue;
         }
     }
 

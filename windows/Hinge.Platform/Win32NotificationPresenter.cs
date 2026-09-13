@@ -83,6 +83,11 @@ public class Win32NotificationPresenter : INotificationPresenter
 
     public event EventHandler<NotificationActionMessage>? ActionTriggered;
 
+    public static void InitializeCurrentProcessAppUserModelId()
+    {
+        SetCurrentProcessAppUserModelId(AppUserModelId);
+    }
+
     public Win32NotificationPresenter(Action<string>? copyText = null)
     {
         _copyText = copyText;
@@ -93,7 +98,7 @@ public class Win32NotificationPresenter : INotificationPresenter
             // Windows can route local Toast notifications to the notification
             // center instead of treating this process as an anonymous Win32
             // executable.
-            SetCurrentProcessAppUserModelId(AppUserModelId);
+            InitializeCurrentProcessAppUserModelId();
             // Register the handler before Register(). This keeps button clicks
             // in the already-running Hinge process for unpackaged EXE builds.
             _appNotificationManager = AppNotificationManager.Default;

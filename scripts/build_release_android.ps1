@@ -8,7 +8,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$preferredKeystorePath = 'D:\Download\backup\infinitycm.bks'
 $preferredJavaHome = 'D:\jdk17'
 $gradleRoot = Join-Path $repoRoot 'android\android'
 $keyPropertiesPath = Join-Path $gradleRoot 'key.properties'
@@ -91,19 +90,8 @@ if ($null -eq $androidJavaHome) {
     throw '未找到可用的 JDK 17。请安装 JDK 17，或通过 JAVA_HOME 指定包含 bin\java.exe 的 JDK。'
 }
 
-# Use the local key.properties storeFile when it is present. Otherwise use the
-# developer's fixed release key, with HINGE_KEYSTORE_PATH as the portable
-# fallback for another machine.
 if ([string]::IsNullOrWhiteSpace($KeystorePath)) {
-    if (Test-Path -LiteralPath $preferredKeystorePath -PathType Leaf) {
-        $KeystorePath = $preferredKeystorePath
-    } else {
-        $KeystorePath = $env:HINGE_KEYSTORE_PATH
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($KeystorePath)) {
-    throw '未找到 Android 签名文件路径。默认路径不存在时，请通过 HINGE_KEYSTORE_PATH 指定。'
+    throw '未找到 Android 签名文件路径。请配置被 Git 忽略的 android/android/key.properties，或通过 HINGE_KEYSTORE_PATH 指定。'
 }
 if (-not (Test-Path -LiteralPath $KeystorePath -PathType Leaf)) {
     throw "找不到 Android 签名文件：$KeystorePath"
@@ -210,7 +198,7 @@ if ($null -eq $apksigner -or -not (Test-Path -LiteralPath $keytool)) {
 $signingDirectory = $buildTempDir
 New-Item -ItemType Directory -Path $signingDirectory -Force | Out-Null
 
-Write-Host "Validating Android signing key: $KeystorePath"
+Write-Host 'Validating configured Android signing key'
 $bcprov = $null
 if ($sourceStoreType -ieq 'BKS') {
     $bcprovRoot = Join-Path $env:USERPROFILE '.gradle\caches\modules-2\files-2.1\org.bouncycastle'
@@ -268,7 +256,7 @@ try {
             '-providerpath', $bcprov.FullName
         )
     }
-    & $keytool @importKeytoolArguments | Out-Host
+    & $keytool @importKeytoolArguments 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw '无法将签名库转换为临时 PKCS12 签名库。'
     }

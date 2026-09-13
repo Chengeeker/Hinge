@@ -9,6 +9,7 @@ import android.os.Looper
 import android.provider.Telephony
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Fallback for devices that do not deliver every verification SMS through
@@ -64,7 +65,14 @@ class SmsContentObserver(context: Context) :
 
     override fun onChange(selfChange: Boolean) {
         if (!acceptingChanges) return
-        executor.execute { emitNewMessages() }
+        // A provider can deliver one callback after unregistering, while the
+        // service is already closing its executor. Do not let that teardown
+        // race escape as an uncaught RejectedExecutionException.
+        try {
+            executor.execute { emitNewMessages() }
+        } catch (_: RejectedExecutionException) {
+            acceptingChanges = false
+        }
     }
 
     private fun emitNewMessages() {

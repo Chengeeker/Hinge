@@ -38,7 +38,7 @@ class _NotificationHistoryScreenState extends State<NotificationHistoryScreen>
   // dropdown value non-null makes Flutter render that item instead of leaving
   // the field visually empty.
   String _selectedPackage = '';
-  bool _ascending = true;
+  bool _ascending = false;
   bool _accessEnabled = false;
   bool _enabled = false;
   bool _loading = true;
@@ -196,6 +196,17 @@ class _NotificationHistoryScreenState extends State<NotificationHistoryScreen>
       await _load(reset: true);
     } catch (error) {
       if (mounted) _showMessage('删除通知失败：$error');
+    }
+  }
+
+  Future<void> _copyVerificationCode(NotificationHistoryItem item) async {
+    final code = item.verificationCode;
+    if (!item.isVerificationCode || code == null || code.isEmpty) return;
+    try {
+      await Clipboard.setData(ClipboardData(text: code));
+      if (mounted) _showMessage('验证码已复制');
+    } catch (error) {
+      if (mounted) _showMessage('复制验证码失败：$error');
     }
   }
 
@@ -468,6 +479,16 @@ class _NotificationHistoryScreenState extends State<NotificationHistoryScreen>
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (item.isVerificationCode &&
+                item.verificationCode?.isNotEmpty == true)
+              IconButton(
+                tooltip: '复制验证码',
+                onPressed: () => _copyVerificationCode(item),
+                icon: Icon(
+                  Symbols.content_copy_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
             if (_isChatApp(item.packageName))
               IconButton(
                 tooltip: '打开应用',

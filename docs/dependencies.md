@@ -38,3 +38,5 @@
 ## 5. Electron 托盘兼容实现参考
 
 Windows 端 QQ/微信托盘唤醒参考 Electron 项目（MIT License）的公开实现：`shell/browser/ui/win/notify_icon_host.cc` 和 `notify_icon.cc`。Hinge 只依据其公开消息约定识别 `Electron_NotifyIconHostWindow`、`WM_APP + 1` 回调与通知图标 ID，并结合 Windows 原生 `Shell_NotifyIconGetRect`/`PostMessage` 完成兼容；没有复制、链接或打包 Electron 源码和二进制，因此不新增运行时依赖或许可证文件。
+
+Windows 11 第一层资源管理器菜单的 WRL COM 激活框架改编自 Microsoft `vscode-explorer-command`（MIT）。本项目保留上游版权头，只使用 Windows SDK 自带 WRL/COM 接口，不引入其 WIL 或 Chromium 代码；动态设备枚举、注册表快照和发送逻辑为 Hinge 自有实现。该项已登记在 `THIRD_PARTY_LICENSES.md`。

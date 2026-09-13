@@ -1,6 +1,7 @@
 using System.IO;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.UI.Xaml;
+using Hinge.Platform;
 
 namespace Hinge.App;
 
@@ -12,9 +13,15 @@ public partial class App : Application
 
     public App()
     {
+        // The taskbar chooses the grouping and icon identity when the first
+        // window is created. Set it before loading app resources or presenting
+        // any WinUI UI; setting it later from the notification presenter is too
+        // late for the already-created taskbar button.
+        Win32NotificationPresenter.InitializeCurrentProcessAppUserModelId();
         InitializeComponent();
         UnhandledException += OnUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
@@ -43,15 +50,22 @@ public partial class App : Application
 
         if (_window is MainWindow existingWindow)
         {
-            existingWindow.Activate();
+            if (!existingWindow.HandleActivationArguments(args.Arguments))
+            {
+                existingWindow.Activate();
+            }
             return;
         }
 
         bool startSilently = MainWindow.ShouldStartSilently(args.Arguments);
         _window = new MainWindow();
-        if (startSilently && _window is MainWindow mainWindow)
+        if (_window is MainWindow mainWindow && mainWindow.HandleActivationArguments(args.Arguments))
         {
             mainWindow.StartSilentlyToTray();
+        }
+        else if (startSilently && _window is MainWindow silentWindow)
+        {
+            silentWindow.StartSilentlyToTray();
         }
         else
         {
@@ -65,13 +79,42 @@ public partial class App : Application
 
         window.DispatcherQueue.TryEnqueue(() =>
         {
-            window.RestoreFromTray();
+            var arguments = GetLaunchArguments(args);
+            if (!window.HandleActivationArguments(arguments))
+            {
+                window.RestoreFromTray();
+            }
         });
+    }
+
+    private static string? GetLaunchArguments(AppActivationArguments activationArguments)
+    {
+        try
+        {
+            return activationArguments.Data?
+                .GetType()
+                .GetProperty("Arguments")?
+                .GetValue(activationArguments.Data) as string;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
         LogException(e.Exception);
+        // A malformed fire-and-forget UI callback must not tear down the
+        // resident tray process. The exception is still recorded for later
+        // diagnosis, while WinUI is allowed to keep the window alive.
+        e.Handled = true;
+    }
+
+    private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        LogException(e.Exception);
+        e.SetObserved();
     }
 
     private void OnDomainUnhandledException(object sender, System.UnhandledExceptionEventArgs e)

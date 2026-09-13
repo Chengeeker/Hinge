@@ -65,6 +65,8 @@
                     <Button x:Name="AboutButton" Content="关于应用" HorizontalAlignment="Left" />
                     <ToggleSwitch x:Name="MinimizeToTrayToggle" Header="关闭窗口时最小化到托盘" OnContent="开启" OffContent="关闭" />
                     <TextBlock Text="开启后点击关闭按钮会隐藏窗口，仍可从系统托盘恢复或退出应用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <ToggleSwitch x:Name="ShowTrayBackgroundNoticeToggle" Header="显示后台运行提示" OnContent="开启" OffContent="关闭" />
+                    <TextBlock Text="开启后，关闭窗口并最小化到托盘时会显示一次提示；关闭后不影响后台运行和托盘恢复。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                     <ToggleSwitch x:Name="StartWithWindowsToggle" Header="开机启动" OnContent="开启" OffContent="关闭" />
                     <TextBlock Text="登录 Windows 后自动启动 Hinge。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                     <ToggleSwitch x:Name="SilentStartupToggle" Header="静默启动" OnContent="开启" OffContent="关闭" />

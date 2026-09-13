@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前版本：`v1.0.38`（安装包运行版本为 `1.0.38`）
+- 当前版本：`v1.1.6`（安装包运行版本为 `1.1.6`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -35,14 +35,14 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - Material You / Monet 动态颜色、浅色/深色模式、纯黑深色模式和预置主题；
 - 自定义存储路径、通知常驻和后台保活设置入口；
 - 可选的短信同步：将新到 SMS 转发到可信 Windows 会话，并使用托盘气泡通知；只有识别为验证码的短信/彩信，点击整条气泡才会复制验证码，普通通知不会复制；默认关闭；可申请接收短信和访问短信/彩信权限，仅观察授权后的新消息，不扫描历史收件箱；
-- 工作区“通知历史”：在 Android 系统通知访问权限和采集开关都开启后，按时间记录应用通知、应用图标、应用名称、标题和正文，支持正序/倒序及按应用筛选；记录保存在应用私有数据库，默认关闭；
+- 工作区“通知历史”：在 Android 系统通知访问权限和采集开关都开启后，按时间记录应用通知、应用图标、应用名称、标题和正文，默认按最新到最早显示，支持切换顺序、按应用筛选；对所有应用通知使用严格的验证码关键词与独立数字码规则，识别到验证码时可在历史条目直接复制；记录保存在应用私有数据库，默认关闭；
 - 使用稳定签名库生成可覆盖更新的 ARM64 APK。
 
 ### Windows
 
 - .NET 8 + Windows App SDK + WinUI 3 原生桌面客户端；
 - 独立的首页、文件管理、笔记、待办、日历、相册、工具和设置页面；
-- 侧边栏“手机历史通知”：从已连接的 Android 设备分页读取通知历史，支持时间顺序和应用筛选；微信/QQ只唤醒已运行的桌面客户端主窗口，避免重复启动到新的登录界面；
+- 侧边栏“手机历史通知”：从已连接的 Android 设备分页读取通知历史，默认按最新到最早显示，支持时间顺序、应用筛选和验证码复制；微信/QQ只唤醒已运行的桌面客户端主窗口，避免重复启动到新的登录界面；
 - 显示手机设备名称、品牌标识和连接状态；
 - 文件管理支持最近文件、图片、视频、音频、文档、微信相册、QQ 相册和手机存储；
 - 文件分类不只依赖手机厂商返回的 MIME：对常见文档、压缩包、安装包和媒体扩展名做统一回退识别，未知类型在需要时再读取文件头；
@@ -51,8 +51,9 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - 相册和图片缩略图按批次加载，首次只取前 200 项，继续滚动时再读取后续内容；
 - 双击媒体时按需读取图片尺寸、EXIF 相机信息，或音视频时长、分辨率、码率，并将结果反馈到 Windows 状态栏；
 - 支持从资源管理器拖入文件，并在拖动过程中预览保存目标；窗口标题栏移动不会误触发文件投放提示；
+- 支持在 Hinge 运行且手机已连接时，从 Windows 11 第一层右键菜单的“通过 Hinge 发送到”悬停选择目标机型；支持资源管理器多选，复用同一传输链路并自动保存到 Android `/storage/emulated/0/Download/Hinge/` 下的类型目录。设备快照读取失败时根项仍保留并显示禁用提示；EXE 安装版把 Shell DLL 放入签名稀疏身份包；便携版未注册包身份时使用“显示更多选项”中的兼容菜单；
 - 图片、视频、音频使用当前 Windows 文件关联打开，避免应用内播放器的后台播放和释放问题；
-- WinUI 3 主题、窗口材质、背景图、开机启动、静默启动和关闭时最小化到托盘；
+- WinUI 3 主题、窗口材质、背景图、开机启动、静默启动和关闭时最小化到托盘；后台运行提示可在设置中单独控制，默认关闭；
 - 推荐使用可选择安装路径的自包含 EXE 安装器，也提供便携 ZIP。
 
 ## 当前明确不包含的能力
@@ -70,13 +71,13 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 
 ### Windows
 
-推荐下载 `Hinge-Setup.exe`。这是自包含 EXE 安装器，安装时可以选择目标目录，不依赖 MSIX 测试证书。
+推荐下载 `Hinge-Setup.exe`。这是自包含 EXE 安装器，安装时可以选择目标目录；为了注册 Windows 11 第一层资源管理器菜单，首次安装会请求一次管理员确认，仅把随安装器提供的 Hinge 公钥证书加入本机受信任人，签名私钥不会随包分发。
 
 另外提供：
 
 - `Hinge-Windows.zip`：解压即用的便携版；
 
-Windows 发布只提供上面的 EXE 安装器和便携 ZIP，不提供需要测试证书的 MSIX 发布资产。
+Windows 发布只提供上面的 EXE 安装器和便携 ZIP，不单独提供 MSIX 资产。EXE 内部携带签名的稀疏身份组件；便携 ZIP 不自动修改本机证书或包注册，因此它的右键菜单属于兼容模式。
 
 Hinge 不会修改 `EnableLUA`，也不要求用户把它改成 `1`。保持系统原有设置即可；应用同时保留 Win32 文件拖放回退路径，在 `EnableLUA=0` 的环境下也能接收普通资源管理器文件拖放。若应用被“以管理员身份运行”而资源管理器不是管理员权限，Windows 仍可能按系统权限规则拒绝拖放，此时应让两者处于相同权限级别，而不是修改注册表。可参考 [Windows drag-and-drop 文档](https://learn.microsoft.com/en-us/windows/apps/develop/data/drag-and-drop)。
 
@@ -105,7 +106,7 @@ Copy-Item android/android/key.properties.example android/android/key.properties
 .\scripts\build_release_android.ps1
 ```
 
-脚本会读取本机 `key.properties`，默认使用 `D:\Download\backup\infinitycm.bks`，并将签名后的 ARM64 APK 固定输出为 `publish/Hinge.apk`；`android/build/app/outputs/flutter-apk/app-release.apk` 只是中间产物，不要直接分发。BKS 会在构建期间转换为临时 PKCS12，完成后立即清理。缺少签名输入时脚本会停止，不会用调试签名覆盖发布包。APK 签名后不要再次手工压缩或重打包；Windows EXE/ZIP 的压缩由 Windows 发布脚本自动完成。签名库、密码和临时转换文件不会写入 README 或 Git。
+脚本会读取被 Git 忽略的本机 `key.properties`，并将签名后的 ARM64 APK 固定输出为 `publish/Hinge.apk`；`android/build/app/outputs/flutter-apk/app-release.apk` 只是中间产物，不要直接分发。BKS 会在构建期间转换为临时 PKCS12，完成后立即清理。缺少签名输入时脚本会停止，不会用调试签名覆盖发布包。APK 签名后不要再次手工压缩或重打包；Windows EXE/ZIP 的压缩由 Windows 发布脚本自动完成。签名库、路径、密码和临时转换文件不会写入 README 或 Git。
 
 ### Windows
 
@@ -155,6 +156,8 @@ tests/                   跨模块测试资料
 Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `android/pubspec.lock`、各 `.csproj` 和构建工具锁定结果为准。间接依赖由 Flutter/Dart、NuGet 和 Android 构建工具解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
 Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron)（MIT）公开的 `NotifyIconHost` 消息分发实现，用于识别 `Electron_NotifyIconHostWindow`、通知图标 ID 和托盘单击回调。Hinge 没有复制或打包 Electron 源码，也没有新增 Electron 运行时依赖；详细边界见 [依赖说明](docs/dependencies.md)。
+
+Windows 11 第一层资源管理器菜单的 COM 激活框架改编自 Microsoft 的 [vscode-explorer-command](https://github.com/microsoft/vscode-explorer-command)（MIT）。Hinge 在此基础上自行实现本地连接快照、动态机型子菜单、多文件参数传递和单实例发送；对应版权与使用边界已登记在 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
 ### 随应用使用的直接组件
 

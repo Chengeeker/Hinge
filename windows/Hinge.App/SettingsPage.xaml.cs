@@ -13,6 +13,7 @@ public sealed partial class SettingsPage : Page
     public Button About => AboutButton;
     public TextBlock Status => SettingsStatusText;
     public ToggleSwitch MinimizeToTray => MinimizeToTrayToggle;
+    public ToggleSwitch ShowTrayBackgroundNotice => ShowTrayBackgroundNoticeToggle;
     public ToggleSwitch StartWithWindows => StartWithWindowsToggle;
     public ToggleSwitch SilentStartup => SilentStartupToggle;
 

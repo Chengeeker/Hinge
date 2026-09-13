@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using Microsoft.Win32;
 
 namespace Hinge.Setup;
@@ -9,12 +11,37 @@ internal static class Program
 {
     private const string PayloadMarker = "HINGE_PAYLOAD_V1";
     private const string AppUserModelId = "Hinge.Office";
+    private const string SparsePackageName = "Hinge.Office.Identity";
+    private const string SparsePackageAppUserModelId = "Hinge.Office.Identity_29ecp0hep5z68!Hinge";
+    private const string ExplorerSnapshotPath = "Software\\Hinge\\ExplorerSend";
     private const string UninstallRegistryPath =
         "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hinge";
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (args.Length == 2 &&
+            string.Equals(args[0], "--unattended-install", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                Install(NormalizeInstallPath(args[1]));
+                Environment.ExitCode = 0;
+            }
+            catch
+            {
+                Environment.ExitCode = 1;
+            }
+            return;
+        }
+
+        if (args.Length == 3 &&
+            string.Equals(args[0], "--trust-certificate", StringComparison.OrdinalIgnoreCase))
+        {
+            Environment.ExitCode = TrustCertificateForMachine(args[1], args[2]) ? 0 : 1;
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
         Application.Run(new InstallerForm());
     }
@@ -344,6 +371,7 @@ internal static class Program
     private static string? Install(string installPath)
     {
         StopRunningApp();
+        UnregisterSparseIdentity();
         Directory.CreateDirectory(installPath);
 
         var temporaryZip = Path.Combine(Path.GetTempPath(), $"Hinge-{Guid.NewGuid():N}.zip");
@@ -358,13 +386,219 @@ internal static class Program
                 throw new FileNotFoundException("安装文件不完整，未找到 Hinge.exe。", executablePath);
             }
 
-            CreateShortcuts(installPath, executablePath);
+            CreateShortcuts(installPath, executablePath, AppUserModelId);
             RegisterUninstaller(installPath, executablePath);
+            RegisterModernExplorerMenu(installPath);
             return ConfigureFirewall(installPath);
         }
         finally
         {
             try { File.Delete(temporaryZip); } catch { }
+        }
+    }
+
+    private static void RegisterModernExplorerMenu(string installPath)
+    {
+        var packagePath = Path.Combine(installPath, "Hinge.Identity.msix");
+        var certificatePath = Path.Combine(installPath, "Hinge.Identity.cer");
+        var logPath = Path.Combine(installPath, "shell-integration-error.log");
+        try
+        {
+            if (!File.Exists(packagePath) || !File.Exists(certificatePath))
+            {
+                throw new FileNotFoundException("安装包缺少 Windows 11 右键菜单组件。");
+            }
+
+            var certificate = new X509Certificate2(certificatePath);
+            EnsureMachineCertificateTrusted(certificatePath, certificate.Thumbprint);
+
+            var externalLocation = QuotePowerShellLiteral(installPath);
+            var package = QuotePowerShellLiteral(packagePath);
+            var command =
+                "$ErrorActionPreference='Stop'; " +
+                $"Get-AppxPackage -Name '{SparsePackageName}' | Remove-AppxPackage; " +
+                $"Add-AppxPackage -Path {package} -ExternalLocation {externalLocation}";
+            RunPowerShell(command);
+            CreateShortcuts(
+                installPath,
+                Path.Combine(installPath, "Hinge.exe"),
+                SparsePackageAppUserModelId);
+            RestartExplorerShell();
+
+            using var snapshot = Registry.CurrentUser.CreateSubKey(ExplorerSnapshotPath, writable: true);
+            snapshot?.SetValue("ModernMenuRegistered", 1, RegistryValueKind.DWord);
+            snapshot?.SetValue("CertificateThumbprint", certificate.Thumbprint, RegistryValueKind.String);
+            try { File.Delete(logPath); } catch { }
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                using var snapshot = Registry.CurrentUser.CreateSubKey(ExplorerSnapshotPath, writable: true);
+                snapshot?.SetValue("ModernMenuRegistered", 0, RegistryValueKind.DWord);
+                File.WriteAllText(logPath, exception.ToString());
+            }
+            catch
+            {
+                // Installation itself remains usable through the legacy menu.
+            }
+        }
+    }
+
+    private static void RestartExplorerShell()
+    {
+        var currentSession = Process.GetCurrentProcess().SessionId;
+        foreach (var explorer in Process.GetProcessesByName("explorer"))
+        {
+            try
+            {
+                if (explorer.SessionId != currentSession || explorer.HasExited) continue;
+                explorer.Kill(entireProcessTree: false);
+                explorer.WaitForExit(3000);
+            }
+            catch
+            {
+                // A locked-down shell or a process race must not make the
+                // Hinge installation fail after the package was registered.
+            }
+            finally
+            {
+                explorer.Dispose();
+            }
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"),
+                UseShellExecute = true,
+                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            });
+        }
+        catch
+        {
+            // Explorer will be restarted by Windows or the user can sign out;
+            // the package registration itself has already succeeded.
+        }
+    }
+
+    private static void EnsureMachineCertificateTrusted(string certificatePath, string thumbprint)
+    {
+        if (IsMachineCertificateTrusted(thumbprint)) return;
+
+        var installerPath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("无法定位安装程序以注册 Windows 集成证书。");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = installerPath,
+            UseShellExecute = true,
+            Verb = "runas",
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        startInfo.ArgumentList.Add("--trust-certificate");
+        startInfo.ArgumentList.Add(certificatePath);
+        startInfo.ArgumentList.Add(thumbprint);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("无法启动 Windows 集成证书注册程序。");
+        process.WaitForExit();
+        if (process.ExitCode != 0 || !IsMachineCertificateTrusted(thumbprint))
+        {
+            throw new InvalidOperationException("Windows 11 右键菜单证书未获得本机信任。");
+        }
+    }
+
+    private static bool IsMachineCertificateTrusted(string thumbprint)
+    {
+        try
+        {
+            using var store = new X509Store(StoreName.TrustedPeople, StoreLocation.LocalMachine);
+            store.Open(OpenFlags.ReadOnly);
+            return store.Certificates
+                .Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false)
+                .Count > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TrustCertificateForMachine(string certificatePath, string expectedThumbprint)
+    {
+        try
+        {
+            var certificate = new X509Certificate2(certificatePath);
+            if (!string.Equals(
+                    certificate.Thumbprint,
+                    expectedThumbprint,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(
+                    certificate.Subject,
+                    "CN=Hinge Package Identity",
+                    StringComparison.Ordinal) ||
+                certificate.HasPrivateKey)
+            {
+                return false;
+            }
+            using var store = new X509Store(StoreName.TrustedPeople, StoreLocation.LocalMachine);
+            store.Open(OpenFlags.ReadWrite);
+            var exists = store.Certificates
+                .Find(X509FindType.FindByThumbprint, certificate.Thumbprint, validOnly: false)
+                .Count > 0;
+            if (!exists) store.Add(certificate);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void UnregisterSparseIdentity()
+    {
+        try
+        {
+            RunPowerShell(
+                "$ErrorActionPreference='SilentlyContinue'; " +
+                $"Get-AppxPackage -Name '{SparsePackageName}' | Remove-AppxPackage");
+        }
+        catch
+        {
+            // A first install has no identity to remove. Registration below
+            // remains the source of truth for the modern context menu.
+        }
+    }
+
+    private static string QuotePowerShellLiteral(string value) =>
+        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    private static void RunPowerShell(string command)
+    {
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            Arguments = $"-NoProfile -NonInteractive -EncodedCommand {encoded}",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }) ?? throw new InvalidOperationException("无法启动 Windows 集成注册程序。");
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        Task.WaitAll(outputTask, errorTask);
+        if (process.ExitCode != 0)
+        {
+            var detail = string.IsNullOrWhiteSpace(errorTask.Result)
+                ? outputTask.Result
+                : errorTask.Result;
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(detail)
+                    ? $"Windows 集成注册失败，退出代码 {process.ExitCode}。"
+                    : detail.Trim());
         }
     }
 
@@ -454,7 +688,10 @@ internal static class Program
         }
     }
 
-    private static void CreateShortcuts(string installPath, string executablePath)
+    private static void CreateShortcuts(
+        string installPath,
+        string executablePath,
+        string appUserModelId)
     {
         var startMenu = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -463,14 +700,23 @@ internal static class Program
             "Start Menu",
             "Programs");
         Directory.CreateDirectory(startMenu);
-        CreateShortcut(Path.Combine(startMenu, "Hinge.lnk"), executablePath, installPath);
+        CreateShortcut(
+            Path.Combine(startMenu, "Hinge.lnk"),
+            executablePath,
+            installPath,
+            appUserModelId);
         CreateShortcut(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "Hinge.lnk"),
             executablePath,
-            installPath);
+            installPath,
+            appUserModelId);
     }
 
-    private static void CreateShortcut(string shortcutPath, string executablePath, string workingDirectory)
+    private static void CreateShortcut(
+        string shortcutPath,
+        string executablePath,
+        string workingDirectory,
+        string appUserModelId)
     {
         var shellType = Type.GetTypeFromProgID("WScript.Shell");
         if (shellType == null) return;
@@ -481,7 +727,7 @@ internal static class Program
         shortcut.IconLocation = $"{executablePath},0";
         shortcut.Description = "Hinge 跨设备办公";
         shortcut.Save();
-        SetShortcutProperty(shortcutPath, AppUserModelId);
+        SetShortcutProperty(shortcutPath, appUserModelId);
         try { Marshal.FinalReleaseComObject(shortcut); } catch { }
         try { Marshal.FinalReleaseComObject(shell); } catch { }
     }

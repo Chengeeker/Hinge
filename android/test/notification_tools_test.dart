@@ -78,6 +78,8 @@ void main() {
             'content': '通知正文',
             'timestamp': 1725450000000,
             'notificationKey': '0|com.tencent.mm|key',
+            'isVerificationCode': true,
+            'verificationCode': '123456',
           },
         ],
         'applications': [
@@ -94,6 +96,8 @@ void main() {
       expect(page.enabled, isTrue);
       expect(page.total, equals(301));
       expect(page.items.single.content, equals('通知正文'));
+      expect(page.items.single.isVerificationCode, isTrue);
+      expect(page.items.single.verificationCode, equals('123456'));
       expect(page.applications.single.count, equals(301));
       expect(page.applications.single.iconBase64, equals('icon'));
     });

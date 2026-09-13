@@ -32,6 +32,8 @@ class NotificationHistoryItem {
   final bool ongoing;
   final String notificationKey;
   final String iconBase64;
+  final bool isVerificationCode;
+  final String? verificationCode;
 
   const NotificationHistoryItem({
     required this.id,
@@ -44,9 +46,12 @@ class NotificationHistoryItem {
     this.ongoing = false,
     this.notificationKey = '',
     this.iconBase64 = '',
+    this.isVerificationCode = false,
+    this.verificationCode,
   });
 
   factory NotificationHistoryItem.fromJson(Map<dynamic, dynamic> json) {
+    final verificationCode = json['verificationCode']?.toString().trim();
     return NotificationHistoryItem(
       id: '${json['id'] ?? ''}',
       packageName: '${json['packageName'] ?? ''}',
@@ -58,6 +63,10 @@ class NotificationHistoryItem {
       ongoing: json['ongoing'] == true,
       notificationKey: '${json['notificationKey'] ?? ''}',
       iconBase64: '${json['iconBase64'] ?? ''}',
+      isVerificationCode: json['isVerificationCode'] == true,
+      verificationCode: verificationCode == null || verificationCode.isEmpty
+          ? null
+          : verificationCode,
     );
   }
 }

@@ -16,6 +16,7 @@
 | **.NET 8 BCL** | Windows | 运行时 | 8.0+ | MIT | 核心协议栈、Socket 网络、多线程、SHA-256、PDF 生成 | **已核验 (合规)** |
 | **Win32 Platform API** | Windows | 系统原生 | System | N/A (Windows OS) | user32/gdi32/shell32 模拟键鼠输入、托盘管理、系统通知 | **已核验 (合规)** |
 | **Microsoft.WindowsAppSDK** | Windows | 运行时 NuGet | 2.4.0 | MIT | WinUI 3、窗口、默认应用和 Windows App SDK 平台能力 | **已核验 (合规)** |
+| **Microsoft vscode-explorer-command** | Windows | 源码参考 / 部分改编 | 2026-09-13 获取的默认分支 | MIT | Windows 11 `IExplorerCommand` COM 激活框架；Hinge 自行实现动态设备子菜单和发送逻辑 | **已核验 (合规，保留版权头)** |
 | **Flutter SDK** | Android | 运行时 | 3.47.x | BSD-3-Clause | 跨平台 Material 3 响应式 UI 框架 | **已核验 (合规)** |
 | **crypto** | Android | 运行时 | ^3.0.7 | BSD-3-Clause | 官方标准库 SHA-256、HMAC 凭据派生与文件分块哈希校验 | **已核验 (合规)** |
 | **dynamic_color** | Android | 运行时 | ^1.9.0 | Apache-2.0 | Flutter 动态配色接口；Android 原生读取系统 Monet 角色 | **已核验 (合规)** |
@@ -57,6 +58,30 @@ Windows 首页的设备品牌标识采用 Wikimedia Commons 中对应品牌的 S
 ## Electron 托盘兼容参考
 
 Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron) 的 `NotifyIconHost`/`NotifyIcon` Windows 实现（MIT License）。Hinge 仅使用 Windows 消息和系统 API 与已安装的第三方客户端交互，没有复制、链接、修改或随包分发 Electron 源码及运行时；因此 Electron 登记为实现参考，不计入 Hinge 的直接或间接发布依赖。
+
+## Microsoft Explorer Command 改编说明
+
+`windows/Hinge.ShellExtension/HingeShellExtension.cpp` 的 WRL COM 激活框架改编自 Microsoft [vscode-explorer-command](https://github.com/microsoft/vscode-explorer-command)（MIT License），并保留 Microsoft 版权与 MIT 声明。Hinge 没有随包分发该仓库或其 WIL/Chromium 依赖；动态机型枚举、当前用户注册表快照、参数转义和 Hinge 进程启动由本项目独立实现。
+
+上游版权声明：Copyright (c) Microsoft Corporation. Licensed under the MIT License.
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
 
 ## 审计结论 (License Audit Verdict)
 - **直接运行时三方库数量**：

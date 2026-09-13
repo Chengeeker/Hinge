@@ -4,6 +4,8 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $publishDir = Join-Path $repoRoot 'publish\windows'
 $bundleDir = Join-Path $repoRoot 'tmp\Hinge-win-bundle'
 $nativeOutput = Join-Path $repoRoot 'tmp\Hinge-winui-publish'
+$shellOutput = Join-Path $repoRoot 'tmp\Hinge-shell-publish'
+$sparseStage = Join-Path $repoRoot 'tmp\Hinge-sparse-package'
 
 Write-Host '=== Building Hinge WinUI 3 Windows Release Bundle ===' -ForegroundColor Cyan
 
@@ -29,6 +31,24 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+if (Test-Path -LiteralPath $shellOutput) {
+    Remove-Item -LiteralPath $shellOutput -Recurse -Force
+}
+New-Item -ItemType Directory -Path $shellOutput -Force | Out-Null
+$msbuild = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe'
+if (-not (Test-Path -LiteralPath $msbuild)) {
+    throw "未找到 Visual Studio Build Tools：$msbuild"
+}
+$shellProject = Join-Path $repoRoot 'windows\Hinge.ShellExtension\Hinge.ShellExtension.vcxproj'
+& $msbuild $shellProject /p:Configuration=Release /p:Platform=x64 "/p:OutDir=$shellOutput\" /m
+if ($LASTEXITCODE -ne 0) {
+    throw 'Windows 11 右键菜单原生组件构建失败。'
+}
+$shellDll = Join-Path $shellOutput 'Hinge.ShellExtension.dll'
+if (-not (Test-Path -LiteralPath $shellDll)) {
+    throw "未找到 Windows 11 右键菜单组件：$shellDll"
+}
+
 $executablePath = Join-Path $nativeOutput 'Hinge.exe'
 if (-not (Test-Path -LiteralPath $executablePath)) {
     Write-Error "WinUI 3 输出中未找到 Hinge.exe：$nativeOutput"
@@ -44,8 +64,105 @@ if (Test-Path -LiteralPath $bundleDir) {
 New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
 New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 Copy-Item -Path (Join-Path $nativeOutput '*') -Destination $bundleDir -Recurse -Force
+Copy-Item -LiteralPath $shellDll -Destination $bundleDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\allow_hinge_firewall.ps1') -Destination $bundleDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\Uninstall-Hinge.ps1') -Destination $bundleDir -Force
+
+# Windows 11's first-level context menu requires package identity even for an
+# unpackaged Win32 app. The sparse identity remains an internal installer
+# component; the public deliverables stay EXE + portable ZIP.
+if (Test-Path -LiteralPath $sparseStage) {
+    Remove-Item -LiteralPath $sparseStage -Recurse -Force
+}
+New-Item -ItemType Directory -Path (Join-Path $sparseStage 'Assets') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot 'windows\Hinge.SparsePackage\AppxManifest.xml') -Destination $sparseStage -Force
+Copy-Item -LiteralPath $shellDll -Destination (Join-Path $sparseStage 'Hinge.ShellExtension.dll') -Force
+
+Add-Type -AssemblyName System.Drawing.Common
+
+function Write-PackageLogo {
+    param(
+        [Parameter(Mandatory = $true)] [string] $Source,
+        [Parameter(Mandatory = $true)] [string] $Destination,
+        [Parameter(Mandatory = $true)] [int] $Size
+    )
+
+    $sourceImage = [System.Drawing.Image]::FromFile($Source)
+    $bitmap = [System.Drawing.Bitmap]::new(
+        $Size,
+        $Size,
+        [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.Clear([System.Drawing.Color]::Transparent)
+        $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+        $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+        $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $graphics.DrawImage($sourceImage, 0, 0, $Size, $Size)
+        $bitmap.Save($Destination, [System.Drawing.Imaging.ImageFormat]::Png)
+    }
+    finally {
+        $graphics.Dispose()
+        $bitmap.Dispose()
+        $sourceImage.Dispose()
+    }
+}
+
+$packageIconSource = Join-Path $repoRoot 'windows\Hinge.App\Assets\app_icon.png'
+$packageAssets = Join-Path $sparseStage 'Assets'
+Write-PackageLogo -Source $packageIconSource -Destination (Join-Path $packageAssets 'StoreLogo.png') -Size 50
+Write-PackageLogo -Source $packageIconSource -Destination (Join-Path $packageAssets 'Square44x44Logo.png') -Size 44
+Write-PackageLogo -Source $packageIconSource -Destination (Join-Path $packageAssets 'Square150x150Logo.png') -Size 150
+
+foreach ($targetSize in @(16, 20, 24, 32, 40, 48, 64, 256)) {
+    Write-PackageLogo `
+        -Source $packageIconSource `
+        -Destination (Join-Path $packageAssets "Square44x44Logo.targetsize-$targetSize.png") `
+        -Size $targetSize
+    Write-PackageLogo `
+        -Source $packageIconSource `
+        -Destination (Join-Path $packageAssets "Square44x44Logo.targetsize-$($targetSize)_altform-unplated.png") `
+        -Size $targetSize
+}
+
+$certificateSubject = 'CN=Hinge Package Identity'
+$signingCertificate = Get-ChildItem -Path Cert:\CurrentUser\My |
+    Where-Object { $_.Subject -eq $certificateSubject -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddMonths(3) } |
+    Sort-Object NotAfter -Descending |
+    Select-Object -First 1
+if ($null -eq $signingCertificate) {
+    $signingCertificate = New-SelfSignedCertificate `
+        -Type Custom `
+        -Subject $certificateSubject `
+        -FriendlyName 'Hinge sparse package signing' `
+        -CertStoreLocation 'Cert:\CurrentUser\My' `
+        -KeyAlgorithm RSA `
+        -KeyLength 3072 `
+        -HashAlgorithm SHA256 `
+        -KeyUsage DigitalSignature `
+        -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3') `
+        -NotAfter (Get-Date).AddYears(10)
+}
+$publicCertificate = Join-Path $bundleDir 'Hinge.Identity.cer'
+Export-Certificate -Cert $signingCertificate -FilePath $publicCertificate -Force | Out-Null
+
+$sdkBin = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64'
+$makeAppx = Join-Path $sdkBin 'makeappx.exe'
+$signTool = Join-Path $sdkBin 'signtool.exe'
+if (-not (Test-Path -LiteralPath $makeAppx) -or -not (Test-Path -LiteralPath $signTool)) {
+    throw "未找到 Windows SDK 打包工具：$sdkBin"
+}
+$identityPackage = Join-Path $bundleDir 'Hinge.Identity.msix'
+& $makeAppx pack /d $sparseStage /p $identityPackage /nv /o
+if ($LASTEXITCODE -ne 0) {
+    throw 'Hinge 稀疏身份包构建失败。'
+}
+& $signTool sign /fd SHA256 /sha1 $signingCertificate.Thumbprint /s My $identityPackage
+if ($LASTEXITCODE -ne 0) {
+    throw 'Hinge 稀疏身份包签名失败。'
+}
 
 $zipPath = Join-Path $publishDir 'Hinge-Windows.zip'
 # Put the runnable files at the archive root so extracting the ZIP does not

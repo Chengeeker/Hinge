@@ -207,6 +207,12 @@ public sealed class RemoteNotificationHistoryItem
 
     [JsonPropertyName("iconBase64")]
     public string IconBase64 { get; set; } = string.Empty;
+
+    [JsonPropertyName("isVerificationCode")]
+    public bool IsVerificationCode { get; set; }
+
+    [JsonPropertyName("verificationCode")]
+    public string? VerificationCode { get; set; }
 }
 
 public sealed class RemoteNotificationHistoryPage

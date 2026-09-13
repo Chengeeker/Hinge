@@ -22,6 +22,45 @@ $startMenuShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Progra
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hinge.lnk'
 Remove-Item -LiteralPath $startMenuShortcut, $desktopShortcut -Force
 Remove-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hinge' -Recurse -Force
+$identityCertificateThumbprint = $null
+try {
+    $snapshot = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Hinge\ExplorerSend')
+    if ($null -ne $snapshot) {
+        try { $identityCertificateThumbprint = $snapshot.GetValue('CertificateThumbprint') } finally { $snapshot.Dispose() }
+    }
+} catch {}
+try {
+    Get-AppxPackage -Name 'Hinge.Office.Identity' | Remove-AppxPackage
+} catch {}
+try {
+    # Use the .NET registry API here because PowerShell's Registry provider
+    # treats the `*` file-class key as a wildcard even with LiteralPath.
+    $classesShell = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey(
+        'Software\Classes\*\shell',
+        $true)
+    if ($null -ne $classesShell) {
+        try {
+            $classesShell.DeleteSubKeyTree('HingeSend', $false)
+        } finally {
+            $classesShell.Dispose()
+        }
+    }
+} catch {}
+Remove-Item -LiteralPath 'HKCU:\Software\Hinge\ExplorerSend' -Recurse -Force
+if (-not [string]::IsNullOrWhiteSpace($identityCertificateThumbprint)) {
+    try {
+        Get-ChildItem -Path Cert:\CurrentUser\TrustedPeople | Where-Object {
+            $_.Thumbprint -eq $identityCertificateThumbprint -and $_.Subject -eq 'CN=Hinge Package Identity'
+        } | Remove-Item -Force
+    } catch {}
+    try {
+        Start-Process -FilePath 'certutil.exe' `
+            -ArgumentList @('-delstore', 'TrustedPeople', $identityCertificateThumbprint) `
+            -Verb RunAs `
+            -WindowStyle Hidden `
+            -Wait
+    } catch {}
+}
 
 $cleanup = Join-Path $env:TEMP ("Hinge-Uninstall-{0}.ps1" -f [Guid]::NewGuid())
 $cleanupScript = @"

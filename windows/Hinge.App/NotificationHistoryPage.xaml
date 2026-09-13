@@ -21,7 +21,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <ComboBox x:Name="ApplicationFilter" Width="180" PlaceholderText="全部应用" SelectionChanged="ApplicationFilter_SelectionChanged" />
-                        <ComboBox x:Name="SortOptions" Width="148" SelectedIndex="0" SelectionChanged="SortOptions_SelectionChanged">
+                        <ComboBox x:Name="SortOptions" Width="148" SelectedIndex="1" SelectionChanged="SortOptions_SelectionChanged">
                             <ComboBoxItem Content="时间（早到晚）" Tag="asc" />
                             <ComboBoxItem Content="时间（晚到早）" Tag="desc" />
                         </ComboBox>

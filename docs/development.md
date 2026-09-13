@@ -41,7 +41,7 @@ Hinge 是一个局域网优先的 Android + Windows 跨设备工作台。当前�
 - Android 的 `SmsNotificationListenerService` 同时承载短信兼容转发和通用通知历史，两者使用独立开关；
 - 通知历史必须先通过系统“通知访问”授权，再由用户在“工作区 > 通知历史”开启采集；正文、包名、时间、应用名称和通知 key 写入应用私有 SQLite，不写共享存储和日志；
 - Windows 通过 `notificationHistory` 工作区命令按页读取，首屏最多 100 条，继续滚动才请求后续记录；默认最早在上，支持倒序和包名筛选；
-- Windows 点击微信/QQ通知时只负责唤醒桌面客户端：先检查当前 `Weixin.exe`/`WeChat.exe`/`QQ.exe`/`QQNT.exe` 进程，只对已找到的主窗口执行必要的恢复和置前，不枚举或操作子窗口，不发送 `mqq://`、`weixin://` 深链，也不回传 Android `PendingIntent`，避免 QQ 多进程渲染窗口被错误操作而卡死。没有现有进程时才启动已安装的可执行文件；找不到客户端时保持无操作，不弹出 Windows 的“获取打开此链接的应用”对话框；
+- Windows 点击微信/QQ通知时只负责唤醒桌面客户端：先检查当前 `Weixin.exe`/`WeChat.exe`/`QQ.exe`/`QQNT.exe`/`QQEX.exe` 进程。客户端已经自行显示的带标题顶层窗口只执行标准前台激活；隐藏状态绝不调用 `ShowWindow`/`ShowWindowAsync`，而是定位同进程的 `Electron_NotifyIconHostWindow`，通过 `Shell_NotifyIconGetRect` 查询真实通知图标 ID，再投递 Electron `WM_APP + 1` 的左键单击回调，由客户端自己的托盘处理器创建或恢复界面。Hinge 不绑定跨进程输入队列、不强制置顶、不显示 Chromium 内部窗口，也不发送 `mqq://`、`weixin://` 深链或回传 Android `PendingIntent`。只要匹配窗口或进程已经存在就绝不启动第二个客户端；真正启动前再次检查运行状态，只有完全没有匹配进程时才启动已安装的可执行文件；
 - `notificationHistoryAction` 使用 `action=open`、`action=delete` 和 `action=clear` 三种动作；Windows 和 Android 通知历史页都支持单条删除，顶部支持确认后清空，删除后必须重新读取总数、分页和应用筛选统计；
 - 新增或修改通知历史字段时，必须同步修改 `NotificationHistoryStore`、`notification_history_model.dart`、`WorkspaceRemoteClient.cs`、Windows 页面和 `protocol/notification.md`。
 
@@ -80,7 +80,7 @@ git diff --check
 
 ## 7. 构建发布版
 
-当前仓库对应的历史开发版为 `1.0.32`，GitHub 标签为 `v1.0.32-dev.1`；Android build number 为 `33`，Windows 文件版本为 `1.0.32.0`。后续可交付版本直接使用稳定版本号（例如 `1.0.33`），GitHub Release 直接标记为 `Latest`，不再使用 `-dev`、`-pre` 后缀或 Pre-release 标签。
+当前可交付版本为 `1.0.38`，Android build number 为 `39`，Windows 文件版本为 `1.0.38.0`。上一版 `v1.0.37` 作为历史稳定版保留；后续可交付版本继续直接使用稳定版本号，GitHub Release 直接标记为 `Latest`，不使用 `-dev`、`-pre` 后缀或 Pre-release 标签。
 
 ```powershell
 Copy-Item android/android/key.properties.example android/android/key.properties

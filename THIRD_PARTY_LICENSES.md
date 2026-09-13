@@ -54,6 +54,10 @@ Windows 首页的设备品牌标识采用 Wikimedia Commons 中对应品牌的 S
 
 所以本次改动新增的第三方运行时依赖为 **0**。如果未来改为直接使用上述任一项目，必须在引入同一提交中补充精确版本、许可证文本和对应 NOTICE，并同步修改 README。
 
+## Electron 托盘兼容参考
+
+Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron) 的 `NotifyIconHost`/`NotifyIcon` Windows 实现（MIT License）。Hinge 仅使用 Windows 消息和系统 API 与已安装的第三方客户端交互，没有复制、链接、修改或随包分发 Electron 源码及运行时；因此 Electron 登记为实现参考，不计入 Hinge 的直接或间接发布依赖。
+
 ## 审计结论 (License Audit Verdict)
 - **直接运行时三方库数量**：
   - Windows 端运行时：`Microsoft.WindowsAppSDK` 1 个外部 NuGet 依赖，其他核心逻辑使用 BCL 与操作系统原生能力。

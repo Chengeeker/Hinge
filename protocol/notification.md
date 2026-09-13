@@ -141,9 +141,9 @@ Windows 端按页读取，不把通知历史复制到公共文件目录。
 
 桌面端点击历史记录使用 `notificationHistoryAction`。打开动作的载荷至少包含
 `action: "open"`、`packageName` 和 `notificationKey`。对于微信/QQ，Windows 端只负责检查
-`Weixin.exe`/`WeChat.exe`/`QQ.exe`/`QQNT.exe` 是否已经运行，并只唤醒匹配进程的主窗口；不枚举或操作子窗口，
+`Weixin.exe`/`WeChat.exe`/`QQ.exe`/`QQNT.exe`/`QQEX.exe` 是否已经运行。已经由客户端显示的带标题顶层窗口只执行标准前台激活；客户端隐藏到托盘时，Windows 端定位同进程的 `Electron_NotifyIconHostWindow`，使用 `Shell_NotifyIconGetRect` 查询真实通知图标 ID，并投递 Electron `WM_APP + 1` 的左键单击回调，由客户端自己的托盘处理器恢复界面。Hinge 不显示隐藏的 Chromium 窗口、不绑定跨进程输入队列、不强制置顶，也不枚举或操作子窗口，
 不发送 `weixin://`/`mqq://` 深链，也不回传 Android 原通知入口，避免客户端进入额外登录、聊天或渲染界面。
-如果客户端没有运行，Windows 才从已发现的安装路径启动它；找不到客户端时安全失败，不弹出 Windows 的“获取打开此链接的应用”对话框，也不伪造聊天定位。
+只有完全没有匹配进程时，Windows 才从已发现的安装路径启动它；只要客户端进程已经存在但暂时无法激活，Windows 也不启动第二个实例，避免出现新的登录界面。找不到客户端时安全失败，不弹出 Windows 的“获取打开此链接的应用”对话框，也不伪造聊天定位。
 
 删除动作使用同一个工具命令，单条删除只需传记录主键：
 

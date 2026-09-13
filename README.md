@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前开发版：`v1.0.32`（安装包运行版本为 `1.0.32`）
+- 当前版本：`v1.0.38`（安装包运行版本为 `1.0.38`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -153,6 +153,8 @@ tests/                   跨模块测试资料
 ## 开源组件与合规说明
 
 Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `android/pubspec.lock`、各 `.csproj` 和构建工具锁定结果为准。间接依赖由 Flutter/Dart、NuGet 和 Android 构建工具解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
+
+Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron)（MIT）公开的 `NotifyIconHost` 消息分发实现，用于识别 `Electron_NotifyIconHostWindow`、通知图标 ID 和托盘单击回调。Hinge 没有复制或打包 Electron 源码，也没有新增 Electron 运行时依赖；详细边界见 [依赖说明](docs/dependencies.md)。
 
 ### 随应用使用的直接组件
 

@@ -78,9 +78,9 @@ git diff --check
 
 通过测试不等于完成真机验收。至少还要覆盖：同一 Wi-Fi 的 UDP/TCP 发现、多个网卡、防火墙、锁屏/切后台、Wi-Fi 切换、大型媒体库、多文件传输和重复文件名。
 
-## 7. 构建开发版
+## 7. 构建发布版
 
-当前开发版产品版本为 `1.0.31`，GitHub 标签为 `v1.0.31-dev.1`。Android build number 为 `32`，Windows 文件版本为 `1.0.31.0`。
+当前仓库对应的历史开发版为 `1.0.32`，GitHub 标签为 `v1.0.32-dev.1`；Android build number 为 `33`，Windows 文件版本为 `1.0.32.0`。后续可交付版本直接使用稳定版本号（例如 `1.0.33`），GitHub Release 直接标记为 `Latest`，不再使用 `-dev`、`-pre` 后缀或 Pre-release 标签。
 
 ```powershell
 Copy-Item android/android/key.properties.example android/android/key.properties
@@ -109,7 +109,7 @@ Copy-Item android/android/key.properties.example android/android/key.properties
 1. 同步 `android/pubspec.yaml`、`android/lib/core/constants.dart`、`windows/Hinge.Core/Constants.cs`、两个 Windows manifest 和 `CHANGELOG.md`；
 2. 运行双端测试和构建，计算发布资产 SHA-256；
 3. 提交源码、协议和文档到 `main`；
-4. 推送标签并创建 GitHub pre-release，上传 APK、EXE 和 ZIP；
+4. 后续稳定版本推送版本标签并创建 GitHub Release，直接标记为 `Latest`，上传 APK、EXE 和 ZIP；只有明确需要保留测试快照时才使用历史开发版的 Pre-release 形式；
 5. 发布说明只写已经验证的内容，并明确真实设备仍需验收的边界。
 
 ## 9. 目前不能过度宣传的能力

@@ -32,7 +32,7 @@ Windows 常驻稳定性专项验证还必须覆盖：设备主动断开、网络
 
 ## 最近一次本地构建记录
 
-- 2026-09-14，版本 `1.1.7+47`：Android arm64 APK 构建、签名和脚本校验成功；Windows EXE 安装器与便携 ZIP 构建成功；Windows 常驻连接发送竞态与资源管理器命名管道死锁修复已编译进包。
+- 2026-09-14，版本 `1.1.7+47`：Android arm64 APK 构建、签名和脚本校验成功；Windows EXE 安装器与便携 ZIP 构建成功；本版包含 Windows 月视图日历重做、Android 多 Provider/OEM 日历补全、统一主题可读性和页面顶部间距修复，以及 Windows 常驻连接发送竞态、资源管理器菜单更新稳定性和命名管道死锁修复。
 - `publish/Hinge.apk` SHA-256：`90823AA3D4A1CA766D728182475300E9F2C77D07A70E124BEC982D5F332C62E7`，20,188,321 字节；
 - `publish/windows/Hinge-Setup.exe` SHA-256：`D706972A096328B0A63621FDDC0D65A9496DD6AB65FBECBED60959AF1F1638C6`，201,442,831 字节；
 - `publish/windows/Hinge-Windows.zip` SHA-256：`AC341221EDFBA72EA8133DA45518864399110CBECF490EAADCCB07370FF4E156`，129,675,756 字节。

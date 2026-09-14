@@ -179,7 +179,7 @@ Windows 测试使用 [xUnit](https://github.com/xunit/xunit) `2.5.3`、[Microsof
 - 图片尺寸与 EXIF 使用 Android Framework `BitmapFactory` / `ExifInterface`；
 - Windows 媒体打开、文件属性和压缩使用 WinRT / .NET BCL。
 
-如果未来真正引入上述项目或任何新的第三方组件，必须在同一个提交中锁定版本、登记许可证和 NOTICE 要求，并同步更新 `THIRD_PARTY_LICENSES.md` 和本节。
+如果后续确实引入新的第三方组件，会在提交中固定版本，并在 `THIRD_PARTY_LICENSES.md` 中记录许可证和 NOTICE 要求。
 
 ### 品牌 SVG 与签名材料
 

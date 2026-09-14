@@ -16,4 +16,4 @@
 
 - 代码风格遵循各技术栈官方标准规范（Dart linter / C# .editorconfig 规则）。
 - 任何新增特性必须提供对应的单元测试或集成验证脚本。
-- 引入任何第三方依赖前，必须先更新 THIRD_PARTY_LICENSES.md 和 docs/dependencies.md，并在 PR 中进行依赖必要性说明。
+- 引入任何第三方依赖前，必须先更新 `THIRD_PARTY_LICENSES.md`，并在 PR 中进行依赖必要性说明；实现约束和发布流程以维护者本机的 `D:\App\开发文档\Hinge.md` 为准。

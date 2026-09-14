@@ -47,7 +47,7 @@
 - Android Monet 动态取色读取系统 `system_*` 颜色角色，关闭时使用预置主题。
 - 本轮验证：`flutter analyze` 通过、Flutter 测试 47/47 通过、Windows xUnit 53/53 通过、Windows Release 编译通过；APK V2/V3 签名验证通过。
 
-完整的当前状态、产物路径和真机验收边界见 `docs/development-status.md`。
+完整的当前状态、产物路径和真机验收边界见维护者本机的 `D:\App\开发文档\Hinge.md`。
 
 ## 2. 文档指令与用户请求的区分
 
@@ -169,7 +169,7 @@
 
 ### 5.4 文档文件被污染
 
-`docs/compatibility.md` 的前半段是编码规范，后半段混入了 PowerShell `Out-File` 命令文本和兼容性表；仓库没有对应的 `docs/coding_rules.md`。这不是有效的兼容性矩阵，应在修改功能前恢复为单一、可渲染的文档。
+历史审计曾发现 `docs/compatibility.md` 与 `docs/coding_rules.md` 内容不一致；这组内部文档已不再随仓库发布，当前约束统一维护在 `D:\App\开发文档\Hinge.md`，不再以旧的 `docs/` 文件作为依据。
 
 ## 6. L4 → L5 真机缺口清单
 

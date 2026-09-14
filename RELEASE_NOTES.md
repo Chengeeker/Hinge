@@ -27,7 +27,7 @@
 
 - Windows 11 原生菜单的 COM 激活框架改编自 Microsoft `vscode-explorer-command`（MIT），保留上游版权声明；设备枚举、快照、单实例传输和文件分类由 Hinge 实现；
 - QQ/微信托盘唤醒仅参考 Electron（MIT）的公开消息约定，没有复制或打包 Electron 源码和运行时；
-- 完整依赖和商标资源说明见仓库中的 `THIRD_PARTY_LICENSES.md` 与 `docs/dependencies.md`。
+- 完整依赖和商标资源说明见仓库中的 `THIRD_PARTY_LICENSES.md`。
 
 ## 验证边界
 

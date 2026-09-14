@@ -126,7 +126,6 @@ dotnet test windows/Hinge.sln --configuration Release
 android/                 Flutter Android 客户端与 Android 原生桥
 windows/                 WinUI 3 客户端、核心层、平台层和测试
 protocol/                跨端协议和专题说明
-docs/                    架构、开发状态、兼容性和发布流程
 installer/               EXE 安装器源码
 scripts/                 构建、防火墙和卸载脚本
 tests/                   跨模块测试资料
@@ -134,12 +133,7 @@ tests/                   跨模块测试资料
 
 ## 文档入口
 
-- [开发文档](docs/development.md)：从源码、协议、测试到发布的日常开发入口；
-- [开发状态](docs/development-status.md)：当前实现、验证结果和真实设备边界；
-- [系统架构](docs/architecture.md)：UI、Feature、Core、协议和平台层边界；
-- [兼容性基准](docs/compatibility.md)：Android 厂商、Windows 网络和权限风险；
-- [发布流程](docs/release.md)：版本、签名、构建产物和 GitHub Release 约定；
-- [依赖说明](docs/dependencies.md)：第三方依赖和许可证；
+- 开发文档：本机统一入口为 `D:\App\开发文档\Hinge.md`，不随仓库发布；
 - [第三方许可证登记](THIRD_PARTY_LICENSES.md)：实际随项目发布或参与构建的依赖清单；
 - [协议说明](protocol/protocol.md)：跨端帧和传输约定；
 - [安全策略](SECURITY.md)：局域网边界、报告问题和敏感配置；
@@ -155,7 +149,7 @@ tests/                   跨模块测试资料
 
 Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `android/pubspec.lock`、各 `.csproj` 和构建工具锁定结果为准。间接依赖由 Flutter/Dart、NuGet 和 Android 构建工具解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
-Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron)（MIT）公开的 `NotifyIconHost` 消息分发实现，用于识别 `Electron_NotifyIconHostWindow`、通知图标 ID 和托盘单击回调。Hinge 没有复制或打包 Electron 源码，也没有新增 Electron 运行时依赖；详细边界见 [依赖说明](docs/dependencies.md)。
+Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron)（MIT）公开的 `NotifyIconHost` 消息分发实现，用于识别 `Electron_NotifyIconHostWindow`、通知图标 ID 和托盘单击回调。Hinge 没有复制或打包 Electron 源码，也没有新增 Electron 运行时依赖；详细边界见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
 Windows 11 第一层资源管理器菜单的 COM 激活框架改编自 Microsoft 的 [vscode-explorer-command](https://github.com/microsoft/vscode-explorer-command)（MIT）。Hinge 在此基础上自行实现本地连接快照、动态机型子菜单、多文件参数传递和单实例发送；对应版权与使用边界已登记在 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
@@ -185,7 +179,7 @@ Windows 测试使用 [xUnit](https://github.com/xunit/xunit) `2.5.3`、[Microsof
 - 图片尺寸与 EXIF 使用 Android Framework `BitmapFactory` / `ExifInterface`；
 - Windows 媒体打开、文件属性和压缩使用 WinRT / .NET BCL。
 
-如果后续确实引入新的第三方组件，会在提交中固定版本，并在 `THIRD_PARTY_LICENSES.md` 中记录许可证和 NOTICE 要求。
+如果未来真正引入上述项目或任何新的第三方组件，必须在同一个提交中锁定版本、登记许可证和 NOTICE 要求，并同步更新 `THIRD_PARTY_LICENSES.md` 和本节。
 
 ### 品牌 SVG 与签名材料
 

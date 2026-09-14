@@ -6,39 +6,130 @@
     <Grid x:Name="RootGrid">
         <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
             <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
-                <Grid ColumnSpacing="16">
+                <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel Spacing="4">
-                    <TextBlock Text="读取手机日历权限允许的本地日程。日期下方的标记表示当天有安排，点击日期查看详情。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                </StackPanel>
-                    <Button x:Name="RefreshButton" Grid.Column="1" Content="刷新日程" Click="RefreshButton_Click" VerticalAlignment="Center" />
-                </Grid>
-
-                <InfoBar x:Name="StatusInfoBar" IsOpen="True" IsClosable="False" Severity="Informational" Title="日历" Message="等待连接设备。" />
-
-                <Grid ColumnSpacing="16">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="1.6*" MinWidth="0" />
-                        <ColumnDefinition Width="*" MinWidth="0" />
                     </Grid.ColumnDefinitions>
-                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
-                        <CalendarView
-                            x:Name="MonthCalendar"
-                            SelectionMode="Single"
-                            IsGroupLabelVisible="True"
-                            CalendarViewDayItemChanging="MonthCalendar_DayItemChanging"
-                            SelectedDatesChanged="MonthCalendar_SelectedDatesChanged" />
-                    </Border>
-                    <Border Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
-                        <StackPanel Spacing="12">
-                            <TextBlock x:Name="SelectedDateText" Text="当天日程" FontSize="20" FontWeight="SemiBold" />
-                            <ListView x:Name="EventsList" SelectionMode="None" />
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Button
+                                x:Name="PreviousMonthButton"
+                                Width="32"
+                                Height="32"
+                                Padding="0"
+                                HorizontalContentAlignment="Center"
+                                VerticalContentAlignment="Center"
+                                Click="PreviousMonthButton_Click"
+                                ToolTipService.ToolTip="上个月">
+                                <SymbolIcon Symbol="Previous" />
+                            </Button>
+                            <TextBlock
+                                x:Name="MonthTitle"
+                                VerticalAlignment="Center"
+                                FontSize="28"
+                                FontWeight="SemiBold"
+                                Text="2026年9月" />
+                            <Button
+                                x:Name="NextMonthButton"
+                                Width="32"
+                                Height="32"
+                                Padding="0"
+                                HorizontalContentAlignment="Center"
+                                VerticalContentAlignment="Center"
+                                Click="NextMonthButton_Click"
+                                ToolTipService.ToolTip="下个月">
+                                <SymbolIcon Symbol="Next" />
+                            </Button>
                         </StackPanel>
-                    </Border>
+                        <TextBlock
+                            x:Name="CalendarSummaryText"
+                            FontSize="14"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="连接 Android 手机后显示日程。" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button
+                            x:Name="RefreshButton"
+                            Width="36"
+                            Height="36"
+                            Padding="0"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            Click="RefreshButton_Click"
+                            ToolTipService.ToolTip="刷新日程"
+                            AutomationProperties.Name="刷新日程">
+                            <SymbolIcon Symbol="Refresh" />
+                        </Button>
+                        <Button
+                            x:Name="TodayButton"
+                            Width="36"
+                            Height="36"
+                            Padding="0"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            Click="TodayButton_Click"
+                            ToolTipService.ToolTip="跳转到今天"
+                            AutomationProperties.Name="跳转到今天">
+                            <SymbolIcon Symbol="GoToToday" />
+                        </Button>
+                        <Button
+                            x:Name="CreateButton"
+                            Width="36"
+                            Height="36"
+                            Padding="0"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            Click="CreateButton_Click"
+                            ToolTipService.ToolTip="创建新日程"
+                            AutomationProperties.Name="创建新日程">
+                            <SymbolIcon Symbol="Add" />
+                        </Button>
+                        <Button
+                            x:Name="JumpDateButton"
+                            Width="36"
+                            Height="36"
+                            Padding="0"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            Click="JumpDateButton_Click"
+                            ToolTipService.ToolTip="跳转到日期"
+                            AutomationProperties.Name="跳转到日期">
+                            <SymbolIcon Symbol="Calendar" />
+                        </Button>
+                    </StackPanel>
                 </Grid>
+
+                <Border
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Grid x:Name="CalendarGrid" Padding="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="44" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid x:Name="WeekdayHeaderGrid" Grid.Row="0" />
+                        <Grid x:Name="MonthCellsGrid" Grid.Row="1" MinHeight="480" />
+                    </Grid>
+                </Border>
+
+                <Border
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="20">
+                    <StackPanel Spacing="12">
+                        <TextBlock
+                            x:Name="SelectedDateText"
+                            FontSize="20"
+                            FontWeight="SemiBold"
+                            Text="当天日程" />
+                        <ListView x:Name="EventsList" SelectionMode="None" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
     </Grid>

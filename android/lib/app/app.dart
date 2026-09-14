@@ -706,11 +706,19 @@ class _DevicesScreenState extends State<DevicesScreen>
   bool _showMobileWorkspaceOverview = false;
   String? _mobileWorkspaceFocus;
   bool _permissionPromptShown = false;
-  bool _userDisconnected = false;
+  // A manual disconnect is an explicit user decision for this process
+  // lifetime. Keep it per device so one device cannot suppress another, and
+  // deliberately do not persist it: a real process restart is the requested
+  // "exit refresh" that re-enables historical reconnect.
+  final Set<String> _manualDisconnectSuppressedDeviceIds = <String>{};
   bool _resumeReconnectScheduled = false;
   final Map<String, DateTime> _automaticConnectAttempts = <String, DateTime>{};
   Timer? _historicalReconnectTimer;
   int _connectionAttemptGeneration = 0;
+
+  bool _isHistoricalReconnectSuppressed(String? deviceId) =>
+      deviceId != null &&
+      _manualDisconnectSuppressedDeviceIds.contains(deviceId);
 
   final TextEditingController _ipController = TextEditingController();
 
@@ -822,18 +830,18 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   Future<void> _reconnectAfterResume() async {
     if (_resumeReconnectScheduled ||
-        _userDisconnected ||
         _activeConnection?.state == SessionState.connected ||
         _connectingDeviceId != null ||
-        _lastConnectedDevice == null) {
+        _lastConnectedDevice == null ||
+        _isHistoricalReconnectSuppressed(_lastConnectedDevice?.deviceId)) {
       return;
     }
     _resumeReconnectScheduled = true;
     try {
       await Future<void>.delayed(const Duration(milliseconds: 250));
       if (!mounted ||
-          _userDisconnected ||
-          _activeConnection?.state == SessionState.connected) {
+          _activeConnection?.state == SessionState.connected ||
+          _isHistoricalReconnectSuppressed(_lastConnectedDevice?.deviceId)) {
         return;
       }
       final target = _allDevices.cast<Device?>().firstWhere(
@@ -849,8 +857,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Future<void> _maybeAutoConnectHistoricalDevice(List<Device> devices) async {
-    if (_userDisconnected ||
-        _activeConnection?.state == SessionState.connected ||
+    if (_activeConnection?.state == SessionState.connected ||
         _connectingDeviceId != null) {
       return;
     }
@@ -860,7 +867,8 @@ class _DevicesScreenState extends State<DevicesScreen>
           device != null &&
           device.networkAddresses.isNotEmpty &&
           _isDiscovered(device) &&
-          widget.trustStore.isTrusted(device.deviceId),
+          widget.trustStore.isTrusted(device.deviceId) &&
+          !_isHistoricalReconnectSuppressed(device.deviceId),
       orElse: () => null,
     );
     if (candidate == null) return;
@@ -885,8 +893,8 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _scheduleHistoricalReconnect(String? deviceId) {
     if (!mounted ||
-        _userDisconnected ||
         (deviceId != null && !widget.trustStore.isTrusted(deviceId)) ||
+        _isHistoricalReconnectSuppressed(deviceId) ||
         _historicalReconnectTimer != null) {
       return;
     }
@@ -897,8 +905,8 @@ class _DevicesScreenState extends State<DevicesScreen>
         _historicalReconnectTimer = null;
       }
       if (!mounted ||
-          _userDisconnected ||
-          _activeConnection?.state == SessionState.connected) {
+          _activeConnection?.state == SessionState.connected ||
+          _isHistoricalReconnectSuppressed(deviceId)) {
         return;
       }
       unawaited(
@@ -1295,12 +1303,23 @@ class _DevicesScreenState extends State<DevicesScreen>
   Future<void> _handleReverseConnectionRequest(
     DiscoveryConnectionRequest request,
   ) async {
+    final deviceId = request.message.deviceId;
     if (!mounted ||
-        request.message.deviceId == widget.localIdentity.deviceId ||
+        deviceId == widget.localIdentity.deviceId ||
         (request.message.automaticReconnect &&
-            !widget.trustStore.isTrusted(request.message.deviceId)) ||
-        widget.sessionManager.connectionForDevice(request.message.deviceId) !=
-            null) {
+            (!widget.trustStore.isTrusted(deviceId) ||
+                _isHistoricalReconnectSuppressed(deviceId)))) {
+      return;
+    }
+
+    // A manual request from the other side is an explicit user action and is
+    // allowed to override a previous local disconnect. Automatic requests do
+    // not clear the gate, otherwise the peer could immediately undo the
+    // user's disconnect by retrying its historical session.
+    if (!request.message.automaticReconnect) {
+      _manualDisconnectSuppressedDeviceIds.remove(deviceId);
+    }
+    if (widget.sessionManager.connectionForDevice(deviceId) != null) {
       return;
     }
 
@@ -1310,8 +1329,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     while (_connectingDeviceId != null && DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 120));
       if (!mounted ||
-          widget.sessionManager.connectionForDevice(request.message.deviceId) !=
-              null) {
+          widget.sessionManager.connectionForDevice(deviceId) != null) {
         return;
       }
     }
@@ -1320,14 +1338,11 @@ class _DevicesScreenState extends State<DevicesScreen>
     final device = widget.discoveryService.registry.devices
         .cast<Device?>()
         .firstWhere(
-          (candidate) => candidate?.deviceId == request.message.deviceId,
+          (candidate) => candidate?.deviceId == deviceId,
           orElse: () => null,
-    );
+        );
     if (device != null) {
-      await _connect(
-        device,
-        automatic: request.message.automaticReconnect,
-      );
+      await _connect(device, automatic: request.message.automaticReconnect);
     }
   }
 
@@ -1335,6 +1350,14 @@ class _DevicesScreenState extends State<DevicesScreen>
     SessionConnection connection,
     SessionPeerInfo peer,
   ) {
+    // Direct TCP can arrive before (or without) the UDP reverse-request
+    // marker. Apply the same manual-disconnect gate after identity validation
+    // so an automatic reconnect cannot bypass the request-level check.
+    if (_isHistoricalReconnectSuppressed(peer.deviceId)) {
+      connection.dispose();
+      return;
+    }
+
     // 用户已经主动建立了这条局域网会话，连接本身就是授权动作。保留
     // TrustStore 作为底层兼容层，让通知、剪贴板等旧的信任检查继续工作，
     // 但不再要求用户额外完成一套“配对”流程。
@@ -1369,7 +1392,6 @@ class _DevicesScreenState extends State<DevicesScreen>
 
     if (!mounted) return;
     _lastConnectedDevice = device;
-    _userDisconnected = false;
     setState(() {
       final index = _registryDevices.indexWhere(
         (item) => item.deviceId == peer.deviceId,
@@ -1485,6 +1507,14 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Future<void> _connect(Device device, {bool automatic = false}) async {
+    if (automatic && _isHistoricalReconnectSuppressed(device.deviceId)) {
+      return;
+    }
+    if (!automatic) {
+      // A manual connect is the explicit way to re-enable this device during
+      // the current process lifetime.
+      _manualDisconnectSuppressedDeviceIds.remove(device.deviceId);
+    }
     if (device.networkAddresses.isEmpty) {
       _showMessage('还没有收到 ${device.name} 的局域网地址，请先刷新发现或检查同一 Wi-Fi');
       return;
@@ -1495,7 +1525,6 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
     final attemptGeneration = ++_connectionAttemptGeneration;
     _lastConnectedDevice = device;
-    _userDisconnected = false;
     if (_activeDevice?.deviceId == device.deviceId &&
         _activeConnection != null) {
       _showMessage('${device.name} 已连接');
@@ -1556,7 +1585,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         throw StateError(lastError == null ? '没有可用的地址' : '$lastError');
       }
       if (attemptGeneration != _connectionAttemptGeneration ||
-          (automatic && _userDisconnected)) {
+          (automatic && _isHistoricalReconnectSuppressed(device.deviceId))) {
         connection.dispose();
         return;
       }
@@ -1579,7 +1608,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           widget.sessionManager.connectionForDevice(device.deviceId) ??
           connection;
       if (attemptGeneration != _connectionAttemptGeneration ||
-          (automatic && _userDisconnected)) {
+          (automatic && _isHistoricalReconnectSuppressed(device.deviceId))) {
         connection.dispose();
         return;
       }
@@ -1663,13 +1692,19 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _disconnect() {
     final name = _activeDevice?.name ?? '设备';
+    final deviceId =
+        _activeDevice?.deviceId ??
+        _activeConnection?.peerInfo?.deviceId ??
+        _lastConnectedDevice?.deviceId;
+    if (deviceId != null && deviceId.isNotEmpty) {
+      _manualDisconnectSuppressedDeviceIds.add(deviceId);
+    }
     _connectionAttemptGeneration++;
     _cancelHistoricalReconnect();
     _connectionSubscription?.cancel();
     _connectionSubscription = null;
     _activeConnection?.dispose();
     _lastConnectedDevice = null;
-    _userDisconnected = true;
     setState(() {
       _activeConnection = null;
       _activeDevice = null;

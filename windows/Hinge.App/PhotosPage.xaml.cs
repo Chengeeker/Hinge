@@ -55,6 +55,17 @@ public sealed partial class PhotosPage : Page
         PhotosGrid.Loaded += (_, _) => AttachPhotoScrollViewer();
         PhotosGrid.SelectionChanged += (_, _) => UpdatePhotoSelectionSummary();
         Loaded += (_, _) => AttachPhotoScrollViewer();
+        ActualThemeChanged += (_, _) =>
+        {
+            if (_currentAlbum == null && !_timelineMode)
+            {
+                RenderAlbumTiles(_loadVersion);
+            }
+            else
+            {
+                _ = RenderPhotoTilesAsync(_loadVersion);
+            }
+        };
     }
 
     public IReadOnlyList<RemotePhotoItem> GetSelectedPhotos()
@@ -219,7 +230,7 @@ public sealed partial class PhotosPage : Page
                     {
                         Text = "手机相册中没有可读取的相册集。",
                         Padding = new Thickness(16, 24, 16, 24),
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                        Foreground = ThemeBrushes.Secondary(this)
                     }
                 });
             }
@@ -450,7 +461,7 @@ public sealed partial class PhotosPage : Page
                     {
                         Text = emptyMessage,
                         Padding = new Thickness(16, 24, 16, 24),
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                        Foreground = ThemeBrushes.Secondary(this)
                     }
                 });
             }
@@ -623,7 +634,7 @@ public sealed partial class PhotosPage : Page
         {
             Text = details,
             FontSize = 13,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Foreground = ThemeBrushes.Secondary(this),
             TextWrapping = TextWrapping.Wrap
         });
         // This fallback is kept for a page opened without MainWindow's
@@ -1103,7 +1114,7 @@ public sealed partial class PhotosPage : Page
         details.Children.Add(new TextBlock { Text = album.Name, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         var albumSummary = $"{album.Count} 张图片";
         if (album.TotalSizeBytes > 0) albumSummary += $" · {FormatBytes(album.TotalSizeBytes)}";
-        details.Children.Add(new TextBlock { Text = albumSummary, FontSize = 14, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] });
+        details.Children.Add(new TextBlock { Text = albumSummary, FontSize = 14, Foreground = ThemeBrushes.Secondary(this) });
         Grid.SetRow(details, 1);
         tile.Children.Add(details);
         return (tile, image);

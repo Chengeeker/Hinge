@@ -30,6 +30,7 @@ public sealed partial class NotificationHistoryPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+        ActualThemeChanged += (_, _) => RenderItems();
     }
 
     public void Configure(
@@ -175,7 +176,7 @@ public sealed partial class NotificationHistoryPage : Page
                 {
                     Text = "暂无符合条件的通知。",
                     Padding = new Thickness(12, 24, 12, 24),
-                    Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                    Foreground = ThemeBrushes.Secondary(this),
                 },
             });
         }
@@ -234,7 +235,7 @@ public sealed partial class NotificationHistoryPage : Page
             Text = FormatTime(item.Timestamp) +
                 (item.Ongoing ? " · 持续通知" : string.Empty),
             FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Foreground = ThemeBrushes.Secondary(this),
         });
         Grid.SetColumn(details, 1);
         row.Children.Add(details);

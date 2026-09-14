@@ -371,7 +371,6 @@ internal static class Program
     private static string? Install(string installPath)
     {
         StopRunningApp();
-        UnregisterSparseIdentity();
         Directory.CreateDirectory(installPath);
 
         var temporaryZip = Path.Combine(Path.GetTempPath(), $"Hinge-{Guid.NewGuid():N}.zip");
@@ -402,6 +401,7 @@ internal static class Program
         var packagePath = Path.Combine(installPath, "Hinge.Identity.msix");
         var certificatePath = Path.Combine(installPath, "Hinge.Identity.cer");
         var logPath = Path.Combine(installPath, "shell-integration-error.log");
+        var explorerWasStopped = false;
         try
         {
             if (!File.Exists(packagePath) || !File.Exists(certificatePath))
@@ -412,18 +412,18 @@ internal static class Program
             var certificate = new X509Certificate2(certificatePath);
             EnsureMachineCertificateTrusted(certificatePath, certificate.Thumbprint);
 
-            var externalLocation = QuotePowerShellLiteral(installPath);
-            var package = QuotePowerShellLiteral(packagePath);
-            var command =
-                "$ErrorActionPreference='Stop'; " +
-                $"Get-AppxPackage -Name '{SparsePackageName}' | Remove-AppxPackage; " +
-                $"Add-AppxPackage -Path {package} -ExternalLocation {externalLocation}";
-            RunPowerShell(command);
+            // Explorer can keep the previous packaged COM surrogate alive
+            // after an update. Removing the sparse package while that DLL is
+            // still in use is a race: Add-AppxPackage may then fail, while
+            // the rest of the installation continues and leaves the shell
+            // extension intermittently missing. Release Explorer before
+            // replacing the package and start it again in finally below.
+            explorerWasStopped = StopExplorerShell();
+            RegisterSparseIdentity(packagePath, installPath);
             CreateShortcuts(
                 installPath,
                 Path.Combine(installPath, "Hinge.exe"),
                 SparsePackageAppUserModelId);
-            RestartExplorerShell();
 
             using var snapshot = Registry.CurrentUser.CreateSubKey(ExplorerSnapshotPath, writable: true);
             snapshot?.SetValue("ModernMenuRegistered", 1, RegistryValueKind.DWord);
@@ -443,23 +443,74 @@ internal static class Program
                 // Installation itself remains usable through the legacy menu.
             }
         }
+        finally
+        {
+            if (explorerWasStopped)
+            {
+                StartExplorerShell();
+            }
+        }
     }
 
-    private static void RestartExplorerShell()
+    private static void RegisterSparseIdentity(string packagePath, string installPath)
+    {
+        var package = QuotePowerShellLiteral(packagePath);
+        var externalLocation = QuotePowerShellLiteral(installPath);
+        var command =
+            "$ErrorActionPreference='Stop'; " +
+            $"$existing = @(Get-AppxPackage -Name '{SparsePackageName}' -ErrorAction SilentlyContinue); " +
+            "if ($existing.Count -gt 0) { " +
+            "  $existing | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction Stop }; " +
+            "  Start-Sleep -Milliseconds 400; " +
+            "}; " +
+            $"Add-AppxPackage -Path {package} -ExternalLocation {externalLocation} " +
+            "-ForceApplicationShutdown -ForceUpdateFromAnyVersion; " +
+            $"$registered = @(Get-AppxPackage -Name '{SparsePackageName}' -ErrorAction SilentlyContinue); " +
+            "if ($registered.Count -eq 0 -or $registered[0].Status -ne 'Ok') { " +
+            "  throw 'Hinge 稀疏身份包注册后状态不是 Ok。'; " +
+            "}";
+        RunPowerShell(command);
+    }
+
+    private static bool StopExplorerShell()
+    {
+        var currentSession = Process.GetCurrentProcess().SessionId;
+        var foundExplorer = false;
+        foreach (var explorer in Process.GetProcessesByName("explorer"))
+        {
+            try
+            {
+                if (explorer.SessionId != currentSession || explorer.HasExited) continue;
+                foundExplorer = true;
+                explorer.Kill(entireProcessTree: false);
+                explorer.WaitForExit(5000);
+            }
+            catch
+            {
+                // A process race is handled by StartExplorerShell checking
+                // whether a usable shell process is already present.
+            }
+            finally
+            {
+                explorer.Dispose();
+            }
+        }
+
+        return foundExplorer;
+    }
+
+    private static void StartExplorerShell()
     {
         var currentSession = Process.GetCurrentProcess().SessionId;
         foreach (var explorer in Process.GetProcessesByName("explorer"))
         {
             try
             {
-                if (explorer.SessionId != currentSession || explorer.HasExited) continue;
-                explorer.Kill(entireProcessTree: false);
-                explorer.WaitForExit(3000);
+                if (explorer.SessionId == currentSession && !explorer.HasExited) return;
             }
             catch
             {
-                // A locked-down shell or a process race must not make the
-                // Hinge installation fail after the package was registered.
+                // Continue checking the remaining Explorer processes.
             }
             finally
             {
@@ -552,21 +603,6 @@ internal static class Program
         catch
         {
             return false;
-        }
-    }
-
-    private static void UnregisterSparseIdentity()
-    {
-        try
-        {
-            RunPowerShell(
-                "$ErrorActionPreference='SilentlyContinue'; " +
-                $"Get-AppxPackage -Name '{SparsePackageName}' | Remove-AppxPackage");
-        }
-        catch
-        {
-            // A first install has no identity to remove. Registration below
-            // remains the source of truth for the modern context menu.
         }
     }
 

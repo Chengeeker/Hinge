@@ -103,6 +103,18 @@ public sealed class RemoteCalendarEvent
     [JsonPropertyName("location")]
     public string Location { get; set; } = string.Empty;
 
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+
+    [JsonPropertyName("calendarName")]
+    public string CalendarName { get; set; } = string.Empty;
+
+    [JsonPropertyName("eventType")]
+    public string EventType { get; set; } = string.Empty;
+
+    [JsonPropertyName("eventColor")]
+    public long? EventColor { get; set; }
+
     [JsonPropertyName("allDay")]
     public bool AllDay { get; set; }
 }
@@ -401,6 +413,28 @@ public sealed class WorkspaceRemoteClient
 
     public Task<IReadOnlyList<RemoteCalendarEvent>> LoadCalendarAsync(SessionConnection connection) =>
         InvokeListAsync<RemoteCalendarEvent>(connection, "calendarEvents", null);
+
+    public async Task<bool> OpenCalendarCreateAsync(
+        SessionConnection connection,
+        string title,
+        long start,
+        long end,
+        bool allDay,
+        string location)
+    {
+        var raw = await InvokeAsync(
+            connection,
+            "calendarCreate",
+            new Dictionary<string, object?>
+            {
+                ["title"] = title,
+                ["start"] = start,
+                ["end"] = end,
+                ["allDay"] = allDay,
+                ["location"] = location,
+            });
+        return raw.ValueKind == JsonValueKind.True;
+    }
 
     public async Task<RemoteNotificationHistoryPage> LoadNotificationHistoryAsync(
         SessionConnection connection,

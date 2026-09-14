@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Hinge.App;
@@ -21,5 +22,13 @@ public sealed partial class HomePage : Page
     public HomePage()
     {
         InitializeComponent();
+        Loaded += (_, _) => ApplyThemePalette();
+        ActualThemeChanged += (_, _) => ApplyThemePalette();
+    }
+
+    public void ApplyThemePalette()
+    {
+        ActivityInfoBar.Background = ThemeBrushes.StatusSurface(this, ActivityInfoBar.Severity);
+        ActivityInfoBar.Foreground = ThemeBrushes.StatusText(this, ActivityInfoBar.Severity);
     }
 }

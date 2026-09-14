@@ -1,8 +1,8 @@
 # 当前开发状态
 
 > 更新时间：2026-09-14
-> 当前版本：`v1.1.6`
-> 双端运行版本：Android `1.1.6+46` / Windows `1.1.6.0`
+> 当前版本：`v1.1.7`
+> 双端运行版本：Android `1.1.7+47` / Windows `1.1.7.0`
 
 > 后续发行策略：通过验收的版本直接使用稳定版本号并标记 GitHub `Latest`，不再使用 `-dev`、`-pre` 后缀或 Pre-release 标签；当前开发版仅作为历史记录保留。
 
@@ -77,17 +77,17 @@
 
 ## 自动化验证
 
-- `flutter test --no-pub`：54 项通过；
+- `flutter test --no-pub`：当前 Android 工程没有 `test/` 目录，Flutter 命令按工程状态报告无测试目录；
 - `flutter analyze --no-pub`：无问题；
 - `dotnet build windows/Hinge.sln --configuration Release --no-restore`：通过；
 - `dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore`：63 项通过；
-- Windows 本次 Release 构建的主程序和安装器文件版本均为 `1.1.6.0`；发布输出显式包含 `Assets/app_icon.png` 与 `Assets/app_icon.ico`，任务栏、窗口预览和安装器图标资源不再依赖未发布的外部文件；
-- Android 本次本地 Release APK 目标为包名 `com.hinge.office`、版本 `1.1.6`、`versionCode 46` 和仅包含 `arm64-v8a`；
-- Android 发布脚本已从本机配置读取签名信息并成功生成 `publish/Hinge.apk`；APK 为 20,171,937 字节，版本 `1.1.6+46`，V2/V3 签名校验通过，且只包含 `lib/arm64-v8a`；本次产物 SHA-256 为 `4C889096CBB86B338C3DCF1E8BDCE7163C24E8799E0405D4B062C9CF76756453`。
-- Windows Release 已生成 `publish/windows/Hinge-Setup.exe`（201,430,758 字节，SHA-256 `3C5A2DFF09D3689E5143B3FEA16E9B36EF79B3842580C073F08F002833DC49EA`，文件版本 `1.1.6.0`、产品版本 `1.1.6`）和 `publish/windows/Hinge-Windows.zip`（129,664,707 字节，SHA-256 `8704B1543ECE3F389461D026468274768B76A2C266456641E2A1AF3B16D13E87`）；便携包包含 `Hinge.exe`、原生 Shell DLL 和可选身份组件，但不会自动注册身份。
+- Windows 本次 Release 构建的主程序和安装器文件版本均为 `1.1.7.0`；发布输出显式包含 `Assets/app_icon.png` 与 `Assets/app_icon.ico`，任务栏、窗口预览和安装器图标资源不再依赖未发布的外部文件；
+- Android 本次本地 Release APK 目标为包名 `com.hinge.office`、版本 `1.1.7`、`versionCode 47` 和仅包含 `arm64-v8a`；
+- Android 发布脚本已从本机配置读取签名信息并成功生成 `publish/Hinge.apk`；APK 为 20,188,321 字节，版本 `1.1.7+47`，V2/V3 签名校验通过，且只包含 `lib/arm64-v8a`；本次产物 SHA-256 为 `90823AA3D4A1CA766D728182475300E9F2C77D07A70E124BEC982D5F332C62E7`。
+- Windows Release 已生成 `publish/windows/Hinge-Setup.exe`（201,442,831 字节，SHA-256 `D706972A096328B0A63621FDDC0D65A9496DD6AB65FBECBED60959AF1F1638C6`，文件版本 `1.1.7.0`、产品版本 `1.1.7`）和 `publish/windows/Hinge-Windows.zip`（129,675,756 字节，SHA-256 `AC341221EDFBA72EA8133DA45518864399110CBECF490EAADCCB07370FF4E156`）；便携包包含 `Hinge.exe`、原生 Shell DLL 和可选身份组件，但不会自动注册身份。
 - Windows 稀疏身份包本次包含 `Hinge.ShellExtension.dll` 和 19 个按真实像素生成的包图标资源，`Hinge.Identity.msix` 的 `signtool verify /pa /all` 校验通过；原生 DLL 本身不单独签名，而是作为已签名身份包的负载；旧式兼容菜单改为正确的 `ExtendedSubCommandsKey\Shell\command` 层级，一级菜单仍由包身份 + 原生 `IExplorerCommand` 提供。
 - 新 EXE 已在当前开发机覆盖安装到 `D:\hinge`；安装后的 `Hinge.exe` 与构建负载 SHA-256 一致，稀疏包状态为 `Ok`，开始菜单快捷方式和 `Get-StartApps` 都解析为 `Hinge.Office.Identity_29ecp0hep5z68!Hinge`，已排除旧安装文件和旧 `Hinge.Office` 快捷方式身份继续生效的情况。
-- 本版原生 Shell DLL、稀疏清单和 WinUI/安装器均完成 Release 构建；Android Dart 分析、Flutter 54 项测试、Windows 63 项 .NET 测试、Android ARM64 Release 集成构建均通过；当前开发机未完成“真实已连接手机 + Explorer 第一层悬停 + 实际文件落盘”的人工闭环，仍需安装新 EXE 后验收菜单呈现和发送结果，以及在真实短信验证码气泡上确认复制动作不恢复 Hinge 窗口。
+- 本版原生 Shell DLL、稀疏清单和 WinUI/安装器均完成 Release 构建；Android Dart 分析、Windows 65 项 .NET 测试、Android ARM64 Release 集成构建均通过；当前 Android 工程没有 Flutter `test/` 目录，因此没有可运行的 Flutter 测试项；当前开发机未完成“真实已连接手机 + Explorer 第一层悬停 + 实际文件落盘”的人工闭环，仍需安装新 EXE 后验收菜单呈现和发送结果，以及在真实短信验证码气泡上确认复制动作不恢复 Hinge 窗口。
 - Android 发布脚本支持 Review 风格的本地 `android/android/key.properties` 配置：首次填写后后续构建自动读取，不再重复弹出签名输入；固定 BKS 路径仍作为未配置路径时的回退。脚本在构建/复制前校验签名输入，失败时不会覆盖 `publish/Hinge.apk`。现有 `publish/android/Hinge.apk` 是历史遗留产物，不属于当前统一输出路径，也不得作为本版正式更新包。
 
 ## 仍需真实设备验收

@@ -53,7 +53,7 @@ public sealed partial class TodoPage : Page
                     {
                         Text = "还没有待办，点击右上角“新建待办”开始安排工作。",
                         Padding = new Thickness(12, 24, 12, 24),
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                        Foreground = ThemeBrushes.Secondary(this)
                     }
                 });
             }
@@ -91,7 +91,7 @@ public sealed partial class TodoPage : Page
         {
             Text = task.Completed ? $"已完成 · {dueText}" : dueText,
             FontSize = 14,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+            Foreground = ThemeBrushes.Secondary(this)
         });
         Grid.SetColumn(details, 1);
         row.Children.Add(details);

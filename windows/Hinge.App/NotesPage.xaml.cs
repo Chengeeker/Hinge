@@ -59,7 +59,7 @@ public sealed partial class NotesPage : Page
                     {
                         Text = "还没有笔记，点击右上角“新建笔记”开始记录。",
                         Padding = new Thickness(12, 24, 12, 24),
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                        Foreground = ThemeBrushes.Secondary(this)
                     }
                 });
             }
@@ -89,14 +89,14 @@ public sealed partial class NotesPage : Page
         {
             Text = string.IsNullOrWhiteSpace(note.Content) ? "无正文" : note.Content.Replace('\n', ' '),
             FontSize = 14,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Foreground = ThemeBrushes.Secondary(this),
             TextTrimming = TextTrimming.CharacterEllipsis
         });
         text.Children.Add(new TextBlock
         {
             Text = FormatTime(note.UpdatedAt) + (note.Pinned ? " · 已置顶" : string.Empty),
             FontSize = 13,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+            Foreground = ThemeBrushes.Secondary(this)
         });
         Grid.SetColumn(text, 0);
         row.Children.Add(text);

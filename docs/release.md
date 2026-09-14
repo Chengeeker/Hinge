@@ -8,11 +8,11 @@
 
 ## 版本约定
 
-- Android 应用版本来自 `android/pubspec.yaml`，当前可交付版本为 `1.1.6+46`；
-- Android 和 Windows 的产品版本名保持为 `1.1.6`；后续 GitHub 标签使用稳定版本号（例如 `v1.1.6`），Release 直接标记为 `Latest`，不使用 `-dev`、`-pre` 后缀或 Pre-release 标签；
+- Android 应用版本来自 `android/pubspec.yaml`，当前可交付版本为 `1.1.7+47`；
+- Android 和 Windows 的产品版本名保持为 `1.1.7`；后续 GitHub 标签使用稳定版本号（例如 `v1.1.7`），Release 直接标记为 `Latest`，不使用 `-dev`、`-pre` 后缀或 Pre-release 标签；
 - Windows 发布只提供自包含 EXE 安装器和便携 ZIP，不单独提供 MSIX 或 CER 资产；EXE 安装负载内部允许携带签名稀疏身份组件及原生 Shell DLL。
 - EXE 安装器启用 .NET 单文件压缩；安装逻辑不变，发布前仍需验证安装、更新和目录选择。
-- EXE 安装器注册稀疏包成功后会刷新当前用户的 Explorer，使 Windows 11 第一层原生菜单立即重新加载；刷新只发生在注册成功后，失败时不阻断主程序安装。
+- EXE 安装器更新稀疏包前会先停止当前用户会话的 Explorer，释放旧 Shell COM 宿主后重试卸载旧包，再用 `-ForceApplicationShutdown` 和 `-ForceUpdateFromAnyVersion` 注册当前包并校验 `Status=Ok`；最后无论注册成功或失败都会确保 Explorer 恢复。刷新只在注册校验成功后视为完成，失败时记录 `shell-integration-error.log`，主程序仍可通过兼容菜单运行。
 - EXE 安装版的 Windows 11 资源管理器“通过 Hinge 发送到”由签名稀疏包身份注册原生 `IExplorerCommand`，悬停后只读取 Hinge 写入的已连接设备快照并动态列出机型；多选路径由 Shell 扩展通过当前用户专用命名管道交给 Hinge 单实例，再复用现有文件发送链路，目标为 Android `Download/Hinge` 自动分类目录；Hinge 未运行时才回退到带参数启动。便携版没有可信包身份，使用“显示更多选项”中的旧式菜单回退。
 
 ## 发布前检查
@@ -25,6 +25,17 @@ dotnet build windows/Hinge.sln --configuration Release --no-restore
 dotnet test windows/Hinge.sln --configuration Release --no-build --no-restore
 git diff --check
 ```
+
+本次日历界面改动的专项验证还必须覆盖：自定义标题栏下 `NavigationView` 不再分配固定 Header 行，左侧/最小导航模式不再保留模板大块顶部 Margin，所有侧边栏页面只保留统一的 16px 内容顶部间距；浅色/深色主题下所有动态文字、日期格 PointerOver/Pressed 状态及系统标题栏按钮可读，缓存的相册和通知历史在主题变化时重绘；首页深色模式下在线设备使用高对比度强调文字，成功状态条使用深色语义表面且标题、正文清晰可读，切换主题后立即重绘；月份切换按钮图标居中；Android 厂商日历在丰富投影失败时仍能通过 `Instances` + `Events` 分批补全事件来源和生日类型；单日全天生日不得扩展到次日，内部 `ExtendedProperties` 不得出现在 Windows 详情中。vivo“小V建议”不在标准日历提供器时，最近短信或 Hinge 私有通知历史中同时具备日期、时间和车次号的内容必须生成去重后的临时出行项，且不得传输原始消息正文。
+
+Windows 常驻稳定性专项验证还必须覆盖：设备主动断开、网络瞬断和应用退出时，身份确认、心跳响应及剪贴板后台发送任务不产生新的 `UnobservedTaskException`；右键扩展向正在运行的 Hinge 发送请求后 `dllhost.exe` 不得出现 `MoAppHang`，命名管道以客户端关闭句柄作为消息结束标志，禁止恢复 `FlushFileBuffers`。
+
+## 最近一次本地构建记录
+
+- 2026-09-14，版本 `1.1.7+47`：Android arm64 APK 构建、签名和脚本校验成功；Windows EXE 安装器与便携 ZIP 构建成功；Windows 常驻连接发送竞态与资源管理器命名管道死锁修复已编译进包。
+- `publish/Hinge.apk` SHA-256：`90823AA3D4A1CA766D728182475300E9F2C77D07A70E124BEC982D5F332C62E7`，20,188,321 字节；
+- `publish/windows/Hinge-Setup.exe` SHA-256：`D706972A096328B0A63621FDDC0D65A9496DD6AB65FBECBED60959AF1F1638C6`，201,442,831 字节；
+- `publish/windows/Hinge-Windows.zip` SHA-256：`AC341221EDFBA72EA8133DA45518864399110CBECF490EAADCCB07370FF4E156`，129,675,756 字节。
 
 确认以下内容没有进入 Git：
 
@@ -61,7 +72,7 @@ Android 发布只使用 `android-arm64`，脚本在复制前检查 APK 只包含
 ## GitHub Release
 
 1. 提交源码、协议和文档，不提交 `publish/` 二进制目录；
-2. 推送 `main` 和稳定版本标签（例如 `v1.1.6`）；
+2. 推送 `main` 和稳定版本标签（例如 `v1.1.7`）；
 3. 创建 GitHub Release 并直接标记为 `Latest`；不再创建 Pre-release，除非明确发布需要保留的历史测试快照；
 4. 上传 `publish/Hinge.apk`、`publish/windows/Hinge-Setup.exe` 和 `publish/windows/Hinge-Windows.zip`；
 5. 使用 `CHANGELOG.md` 生成发布说明，并在发布页注明真机验收边界；

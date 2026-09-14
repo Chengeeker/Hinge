@@ -88,7 +88,33 @@ public class ClipboardManager : IDisposable
 
         foreach (var conn in conns)
         {
-            _ = conn.SendJsonAsync(MessageType.ClipboardEvent, msg);
+            _ = SendClipboardEventSafelyAsync(conn, msg);
+        }
+    }
+
+    private static async Task SendClipboardEventSafelyAsync(
+        SessionConnection connection,
+        ClipboardEventMessage message)
+    {
+        try
+        {
+            await connection.SendJsonAsync(MessageType.ClipboardEvent, message).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The peer disconnected after the active-connection snapshot.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disconnecting concurrently with clipboard broadcast is normal.
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            // Clipboard changes must never become an unobserved process exception.
+        }
+        catch (IOException)
+        {
+            // Clipboard sync is best effort; the session lifecycle reports failure.
         }
     }
 

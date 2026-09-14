@@ -144,9 +144,13 @@ EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
 }
 ```
 
-当前实现的命令包括 `getDeviceSummary`、`calendarEvents`、`photos`、`photosPage`、`photoBytes`、`files`、`browseFiles`、`browseFilesPage`、`loadNotes`、`saveNote`、`deleteNote`、`loadTasks`、`saveTask`、`deleteTask`、`notificationHistory`、`notificationHistoryAction` 和 `pairDevice`。其中 `notificationHistoryAction` 根据 `payload.action` 执行打开、单条删除或清空历史。通知历史命令的分页字段、返回模型和隐私边界见 [`notification.md`](notification.md)。失败时 `success` 为 `false` 并附带 `error` 文本；权限不足由 Android 平台层返回错误，不伪造空数据。
+当前实现的命令包括 `getDeviceSummary`、`calendarEvents`、`calendarCreate`、`photos`、`photosPage`、`photoBytes`、`files`、`browseFiles`、`browseFilesPage`、`loadNotes`、`saveNote`、`deleteNote`、`loadTasks`、`saveTask`、`deleteTask`、`notificationHistory`、`notificationHistoryAction` 和 `pairDevice`。其中 `notificationHistoryAction` 根据 `payload.action` 执行打开、单条删除或清空历史。通知历史命令的分页字段、返回模型和隐私边界见 [`notification.md`](notification.md)。失败时 `success` 为 `false` 并附带 `error` 文本；权限不足由 Android 平台层返回错误，不伪造空数据。
 
 ---
+
+### 日历扩展
+
+日历还支持 `calendarCreate`。Windows 端传入 `title`、Unix 毫秒时间戳 `start`/`end`、`allDay` 和可选的 `location`；Android 端仅在用户确认后调用系统日历的“新建日程”界面预填这些字段，不直接写入日历数据库，因此不额外申请 `WRITE_CALENDAR`。日历读取的每条记录除 `id`、`title`、`start`、`end`、`location` 和 `allDay` 外，还可以包含 `description`、`calendarName`、`eventType` 和 `eventColor`。Android 优先读取 CalendarContract 的丰富字段，厂商拒绝可选字段时退回基础投影，并从 Events 补入未出现在可见 Instances 中的非重复单次事件；扩展属性只参与内部分类，不作为用户可见描述返回。全天事件以 UTC 日期和排他结束边界解释。厂商私有智能日程不在 CalendarContract 时，Android 可在已有短信/通知授权范围内，把同时包含日期、时间和车次号的最近消息转换为临时 `eventType=出行` 记录；记录只包含解析后的车次、路线和时间，不包含原消息正文，并与标准日历按车次和日期去重。
 
 ## 4. 专用二进制载荷子规范 (Sub-Payload Specifications)
 

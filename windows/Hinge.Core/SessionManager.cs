@@ -85,7 +85,7 @@ public class SessionConnection : IDisposable
         _started = true;
         _ = Task.Run(() => ReadLoopAsync(_cts.Token));
         _ = Task.Run(() => HeartbeatLoopAsync(_cts.Token));
-        _ = SendSessionIdentityAsync(MessageType.SessionInit);
+        _ = CompleteBackgroundSendAsync(SendSessionIdentityAsync(MessageType.SessionInit));
     }
 
     public async Task SendFrameAsync(MessageType type, byte[] payload)
@@ -197,14 +197,15 @@ public class SessionConnection : IDisposable
             AcceptPeerIdentity(frame.Payload);
             if (frame.Type == MessageType.SessionInit)
             {
-                _ = SendSessionIdentityAsync(MessageType.SessionAck);
+                _ = CompleteBackgroundSendAsync(SendSessionIdentityAsync(MessageType.SessionAck));
             }
             return;
         }
 
         if (frame.Type == MessageType.HeartbeatPing)
         {
-            _ = SendFrameAsync(MessageType.HeartbeatPong, Array.Empty<byte>());
+            _ = CompleteBackgroundSendAsync(
+                SendFrameAsync(MessageType.HeartbeatPong, Array.Empty<byte>()));
             return;
         }
 
@@ -316,6 +317,30 @@ public class SessionConnection : IDisposable
         {
             UpdateState(SessionState.Disconnected);
             Dispose();
+        }
+    }
+
+    private static async Task CompleteBackgroundSendAsync(Task sendTask)
+    {
+        try
+        {
+            await sendTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The connection closed while a protocol acknowledgement was queued.
+        }
+        catch (ObjectDisposedException)
+        {
+            // A state check and the send itself are not atomic; disconnect wins.
+        }
+        catch (SocketException)
+        {
+            // The read/heartbeat loops publish the disconnected state.
+        }
+        catch (IOException)
+        {
+            // Socket shutdown races are expected for best-effort control frames.
         }
     }
 

@@ -61,10 +61,17 @@
                 HorizontalContentAlignment="Stretch"
                 IsBackButtonVisible="Collapsed"
                 IsSettingsVisible="True"
+                AlwaysShowHeader="False"
+                IsTitleBarAutoPaddingEnabled="False"
                 Loaded="AppNavigation_Loaded"
                 PaneOpened="AppNavigation_PaneStateChanged"
                 PaneClosed="AppNavigation_PaneStateChanged"
                 SelectionChanged="AppNavigation_SelectionChanged">
+            <NavigationView.Resources>
+                <Thickness x:Key="NavigationViewContentMargin">0</Thickness>
+                <Thickness x:Key="NavigationViewMinimalContentMargin">0</Thickness>
+                <Thickness x:Key="NavigationViewContentPresenterMargin">0,16,0,0</Thickness>
+            </NavigationView.Resources>
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="首页" Tag="home">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Home" /></NavigationViewItem.Icon>
@@ -89,33 +96,6 @@
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
-
-            <NavigationView.Header>
-                <Grid x:Name="NavigationHeader" Visibility="Collapsed" Margin="20,8,20,8" ColumnSpacing="8" HorizontalAlignment="Stretch">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <Button
-                        x:Name="HeaderBackButton"
-                        Grid.Column="0"
-                        Width="32"
-                        Height="32"
-                        Padding="0"
-                        VerticalAlignment="Center"
-                        Visibility="Collapsed"
-                        ToolTipService.ToolTip="返回"
-                        Click="HeaderBackButton_Click">
-                        <SymbolIcon Symbol="Back" />
-                    </Button>
-                    <StackPanel Grid.Column="1" Spacing="2">
-                        <TextBlock x:Name="PageTitle" Text="首页" FontSize="22" FontWeight="SemiBold" />
-                        <TextBlock x:Name="HeaderStatusText" Text="正在启动局域网服务" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    </StackPanel>
-                    <TextBlock x:Name="StatusText" Grid.Column="2" Visibility="Collapsed" />
-                </Grid>
-            </NavigationView.Header>
 
             <NavigationView.Content>
                 <Grid
@@ -153,6 +133,26 @@
                 </Grid>
             </NavigationView.Content>
             </NavigationView>
+            <!--
+                These named controls are retained for connection/transfer status code-behind,
+                but must not be assigned to NavigationView.Header. A collapsed Header child still
+                makes Header non-null and leaves the template's fixed header row in every page.
+            -->
+            <Grid
+                x:Name="NavigationHeader"
+                Height="0"
+                Visibility="Collapsed"
+                IsHitTestVisible="False">
+                <Button
+                    x:Name="HeaderBackButton"
+                    Width="0"
+                    Height="0"
+                    Visibility="Collapsed"
+                    Click="HeaderBackButton_Click" />
+                <TextBlock x:Name="PageTitle" Text="首页" Visibility="Collapsed" />
+                <TextBlock x:Name="HeaderStatusText" Text="正在启动局域网服务" Visibility="Collapsed" />
+                <TextBlock x:Name="StatusText" Visibility="Collapsed" />
+            </Grid>
             <Canvas x:Name="PaneResizeCanvas" Canvas.ZIndex="20" IsHitTestVisible="True" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" SizeChanged="PaneResizeCanvas_SizeChanged">
                 <Border
                     x:Name="PaneResizeHandle"

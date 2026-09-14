@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前版本：`v1.1.6`（安装包运行版本为 `1.1.6`）
+- 当前版本：`v1.1.7`（安装包运行版本为 `1.1.7`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么

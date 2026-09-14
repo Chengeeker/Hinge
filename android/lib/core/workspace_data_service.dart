@@ -46,6 +46,10 @@ class CalendarEvent {
   final DateTime start;
   final DateTime? end;
   final String location;
+  final String description;
+  final String calendarName;
+  final String eventType;
+  final int? eventColor;
   final bool allDay;
 
   const CalendarEvent({
@@ -54,6 +58,10 @@ class CalendarEvent {
     required this.start,
     this.end,
     this.location = '',
+    this.description = '',
+    this.calendarName = '',
+    this.eventType = '',
+    this.eventColor,
     this.allDay = false,
   });
 
@@ -63,6 +71,10 @@ class CalendarEvent {
     'start': start.millisecondsSinceEpoch,
     'end': end?.millisecondsSinceEpoch,
     'location': location,
+    'description': description,
+    'calendarName': calendarName,
+    'eventType': eventType,
+    'eventColor': eventColor,
     'allDay': allDay,
   };
 
@@ -77,6 +89,10 @@ class CalendarEvent {
           ? null
           : DateTime.fromMillisecondsSinceEpoch((json['end'] as num).toInt()),
       location: '${json['location'] ?? ''}',
+      description: '${json['description'] ?? ''}',
+      calendarName: '${json['calendarName'] ?? ''}',
+      eventType: '${json['eventType'] ?? ''}',
+      eventColor: (json['eventColor'] as num?)?.toInt(),
       allDay: json['allDay'] == true,
     );
   }
@@ -638,6 +654,23 @@ class WorkspaceDataService {
     return raw.whereType<Map>().map(CalendarEvent.fromJson).toList();
   }
 
+  Future<bool> openCalendarCreate({
+    required String title,
+    required DateTime start,
+    DateTime? end,
+    String location = '',
+    bool allDay = false,
+  }) async {
+    final raw = await _invoke('calendarCreate', {
+      'title': title,
+      'start': start.millisecondsSinceEpoch,
+      'end': end?.millisecondsSinceEpoch,
+      'location': location,
+      'allDay': allDay,
+    });
+    return raw == true;
+  }
+
   Future<bool> hasPhotosPermission() async {
     return await _invoke('hasPhotosPermission') == true;
   }
@@ -1020,6 +1053,20 @@ class WorkspaceCommandRouter {
         return (await dataService.loadCalendar())
             .map((event) => event.toJson())
             .toList();
+      case 'calendarCreate':
+        final title = '${payload['title'] ?? ''}'.trim();
+        final start = (payload['start'] as num?)?.toInt();
+        if (title.isEmpty || start == null || start <= 0) {
+          throw ArgumentError('创建日程缺少标题或开始时间');
+        }
+        final end = (payload['end'] as num?)?.toInt();
+        return await dataService.openCalendarCreate(
+          title: title,
+          start: DateTime.fromMillisecondsSinceEpoch(start),
+          end: end == null ? null : DateTime.fromMillisecondsSinceEpoch(end),
+          location: '${payload['location'] ?? ''}'.trim(),
+          allDay: payload['allDay'] == true,
+        );
       case 'photoAlbums':
         return (await dataService.loadPhotoAlbums())
             .map((album) => album.toJson())

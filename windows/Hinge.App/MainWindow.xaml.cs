@@ -348,10 +348,12 @@ public sealed partial class MainWindow : Window
         _showTrayBackgroundNotice = LoadShowTrayBackgroundNotice();
         _receiveDirectory = LoadReceiveDirectory();
         AppNavigation.OpenPaneLength = 200;
-        ApplyWindowTheme(LoadWindowTheme());
+        var initialWindowTheme = LoadWindowTheme();
+        ApplyWindowTheme(initialWindowTheme);
         ApplyWindowMaterial(LoadWindowMaterial());
         ApplyBackgroundImage(LoadWindowBackgroundPath());
         ConfigureAppWindow();
+        ApplyAppWindowTitleBarTheme(initialWindowTheme);
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         ContentFrame.Navigated += ContentFrame_Navigated;
@@ -433,6 +435,7 @@ public sealed partial class MainWindow : Window
             DiscoveryInfoBar.Message = _discoveryService.LastError ?? "请检查 UDP 52830 是否被其他程序占用。";
             HeaderStatusText.Text = "发现服务异常";
         }
+        Home.ApplyThemePalette();
         RefreshDeviceList(_registry.GetAllDevices());
         RefreshExplorerSendMenu();
         _shellSendPipeServer = new ShellSendPipeServer(arguments =>
@@ -2318,6 +2321,41 @@ public sealed partial class MainWindow : Window
         };
         AppNavigation.RequestedTheme = PageRoot.RequestedTheme;
         ContentFrame.RequestedTheme = PageRoot.RequestedTheme;
+        ApplyAppWindowTitleBarTheme(theme);
+        _homePage?.ApplyThemePalette();
+        if (_homePage != null)
+        {
+            RefreshDeviceList(_registry.GetAllDevices());
+        }
+    }
+
+    private void ApplyAppWindowTitleBarTheme(string theme)
+    {
+        if (_appWindow?.TitleBar is not { } titleBar) return;
+
+        var dark = theme == "dark" ||
+            (theme == "system" && Application.Current.RequestedTheme == ApplicationTheme.Dark);
+        var foreground = dark
+            ? Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)
+            : Windows.UI.Color.FromArgb(0xFF, 0x00, 0x00, 0x00);
+        var inactiveForeground = dark
+            ? Windows.UI.Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)
+            : Windows.UI.Color.FromArgb(0x99, 0x00, 0x00, 0x00);
+        var hoverBackground = dark
+            ? Windows.UI.Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)
+            : Windows.UI.Color.FromArgb(0x10, 0x00, 0x00, 0x00);
+        var pressedBackground = dark
+            ? Windows.UI.Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF)
+            : Windows.UI.Color.FromArgb(0x18, 0x00, 0x00, 0x00);
+
+        titleBar.ButtonForegroundColor = foreground;
+        titleBar.ButtonInactiveForegroundColor = inactiveForeground;
+        titleBar.ButtonBackgroundColor = Colors.Transparent;
+        titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+        titleBar.ButtonHoverForegroundColor = foreground;
+        titleBar.ButtonHoverBackgroundColor = hoverBackground;
+        titleBar.ButtonPressedForegroundColor = foreground;
+        titleBar.ButtonPressedBackgroundColor = pressedBackground;
     }
 
     private static int WindowThemeIndex(string theme) => theme switch
@@ -2885,7 +2923,7 @@ public sealed partial class MainWindow : Window
                         {
                             Text = "暂未收到其他设备的发现消息。可点击“手动连接”输入对方 IP。",
                             TextWrapping = TextWrapping.Wrap,
-                            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                            Foreground = ThemeBrushes.Secondary(PageRoot)
                         }
                     }
                 }
@@ -2905,7 +2943,7 @@ public sealed partial class MainWindow : Window
             var icon = new SymbolIcon
             {
                 Symbol = device.Platform == DevicePlatform.Android ? Symbol.Phone : Symbol.AllApps,
-                Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"],
+                Foreground = ThemeBrushes.AccentText(PageRoot),
                 Width = 28,
                 Height = 28
             };
@@ -2923,8 +2961,8 @@ public sealed partial class MainWindow : Window
                     : "离线",
                 FontSize = 14,
                 Foreground = online
-                    ? (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"]
-                    : (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                    ? ThemeBrushes.AccentText(PageRoot)
+                    : ThemeBrushes.Secondary(PageRoot)
             });
             Grid.SetColumn(details, 1);
             row.Children.Add(details);
@@ -3276,7 +3314,7 @@ public sealed partial class MainWindow : Window
                     {
                         Text = "设备仍需在 UDP 52830 发现端口和 TCP 52831 会话端口可达。",
                         FontSize = 14,
-                        Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                        Foreground = ThemeBrushes.Secondary(PageRoot),
                         TextWrapping = TextWrapping.Wrap
                     }
                 }
@@ -3310,6 +3348,7 @@ public sealed partial class MainWindow : Window
                 ? $"已连接 {address}，正在等待设备身份响应。"
                 : $"已连接到 {device.Name}，正在完成双向握手。";
             ActivityInfoBar.Severity = InfoBarSeverity.Informational;
+            Home.ApplyThemePalette();
         }
         catch (Exception exception)
         {
@@ -3438,6 +3477,7 @@ public sealed partial class MainWindow : Window
             ActivityInfoBar.Title = "设备连接正常";
             ActivityInfoBar.Message = $"已连接到 {device.Name}，双向身份握手已完成。";
             ActivityInfoBar.Severity = InfoBarSeverity.Success;
+            Home.ApplyThemePalette();
             RefreshExplorerSendMenu();
             RefreshCurrentWorkspacePage(connection);
         });
@@ -3533,6 +3573,7 @@ public sealed partial class MainWindow : Window
                 ActivityInfoBar.Title = "等待设备连接";
                 ActivityInfoBar.Message = "设备会继续在局域网内被发现。";
                 ActivityInfoBar.Severity = InfoBarSeverity.Informational;
+                Home.ApplyThemePalette();
                 RefreshCurrentWorkspacePage(null);
             });
         }
@@ -3863,7 +3904,7 @@ public sealed partial class MainWindow : Window
                 Text = message,
                 TextWrapping = TextWrapping.Wrap,
                 Padding = new Thickness(12, 18, 12, 18),
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                Foreground = ThemeBrushes.Secondary(PageRoot)
             }
         });
         _filePage?.GridFiles.Items.Add(new GridViewItem
@@ -3874,7 +3915,7 @@ public sealed partial class MainWindow : Window
                 Text = message,
                 TextWrapping = TextWrapping.Wrap,
                 Padding = new Thickness(20),
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                Foreground = ThemeBrushes.Secondary(PageRoot)
             }
         });
     }
@@ -4029,7 +4070,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static Grid BuildRemoteFileRow(RemoteFileEntry entry)
+    private Grid BuildRemoteFileRow(RemoteFileEntry entry)
     {
         var row = new Grid
         {
@@ -4068,7 +4109,7 @@ public sealed partial class MainWindow : Window
                 ? "文件夹"
                 : $"{entry.MimeType} · {FormatBytes(entry.SizeBytes)}",
             FontSize = 14,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Foreground = ThemeBrushes.Secondary(PageRoot),
             TextTrimming = TextTrimming.CharacterEllipsis
         });
         Grid.SetColumn(details, 1);
@@ -4078,7 +4119,7 @@ public sealed partial class MainWindow : Window
         {
             Text = FormatUnixMilliseconds(entry.ModifiedAt),
             FontSize = 14,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Foreground = ThemeBrushes.Secondary(PageRoot),
             VerticalAlignment = VerticalAlignment.Center
         };
         Grid.SetColumn(date, 2);
@@ -4086,7 +4127,7 @@ public sealed partial class MainWindow : Window
         return row;
     }
 
-    private static (Grid Tile, Image? Thumbnail) BuildRemoteFileTile(RemoteFileEntry entry)
+    private (Grid Tile, Image? Thumbnail) BuildRemoteFileTile(RemoteFileEntry entry)
     {
         Image? thumbnail = null;
         FrameworkElement visual;
@@ -4152,7 +4193,7 @@ public sealed partial class MainWindow : Window
         {
             Text = entry.IsDirectory ? "文件夹" : FormatBytes(entry.SizeBytes),
             FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Foreground = ThemeBrushes.Secondary(PageRoot),
             TextAlignment = TextAlignment.Center
         });
         return (new Grid { MinHeight = 150, Children = { panel } }, thumbnail);

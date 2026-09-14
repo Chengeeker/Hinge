@@ -39,6 +39,7 @@ import android.provider.CalendarContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.provider.DocumentsContract
+import android.provider.Telephony
 import androidx.core.content.FileProvider
 import android.media.ImageReader
 import android.media.MediaMetadataRetriever
@@ -104,6 +105,45 @@ class MainActivity : FlutterActivity() {
     private data class CountCacheEntry(
         val expiresAt: Long,
         val total: Int,
+    )
+
+    private data class CalendarSourceInfo(
+        val displayName: String = "",
+        val name: String = "",
+        val accountName: String = "",
+        val ownerAccount: String = "",
+        val accountType: String = "",
+    )
+
+    private data class CalendarInstanceRecord(
+        val id: String,
+        val title: String,
+        val start: Long,
+        val end: Long?,
+        val location: String,
+        val calendarId: String,
+        val allDay: Boolean,
+        val description: String,
+        val organizer: String,
+        val eventColor: Long?,
+        val timeZone: String,
+    )
+
+    private data class CalendarEventInfo(
+        val title: String = "",
+        val description: String = "",
+        val calendarId: String = "",
+        val eventColor: Long? = null,
+        val timeZone: String = "",
+        val organizer: String = "",
+        val customAppPackage: String = "",
+        val customAppUri: String = "",
+    )
+
+    private data class SmartTravelText(
+        val id: String,
+        val text: String,
+        val observedAt: Long,
     )
 
     private val storageDirectoryCache = ConcurrentHashMap<String, StorageCacheEntry>()
@@ -270,6 +310,7 @@ class MainActivity : FlutterActivity() {
             "hasCalendarPermission" -> result.success(hasCalendarPermission())
             "requestCalendarPermission" -> requestCalendarPermission(result)
             "calendarEvents" -> readCalendarEvents(result)
+            "calendarCreate" -> openCalendarCreate(call, result)
             "hasPhotosPermission" -> result.success(hasPhotosPermission())
             "requestPhotosPermission" -> requestPhotosPermission(result)
             "hasMediaPermission" -> result.success(hasMediaPermission())
@@ -1674,15 +1715,36 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * Read visible instances from every calendar provider exposed through
+     * CalendarContract. Some OEM providers reject optional columns on the
+     * Instances view, so the rich projection always has a small-column
+     * fallback instead of failing the complete calendar page.
+     */
     private fun queryCalendarEvents(): List<Map<String, Any?>> {
         val events = ArrayList<Map<String, Any?>>()
-        val projection = arrayOf(
+        val calendarSources = queryCalendarNames()
+        val extendedProperties = queryCalendarExtendedProperties()
+        val baseProjection = arrayOf(
             CalendarContract.Instances.EVENT_ID,
             CalendarContract.Instances.TITLE,
             CalendarContract.Instances.BEGIN,
             CalendarContract.Instances.END,
             CalendarContract.Instances.EVENT_LOCATION,
             CalendarContract.Instances.ALL_DAY,
+        )
+        val richProjection = arrayOf(
+            CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.BEGIN,
+            CalendarContract.Instances.END,
+            CalendarContract.Instances.EVENT_LOCATION,
+            CalendarContract.Instances.ALL_DAY,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.EVENT_COLOR,
+            CalendarContract.Events.EVENT_TIMEZONE,
+            CalendarContract.Events.ORGANIZER,
         )
         val now = System.currentTimeMillis()
         val from = now - 365L * 24L * 60L * 60L * 1000L
@@ -1691,14 +1753,29 @@ class MainActivity : FlutterActivity() {
             ContentUris.appendId(it, from)
             ContentUris.appendId(it, until)
         }.build()
-        val cursor = contentResolver.query(
-            instancesUri,
-            projection,
-            null,
-            null,
-            "${CalendarContract.Instances.BEGIN} ASC",
-        )
+        val cursor = try {
+            contentResolver.query(
+                instancesUri,
+                richProjection,
+                null,
+                null,
+                "${CalendarContract.Instances.BEGIN} ASC",
+            )
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            contentResolver.query(
+                instancesUri,
+                baseProjection,
+                null,
+                null,
+                "${CalendarContract.Instances.BEGIN} ASC",
+            )
+        } catch (_: Exception) {
+            null
+        }
 
+        val instances = ArrayList<CalendarInstanceRecord>()
         cursor?.use {
             val idIndex = it.getColumnIndex(CalendarContract.Instances.EVENT_ID)
             val titleIndex = it.getColumnIndex(CalendarContract.Instances.TITLE)
@@ -1706,22 +1783,651 @@ class MainActivity : FlutterActivity() {
             val endIndex = it.getColumnIndex(CalendarContract.Instances.END)
             val locationIndex = it.getColumnIndex(CalendarContract.Instances.EVENT_LOCATION)
             val allDayIndex = it.getColumnIndex(CalendarContract.Instances.ALL_DAY)
+            val descriptionIndex = it.getColumnIndex(CalendarContract.Events.DESCRIPTION)
+            val calendarIdIndex = it.getColumnIndex(CalendarContract.Events.CALENDAR_ID)
+            val colorIndex = it.getColumnIndex(CalendarContract.Events.EVENT_COLOR)
+            val timezoneIndex = it.getColumnIndex(CalendarContract.Events.EVENT_TIMEZONE)
+            val organizerIndex = it.getColumnIndex(CalendarContract.Events.ORGANIZER)
+            if (idIndex < 0 || startIndex < 0) return@use
+
             var count = 0
-            while (it.moveToNext() && count < 1000) {
-                events.add(
-                    mapOf(
-                        "id" to it.getString(idIndex),
-                        "title" to (it.getString(titleIndex) ?: "未命名日程"),
-                        "start" to it.getLong(startIndex),
-                        "end" to if (endIndex >= 0 && !it.isNull(endIndex)) it.getLong(endIndex) else null,
-                        "location" to if (locationIndex >= 0) it.getString(locationIndex).orEmpty() else "",
-                        "allDay" to (allDayIndex >= 0 && it.getInt(allDayIndex) == 1),
+            while (it.moveToNext() && count < 2000) {
+                val id = cursorString(it, idIndex)
+                val start = cursorLong(it, startIndex)
+                if (id.isBlank() || start <= 0) continue
+                instances.add(
+                    CalendarInstanceRecord(
+                        id = id,
+                        title = cursorString(it, titleIndex),
+                        start = start,
+                        end = if (endIndex >= 0 && !it.isNull(endIndex)) {
+                            it.getLong(endIndex)
+                        } else {
+                            null
+                        },
+                        location = cursorString(it, locationIndex),
+                        calendarId = cursorString(it, calendarIdIndex),
+                        allDay = allDayIndex >= 0 && it.getInt(allDayIndex) == 1,
+                        description = cursorString(it, descriptionIndex),
+                        organizer = cursorString(it, organizerIndex),
+                        eventColor = if (colorIndex >= 0 && !it.isNull(colorIndex)) {
+                            it.getLong(colorIndex)
+                        } else {
+                            null
+                        },
+                        timeZone = cursorString(it, timezoneIndex),
                     ),
                 )
                 count++
             }
         }
-        return events
+
+        // Instances only exposes events from calendars currently marked visible.
+        // OEM calendars can still render one-off suggestion events from hidden
+        // calendars (for example vivo "小V建议"). Supplement only non-recurring
+        // Events rows that Instances did not return; recurring events must remain
+        // owned by Instances so their occurrence expansion stays correct.
+        instances.addAll(
+            queryDirectCalendarEventFallback(
+                from,
+                until,
+                instances.map { it.id }.toSet(),
+            ),
+        )
+
+        // Instances is the correct occurrence source, but OEM providers may
+        // expose only a reduced projection there. Enrich by event ID after
+        // closing the cursor so title, source, description and custom
+        // calendar metadata are not lost when the rich projection falls back.
+        val eventDetails = queryCalendarEventDetails(instances.map { it.id }.toSet())
+        for (instance in instances) {
+            val detail = eventDetails[instance.id]
+            val calendarId = detail?.calendarId.orEmpty().ifBlank { instance.calendarId }
+            val source = calendarSources[calendarId]
+            val rawTitle = detail?.title.orEmpty().ifBlank { instance.title }
+            val title = rawTitle.ifBlank { "未命名日程" }
+            val description = joinCalendarText(
+                detail?.description.orEmpty(),
+                instance.description,
+            )
+            val classificationText = joinCalendarText(
+                description,
+                extendedProperties[instance.id].orEmpty(),
+            )
+            val organizer = detail?.organizer.orEmpty().ifBlank { instance.organizer }
+            val timeZone = detail?.timeZone.orEmpty().ifBlank { instance.timeZone }
+            val eventType = inferCalendarType(
+                title,
+                classificationText,
+                source,
+                organizer,
+                detail?.customAppPackage.orEmpty(),
+                detail?.customAppUri.orEmpty(),
+            )
+            events.add(
+                mapOf(
+                    "id" to instance.id,
+                    "title" to buildCalendarDisplayTitle(title, classificationText, eventType),
+                    "start" to instance.start,
+                    "end" to instance.end,
+                    "location" to instance.location,
+                    "description" to description,
+                    "calendarName" to listOf(
+                        source?.displayName.orEmpty(),
+                        source?.name.orEmpty(),
+                    ).firstOrNull { it.isNotBlank() }.orEmpty(),
+                    "eventType" to eventType,
+                    "eventColor" to (detail?.eventColor ?: instance.eventColor),
+                    "timeZone" to timeZone,
+                    "allDay" to instance.allDay,
+                ),
+            )
+        }
+        events.addAll(querySmartTravelSuggestionEvents(from, until, events))
+        return events.sortedBy { (it["start"] as? Number)?.toLong() ?: Long.MAX_VALUE }
+    }
+
+    private fun querySmartTravelSuggestionEvents(
+        from: Long,
+        until: Long,
+        calendarEvents: List<Map<String, Any?>>,
+    ): List<Map<String, Any?>> {
+        val sources = ArrayList<SmartTravelText>()
+        if (hasPermission(Manifest.permission.READ_SMS)) {
+            try {
+                contentResolver.query(
+                    Telephony.Sms.Inbox.CONTENT_URI,
+                    arrayOf("_id", "body", "date"),
+                    "date >= ?",
+                    arrayOf((System.currentTimeMillis() - 370L * 86_400_000L).toString()),
+                    "date DESC",
+                )?.use { cursor ->
+                    val idIndex = cursor.getColumnIndex("_id")
+                    val bodyIndex = cursor.getColumnIndex("body")
+                    val dateIndex = cursor.getColumnIndex("date")
+                    var count = 0
+                    while (cursor.moveToNext() && count < 800) {
+                        val body = cursorString(cursor, bodyIndex).trim()
+                        if (body.isNotBlank()) {
+                            sources.add(
+                                SmartTravelText(
+                                    id = "sms-${cursorLong(cursor, idIndex)}",
+                                    text = body,
+                                    observedAt = cursorLong(cursor, dateIndex),
+                                ),
+                            )
+                        }
+                        count++
+                    }
+                }
+            } catch (_: Exception) {
+                // SMS access is optional and may be revoked independently.
+            }
+        }
+
+        try {
+            NotificationHistoryStore(applicationContext).use { store ->
+                store.query(offset = 0, limit = 200, ascending = false).forEach { record ->
+                    val text = listOf(record.title, record.content)
+                        .filter { it.isNotBlank() }
+                        .joinToString("\n")
+                    if (text.isNotBlank()) {
+                        sources.add(SmartTravelText("notification-${record.id}", text, record.timestamp))
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Notification history may not have been enabled yet.
+        }
+
+        val represented = calendarEvents.mapNotNull { event ->
+            val title = event["title"]?.toString().orEmpty()
+            val train = TRAIN_NUMBER_PATTERN.find(title)?.groupValues?.getOrNull(1)?.uppercase(Locale.ROOT)
+            val start = (event["start"] as? Number)?.toLong() ?: return@mapNotNull null
+            train?.let { "$it-${utcOrLocalDateKey(start, event["allDay"] == true)}" }
+        }.toMutableSet()
+        val suggestions = ArrayList<Map<String, Any?>>()
+        for (source in sources) {
+            val parsed = parseSmartTravelText(source, from, until) ?: continue
+            val train = parsed["train"]?.toString().orEmpty()
+            val start = (parsed["start"] as? Number)?.toLong() ?: continue
+            val key = "$train-${utcOrLocalDateKey(start, false)}"
+            if (!represented.add(key)) continue
+            suggestions.add(
+                mapOf(
+                    "id" to "smart-travel-${source.id}-$train-$start",
+                    "title" to parsed["title"],
+                    "start" to start,
+                    "end" to parsed["end"],
+                    "location" to parsed["location"],
+                    "description" to "",
+                    "calendarName" to "小V建议（短信/通知识别）",
+                    "eventType" to "出行",
+                    "eventColor" to null,
+                    "timeZone" to java.util.TimeZone.getDefault().id,
+                    "allDay" to false,
+                ),
+            )
+        }
+        return suggestions
+    }
+
+    private fun parseSmartTravelText(
+        source: SmartTravelText,
+        from: Long,
+        until: Long,
+    ): Map<String, Any?>? {
+        val trainMatch = TRAIN_NUMBER_PATTERN.find(source.text) ?: return null
+        val dateMatch = TRAVEL_DATE_PATTERN.find(source.text) ?: return null
+        val times = TRAVEL_TIME_PATTERN.findAll(source.text).mapNotNull { match ->
+            val hour = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
+            val minute = match.groupValues.getOrNull(2)?.toIntOrNull() ?: return@mapNotNull null
+            if (hour !in 0..23 || minute !in 0..59) null else hour to minute
+        }.distinct().take(2).toList()
+        if (times.isEmpty()) return null
+
+        val observed = java.util.Calendar.getInstance().apply {
+            timeInMillis = source.observedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        }
+        val explicitYear = dateMatch.groupValues.getOrNull(1)?.toIntOrNull()
+        val month = dateMatch.groupValues.getOrNull(2)?.toIntOrNull() ?: return null
+        val day = dateMatch.groupValues.getOrNull(3)?.toIntOrNull() ?: return null
+        var year = explicitYear ?: observed.get(java.util.Calendar.YEAR)
+        var start = calendarMillis(year, month, day, times[0].first, times[0].second) ?: return null
+        if (explicitYear == null && start < source.observedAt - 180L * 86_400_000L) {
+            year++
+            start = calendarMillis(year, month, day, times[0].first, times[0].second) ?: return null
+        }
+        if (start !in from until until) return null
+
+        var end = if (times.size > 1) {
+            calendarMillis(year, month, day, times[1].first, times[1].second) ?: start + 3_600_000L
+        } else {
+            start + 3_600_000L
+        }
+        if (end <= start) end += 86_400_000L
+
+        val train = trainMatch.groupValues[1].uppercase(Locale.ROOT)
+        val route = TRAVEL_ROUTE_PATTERN.find(source.text)?.let { match ->
+            val origin = match.groupValues.getOrNull(1).orEmpty().trim().removeSuffix("站")
+            val destination = match.groupValues.getOrNull(2).orEmpty().trim().removeSuffix("站")
+            if (origin.isBlank() || destination.isBlank()) "" else "$origin→$destination"
+        }.orEmpty()
+        return mapOf(
+            "train" to train,
+            "title" to if (route.isBlank()) train else "$train $route",
+            "start" to start,
+            "end" to end,
+            "location" to route.substringBefore("→", ""),
+        )
+    }
+
+    private fun calendarMillis(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long? {
+        if (year !in 2000..2100 || month !in 1..12 || day !in 1..31) return null
+        return try {
+            java.util.Calendar.getInstance().apply {
+                isLenient = false
+                clear()
+                set(year, month - 1, day, hour, minute, 0)
+            }.timeInMillis
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun utcOrLocalDateKey(milliseconds: Long, allDay: Boolean): String {
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply {
+            timeZone = if (allDay) java.util.TimeZone.getTimeZone("UTC") else java.util.TimeZone.getDefault()
+        }
+        return formatter.format(java.util.Date(milliseconds))
+    }
+
+    private fun queryDirectCalendarEventFallback(
+        from: Long,
+        until: Long,
+        representedEventIds: Set<String>,
+    ): List<CalendarInstanceRecord> {
+        val records = ArrayList<CalendarInstanceRecord>()
+        val richProjection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DTSTART,
+            CalendarContract.Events.DTEND,
+            CalendarContract.Events.EVENT_LOCATION,
+            CalendarContract.Events.ALL_DAY,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.EVENT_COLOR,
+            CalendarContract.Events.EVENT_TIMEZONE,
+            CalendarContract.Events.ORGANIZER,
+            CalendarContract.Events.RRULE,
+            CalendarContract.Events.RDATE,
+            CalendarContract.Events.STATUS,
+        )
+        val baseProjection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DTSTART,
+            CalendarContract.Events.DTEND,
+            CalendarContract.Events.EVENT_LOCATION,
+            CalendarContract.Events.ALL_DAY,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.RRULE,
+            CalendarContract.Events.RDATE,
+        )
+        val selection =
+            "${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ?"
+        val cursor = try {
+            contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                richProjection,
+                selection,
+                arrayOf(from.toString(), until.toString()),
+                "${CalendarContract.Events.DTSTART} ASC",
+            )
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                baseProjection,
+                selection,
+                arrayOf(from.toString(), until.toString()),
+                "${CalendarContract.Events.DTSTART} ASC",
+            )
+        } catch (_: Exception) {
+            null
+        }
+        cursor?.use {
+            val idIndex = it.getColumnIndex(CalendarContract.Events._ID)
+            val titleIndex = it.getColumnIndex(CalendarContract.Events.TITLE)
+            val startIndex = it.getColumnIndex(CalendarContract.Events.DTSTART)
+            val endIndex = it.getColumnIndex(CalendarContract.Events.DTEND)
+            val locationIndex = it.getColumnIndex(CalendarContract.Events.EVENT_LOCATION)
+            val allDayIndex = it.getColumnIndex(CalendarContract.Events.ALL_DAY)
+            val descriptionIndex = it.getColumnIndex(CalendarContract.Events.DESCRIPTION)
+            val calendarIdIndex = it.getColumnIndex(CalendarContract.Events.CALENDAR_ID)
+            val colorIndex = it.getColumnIndex(CalendarContract.Events.EVENT_COLOR)
+            val timezoneIndex = it.getColumnIndex(CalendarContract.Events.EVENT_TIMEZONE)
+            val organizerIndex = it.getColumnIndex(CalendarContract.Events.ORGANIZER)
+            val rruleIndex = it.getColumnIndex(CalendarContract.Events.RRULE)
+            val rdateIndex = it.getColumnIndex(CalendarContract.Events.RDATE)
+            val statusIndex = it.getColumnIndex(CalendarContract.Events.STATUS)
+            while (it.moveToNext() && records.size < 1000) {
+                val id = cursorString(it, idIndex)
+                val start = cursorLong(it, startIndex)
+                if (id.isBlank() || start <= 0L || representedEventIds.contains(id)) continue
+                if (cursorString(it, rruleIndex).isNotBlank() || cursorString(it, rdateIndex).isNotBlank()) continue
+                if (statusIndex >= 0 && !it.isNull(statusIndex) &&
+                    it.getInt(statusIndex) == CalendarContract.Events.STATUS_CANCELED
+                ) continue
+                val allDay = allDayIndex >= 0 && !it.isNull(allDayIndex) && it.getInt(allDayIndex) == 1
+                val rawEnd = if (endIndex >= 0 && !it.isNull(endIndex)) it.getLong(endIndex) else null
+                records.add(
+                    CalendarInstanceRecord(
+                        id = id,
+                        title = cursorString(it, titleIndex),
+                        start = start,
+                        end = rawEnd ?: (start + if (allDay) 86_400_000L else 3_600_000L),
+                        location = cursorString(it, locationIndex),
+                        calendarId = cursorString(it, calendarIdIndex),
+                        allDay = allDay,
+                        description = cursorString(it, descriptionIndex),
+                        organizer = cursorString(it, organizerIndex),
+                        eventColor = if (colorIndex >= 0 && !it.isNull(colorIndex)) it.getLong(colorIndex) else null,
+                        timeZone = cursorString(it, timezoneIndex),
+                    ),
+                )
+            }
+        }
+        return records
+    }
+
+    private fun queryCalendarNames(): Map<String, CalendarSourceInfo> {
+        val names = HashMap<String, CalendarSourceInfo>()
+        val richProjection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.OWNER_ACCOUNT,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+        )
+        val basicProjection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+        )
+        val cursor = try {
+            contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                richProjection,
+                null,
+                null,
+                null,
+            )
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                basicProjection,
+                null,
+                null,
+                null,
+            )
+        } catch (_: Exception) {
+            null
+        }
+        cursor?.use {
+            val idIndex = it.getColumnIndex(CalendarContract.Calendars._ID)
+            val displayNameIndex = it.getColumnIndex(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
+            val nameIndex = it.getColumnIndex(CalendarContract.Calendars.NAME)
+            val accountNameIndex = it.getColumnIndex(CalendarContract.Calendars.ACCOUNT_NAME)
+            val ownerAccountIndex = it.getColumnIndex(CalendarContract.Calendars.OWNER_ACCOUNT)
+            val accountTypeIndex = it.getColumnIndex(CalendarContract.Calendars.ACCOUNT_TYPE)
+            while (it.moveToNext()) {
+                val id = cursorString(it, idIndex)
+                if (id.isBlank()) continue
+                names[id] = CalendarSourceInfo(
+                    displayName = cursorString(it, displayNameIndex),
+                    name = cursorString(it, nameIndex),
+                    accountName = cursorString(it, accountNameIndex),
+                    ownerAccount = cursorString(it, ownerAccountIndex),
+                    accountType = cursorString(it, accountTypeIndex),
+                )
+            }
+        }
+        return names
+    }
+
+    private fun queryCalendarEventDetails(eventIds: Collection<String>): Map<String, CalendarEventInfo> {
+        val details = HashMap<String, CalendarEventInfo>()
+        val ids = eventIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (ids.isEmpty()) return details
+
+        val richProjection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.EVENT_COLOR,
+            CalendarContract.Events.EVENT_TIMEZONE,
+            CalendarContract.Events.ORGANIZER,
+            CalendarContract.Events.CUSTOM_APP_PACKAGE,
+            CalendarContract.Events.CUSTOM_APP_URI,
+        )
+        val coreProjection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.ORGANIZER,
+        )
+        ids.chunked(100).forEach { chunk ->
+            val selection = "${CalendarContract.Events._ID} IN (${chunk.joinToString(",") { "?" }})"
+            val cursor = try {
+                contentResolver.query(
+                    CalendarContract.Events.CONTENT_URI,
+                    richProjection,
+                    selection,
+                    chunk.toTypedArray(),
+                    null,
+                )
+            } catch (_: Exception) {
+                null
+            } ?: try {
+                contentResolver.query(
+                    CalendarContract.Events.CONTENT_URI,
+                    coreProjection,
+                    selection,
+                    chunk.toTypedArray(),
+                    null,
+                )
+            } catch (_: Exception) {
+                null
+            }
+            cursor?.use {
+                val idIndex = it.getColumnIndex(CalendarContract.Events._ID)
+                if (idIndex < 0) return@use
+                val titleIndex = it.getColumnIndex(CalendarContract.Events.TITLE)
+                val descriptionIndex = it.getColumnIndex(CalendarContract.Events.DESCRIPTION)
+                val calendarIdIndex = it.getColumnIndex(CalendarContract.Events.CALENDAR_ID)
+                val colorIndex = it.getColumnIndex(CalendarContract.Events.EVENT_COLOR)
+                val timeZoneIndex = it.getColumnIndex(CalendarContract.Events.EVENT_TIMEZONE)
+                val organizerIndex = it.getColumnIndex(CalendarContract.Events.ORGANIZER)
+                val customPackageIndex = it.getColumnIndex(CalendarContract.Events.CUSTOM_APP_PACKAGE)
+                val customUriIndex = it.getColumnIndex(CalendarContract.Events.CUSTOM_APP_URI)
+                while (it.moveToNext()) {
+                    val id = cursorString(it, idIndex)
+                    if (id.isBlank()) continue
+                    details[id] = CalendarEventInfo(
+                        title = cursorString(it, titleIndex),
+                        description = cursorString(it, descriptionIndex),
+                        calendarId = cursorString(it, calendarIdIndex),
+                        eventColor = if (colorIndex >= 0 && !it.isNull(colorIndex)) {
+                            it.getLong(colorIndex)
+                        } else {
+                            null
+                        },
+                        timeZone = cursorString(it, timeZoneIndex),
+                        organizer = cursorString(it, organizerIndex),
+                        customAppPackage = cursorString(it, customPackageIndex),
+                        customAppUri = cursorString(it, customUriIndex),
+                    )
+                }
+            }
+        }
+        return details
+    }
+
+    private fun queryCalendarExtendedProperties(): Map<String, String> {
+        val values = HashMap<String, MutableList<String>>()
+        try {
+            val projection = arrayOf(
+                CalendarContract.ExtendedProperties.EVENT_ID,
+                CalendarContract.ExtendedProperties.NAME,
+                CalendarContract.ExtendedProperties.VALUE,
+            )
+            contentResolver.query(
+                CalendarContract.ExtendedProperties.CONTENT_URI,
+                projection,
+                null,
+                null,
+                null,
+            )?.use {
+                val eventIdIndex = it.getColumnIndex(CalendarContract.ExtendedProperties.EVENT_ID)
+                val nameIndex = it.getColumnIndex(CalendarContract.ExtendedProperties.NAME)
+                val valueIndex = it.getColumnIndex(CalendarContract.ExtendedProperties.VALUE)
+                while (it.moveToNext()) {
+                    val eventId = cursorString(it, eventIdIndex)
+                    if (eventId.isBlank()) continue
+                    val name = cursorString(it, nameIndex).trim()
+                    val value = cursorString(it, valueIndex).trim()
+                    if (name.isBlank() && value.isBlank()) continue
+                    val display = when {
+                        name.isBlank() -> value
+                        value.isBlank() -> name
+                        else -> "$name：$value"
+                    }.take(512)
+                    values.getOrPut(eventId) { ArrayList() }.add(display)
+                }
+            }
+        } catch (_: Exception) {
+            // ExtendedProperties is optional and is not implemented by every
+            // OEM calendar provider.
+        }
+        return values.mapValues { (_, parts) -> parts.take(6).joinToString("\n") }
+    }
+
+    private fun joinCalendarText(vararg values: String): String = values
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString("\n")
+        .take(2048)
+
+    private fun buildCalendarDisplayTitle(
+        title: String,
+        description: String,
+        eventType: String,
+    ): String {
+        val normalizedTitle = title.trim().ifBlank { "未命名日程" }
+        if (eventType != "生日") return normalizedTitle
+        if (normalizedTitle.contains("生日") || normalizedTitle.contains("birthday", ignoreCase = true)) {
+            return normalizedTitle
+        }
+        val age = Regex("""(\d{1,3})\s*岁""").find(description)?.groupValues?.getOrNull(1)
+        return if (age.isNullOrBlank()) {
+            "${normalizedTitle}的生日".take(180)
+        } else {
+            "${normalizedTitle}的${age}岁生日".take(180)
+        }
+    }
+
+    private fun inferCalendarType(
+        title: String,
+        description: String,
+        calendar: CalendarSourceInfo?,
+        organizer: String,
+        customAppPackage: String,
+        customAppUri: String,
+    ): String {
+        val sourceText = listOf(
+            calendar?.displayName.orEmpty(),
+            calendar?.name.orEmpty(),
+            calendar?.accountName.orEmpty(),
+            calendar?.ownerAccount.orEmpty(),
+            calendar?.accountType.orEmpty(),
+        ).joinToString("\n")
+        val text = listOf(
+            title,
+            description,
+            sourceText,
+            organizer,
+            customAppPackage,
+            customAppUri,
+        ).joinToString("\n").lowercase(Locale.ROOT)
+        val birthdaySource = listOf(
+            calendar?.displayName.orEmpty(),
+            calendar?.name.orEmpty(),
+            calendar?.accountType.orEmpty(),
+        ).joinToString("\n").lowercase(Locale.ROOT)
+        val ageBirthday = Regex("""\d{1,3}\s*岁\s*生日""").containsMatchIn(text) ||
+            (listOf("生日", "birthday", "contacts").any(birthdaySource::contains) &&
+                Regex("""\d{1,3}\s*岁""").containsMatchIn(text))
+        val trainNumber = Regex("""\b(?:G|D|C|Z|T|K)\d{1,4}\b""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text)
+        return when {
+            listOf("生日", "birthday", "birth day", "birthdays", "诞辰").any(text::contains) ||
+                ageBirthday -> "生日"
+            listOf("纪念日", "anniversary").any(text::contains) -> "纪念日"
+            listOf("倒数日", "倒数", "countdown").any(text::contains) -> "倒数日"
+            listOf("高铁", "火车", "航班", "车票", "出行", "旅行", "travel", "flight").any(text::contains) ||
+                trainNumber -> "出行"
+            listOf("工作", "work", "会议", "meeting", "项目", "project").any(text::contains) -> "工作"
+            listOf("生活", "life", "购物", "appointment").any(text::contains) -> "生活"
+            listOf("个人", "personal").any(text::contains) -> "个人"
+            else -> ""
+        }
+    }
+
+    private fun cursorString(cursor: Cursor, index: Int): String {
+        return if (index < 0 || cursor.isNull(index)) "" else cursor.getString(index).orEmpty()
+    }
+
+    private fun cursorLong(cursor: Cursor, index: Int): Long {
+        return if (index < 0 || cursor.isNull(index)) 0L else cursor.getLong(index)
+    }
+
+    private fun openCalendarCreate(call: MethodCall, result: MethodChannel.Result) {
+        val title = call.argument<String>("title")?.trim().orEmpty()
+        val start = call.argument<Number>("start")?.toLong() ?: 0L
+        if (title.isBlank() || start <= 0L) {
+            result.error("invalid_argument", "创建日程缺少标题或开始时间", null)
+            return
+        }
+        val allDay = call.argument<Boolean>("allDay") == true
+        val end = call.argument<Number>("end")?.toLong()?.takeIf { it > start }
+            ?: if (allDay) start + 24L * 60L * 60L * 1000L else start + 60L * 60L * 1000L
+        val location = call.argument<String>("location")?.trim().orEmpty()
+        val intent = Intent(Intent.ACTION_INSERT).apply {
+            data = CalendarContract.Events.CONTENT_URI
+            putExtra(CalendarContract.Events.TITLE, title)
+            putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, start)
+            putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+            putExtra(CalendarContract.Events.ALL_DAY, allDay)
+            if (location.isNotBlank()) putExtra(CalendarContract.Events.EVENT_LOCATION, location)
+        }
+        try {
+            startActivity(intent)
+            result.success(true)
+        } catch (error: ActivityNotFoundException) {
+            result.error("calendar_unavailable", "手机没有可用的日历应用", error.message)
+        } catch (error: Exception) {
+            result.error("calendar_open_failed", "无法打开新建日程页面", error.message)
+        }
     }
 
     private fun hasPhotosPermission(): Boolean {
@@ -3354,6 +4060,14 @@ class MainActivity : FlutterActivity() {
     }
 
     companion object {
+        private val TRAIN_NUMBER_PATTERN =
+            Regex("""\b([GDCZTK]\d{1,4})(?:次)?\b""", RegexOption.IGNORE_CASE)
+        private val TRAVEL_DATE_PATTERN =
+            Regex("""(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日""")
+        private val TRAVEL_TIME_PATTERN =
+            Regex("""(?<!\d)([01]?\d|2[0-3])[:：]([0-5]\d)(?!\d)""")
+        private val TRAVEL_ROUTE_PATTERN =
+            Regex("""([\p{IsHan}]{2,12}(?:站)?)\s*(?:开往|前往|至|到|→|—>|->)\s*([\p{IsHan}]{2,12}(?:站)?)""")
         private const val ACTION_OPEN_RECEIVED_DIRECTORY =
             "com.hinge.office.OPEN_RECEIVED_DIRECTORY"
         private const val ACTION_OPEN_RECEIVED_FILE =

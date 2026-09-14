@@ -303,7 +303,12 @@ bool SendShellRequestToRunningHinge(const std::wstring& arguments) {
             payloadSize,
             &written,
             nullptr);
-        if (writeSucceeded) FlushFileBuffers(pipe);
+        // The Hinge server reads this one-shot request with ReadToEndAsync.
+        // FlushFileBuffers waits for the server to consume buffered bytes,
+        // while ReadToEndAsync waits for this client handle to close. Calling
+        // both creates a cross-process deadlock in Explorer's dllhost.exe.
+        // Closing the handle after a successful synchronous WriteFile is the
+        // request terminator and is sufficient for this local named pipe.
         CloseHandle(pipe);
 
         if (writeSucceeded && written == payloadSize) return true;

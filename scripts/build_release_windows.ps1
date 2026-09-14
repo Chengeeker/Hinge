@@ -9,6 +9,39 @@ $sparseStage = Join-Path $repoRoot 'tmp\Hinge-sparse-package'
 
 Write-Host '=== Building Hinge WinUI 3 Windows Release Bundle ===' -ForegroundColor Cyan
 
+# The sparse identity package is what makes the Explorer command visible in
+# Windows 11's first-level menu. A stale package version can leave an older
+# extension registered even when the desktop executable was updated, so fail
+# the build instead of producing a mixed bundle.
+$versionFiles = @(
+    (Join-Path $repoRoot 'windows\Hinge.App\Hinge.App.csproj'),
+    (Join-Path $repoRoot 'installer\Hinge.Setup.csproj')
+)
+$productVersion = $null
+foreach ($versionFile in $versionFiles) {
+    $versionMatch = [regex]::Match(
+        (Get-Content -LiteralPath $versionFile -Raw),
+        '<Version>([^<]+)</Version>')
+    if (-not $versionMatch.Success) {
+        throw "未能从版本文件读取产品版本：$versionFile"
+    }
+
+    $fileVersion = $versionMatch.Groups[1].Value.Trim()
+    if ($null -eq $productVersion) {
+        $productVersion = $fileVersion
+    } elseif ($productVersion -ne $fileVersion) {
+        throw "Windows 应用和安装器版本不一致：$productVersion / $fileVersion"
+    }
+}
+
+$sparseManifestPath = Join-Path $repoRoot 'windows\Hinge.SparsePackage\AppxManifest.xml'
+$sparseVersion = "${productVersion}.0"
+$sparseManifest = Get-Content -LiteralPath $sparseManifestPath -Raw
+$sparseVersionPattern = 'Version="' + [regex]::Escape($sparseVersion) + '"'
+if ($sparseManifest -notmatch $sparseVersionPattern) {
+    throw "稀疏身份包版本与 Windows 产品版本不一致，应为 $sparseVersion：$sparseManifestPath"
+}
+
 if (Test-Path -LiteralPath $nativeOutput) {
     Remove-Item -LiteralPath $nativeOutput -Recurse -Force
 }

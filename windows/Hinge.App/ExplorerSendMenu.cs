@@ -192,7 +192,11 @@ internal static class ExplorerSendMenu
 
         lock (Sync)
         {
-            if (string.Equals(_lastSignature, signature, StringComparison.Ordinal)) return;
+            if (string.Equals(_lastSignature, signature, StringComparison.Ordinal) &&
+                IsLegacyMenuHealthy(executable, deviceList))
+            {
+                return;
+            }
 
             try
             {
@@ -200,14 +204,18 @@ internal static class ExplorerSendMenu
                 using var parent = Registry.CurrentUser.CreateSubKey(ShellParentPath, writable: true);
                 if (parent == null) return;
 
-                parent.DeleteSubKeyTree(MenuKeyName, throwOnMissingSubKey: false);
                 if (executable == null || deviceList.Length == 0)
                 {
+                    parent.DeleteSubKeyTree(MenuKeyName, throwOnMissingSubKey: false);
                     _lastSignature = signature;
                     NotifyShell();
                     return;
                 }
 
+                // Keep the live parent in place while replacing its children.
+                // Explorer can enumerate this key while a device connects or
+                // disconnects; deleting it first creates a window in which
+                // the command disappears from the context menu.
                 using var menu = parent.CreateSubKey(MenuKeyName);
                 if (menu == null) return;
                 // Leave the default value unset. This is the documented
@@ -238,9 +246,12 @@ internal static class ExplorerSendMenu
                 using var shell = extended?.CreateSubKey("Shell");
                 if (shell == null) return;
 
+                var existingChildNames = shell.GetSubKeyNames();
+                var currentChildNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (device, index) in deviceList.Select((device, index) => (device, index)))
                 {
                     var keyName = $"device_{index}_{ShortHash(device.DeviceId)}";
+                    currentChildNames.Add(keyName);
                     using var child = shell.CreateSubKey(keyName);
                     if (child == null) continue;
 
@@ -254,6 +265,11 @@ internal static class ExplorerSendMenu
                         RegistryValueKind.String);
                 }
 
+                foreach (var staleName in existingChildNames.Where(name => !currentChildNames.Contains(name)))
+                {
+                    shell.DeleteSubKeyTree(staleName, throwOnMissingSubKey: false);
+                }
+
                 _lastSignature = signature;
                 NotifyShell();
             }
@@ -263,6 +279,43 @@ internal static class ExplorerSendMenu
                 // profile or a registry policy must not affect connectivity or
                 // the main Hinge process.
             }
+        }
+    }
+
+    private static bool IsLegacyMenuHealthy(
+        string? executablePath,
+        IReadOnlyList<ExplorerSendDevice> devices)
+    {
+        try
+        {
+            using var parent = Registry.CurrentUser.OpenSubKey(ShellParentPath, writable: false);
+            using var menu = parent?.OpenSubKey(MenuKeyName, writable: false);
+            if (executablePath == null || devices.Count == 0)
+            {
+                return menu == null;
+            }
+
+            if (menu == null ||
+                !string.Equals(menu.GetValue("MUIVerb") as string, MenuTitle, StringComparison.Ordinal) ||
+                !string.Equals(
+                    menu.GetValue("Icon") as string,
+                    $"{executablePath},0",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            using var shell = menu.OpenSubKey("ExtendedSubCommandsKey\\Shell", writable: false);
+            if (shell == null) return false;
+
+            var expected = devices
+                .Select((device, index) => $"device_{index}_{ShortHash(device.DeviceId)}")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return expected.SetEquals(shell.GetSubKeyNames());
+        }
+        catch
+        {
+            return false;
         }
     }
 

@@ -29,9 +29,38 @@ try {
         try { $identityCertificateThumbprint = $snapshot.GetValue('CertificateThumbprint') } finally { $snapshot.Dispose() }
     }
 } catch {}
+$currentSessionId = (Get-Process -Id $PID).SessionId
+$explorerProcesses = @(Get-Process -Name 'explorer' -ErrorAction SilentlyContinue | Where-Object {
+    $_.SessionId -eq $currentSessionId
+})
+$restartExplorer = $explorerProcesses.Count -gt 0
+if ($restartExplorer) {
+    $explorerProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 800
+}
 try {
-    Get-AppxPackage -Name 'Hinge.Office.Identity' | Remove-AppxPackage
-} catch {}
+    $identityPackages = @(Get-AppxPackage -Name 'Hinge.Office.Identity' -ErrorAction SilentlyContinue)
+    foreach ($identityPackage in $identityPackages) {
+        for ($attempt = 0; $attempt -lt 4; $attempt++) {
+            try {
+                Remove-AppxPackage -Package $identityPackage.PackageFullName -ErrorAction Stop
+                break
+            } catch {
+                if ($attempt -eq 3) { break }
+                Start-Sleep -Milliseconds (300 * ($attempt + 1))
+            }
+        }
+    }
+} catch {} finally {
+    if ($restartExplorer) {
+        $hasExplorer = @(Get-Process -Name 'explorer' -ErrorAction SilentlyContinue | Where-Object {
+            $_.SessionId -eq $currentSessionId
+        }).Count -gt 0
+        if (-not $hasExplorer) {
+            Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -WindowStyle Hidden
+        }
+    }
+}
 try {
     # Use the .NET registry API here because PowerShell's Registry provider
     # treats the `*` file-class key as a wildcard even with LiteralPath.

@@ -9,7 +9,7 @@
   <Identity
     Name="Hinge"
     Publisher="CN=Hinge Test"
-    Version="1.1.6.0"
+    Version="1.1.7.0"
     ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>Hinge</DisplayName>

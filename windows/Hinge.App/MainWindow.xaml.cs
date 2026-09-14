@@ -1096,9 +1096,91 @@ public sealed partial class MainWindow : Window
                 }
             }
         }
+
+        // Current Qt-based Weixin ignores the legacy Electron tray callback,
+        // while directly showing its hidden HWND produces an unresponsive
+        // shell window. Ask Windows to activate the registered Start-menu app
+        // instead; Weixin then routes the request to its existing instance.
+        if (foundProcess && TryActivateRegisteredWeixinApp(packageName))
+        {
+            return DesktopChatWakeResult.Activated;
+        }
+
         return foundProcess
             ? DesktopChatWakeResult.AlreadyRunning
             : DesktopChatWakeResult.NotRunning;
+    }
+
+    private static bool TryActivateRegisteredWeixinApp(string packageName)
+    {
+        if (!packageName.Equals("com.tencent.mm", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        object? shell = null;
+        object? appsFolder = null;
+        object? items = null;
+        object? item = null;
+
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("Shell.Application");
+            if (shellType == null) return false;
+
+            shell = Activator.CreateInstance(shellType);
+            if (shell == null) return false;
+
+            appsFolder = ((dynamic)shell).NameSpace("shell:AppsFolder");
+            if (appsFolder == null) return false;
+
+            items = ((dynamic)appsFolder).Items();
+            var count = (int)((dynamic)items).Count;
+            for (var index = 0; index < count; index++)
+            {
+                item = ((dynamic)items).Item(index);
+                var displayName = (string?)((dynamic)item).Name;
+                var appId = (string?)((dynamic)item).Path;
+                if (!DesktopChatAppRegistrationRules.IsWeixinEntry(displayName, appId))
+                {
+                    ReleaseComObject(ref item);
+                    continue;
+                }
+
+                using var activation = System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments = $"shell:AppsFolder\\{appId}",
+                        UseShellExecute = true,
+                    });
+                return true;
+            }
+        }
+        catch
+        {
+            // The AppsFolder registration can be missing or temporarily
+            // unavailable during a client update. Preserve the no-second-
+            // instance guard and fail without launching Weixin.exe directly.
+        }
+        finally
+        {
+            ReleaseComObject(ref item);
+            ReleaseComObject(ref items);
+            ReleaseComObject(ref appsFolder);
+            ReleaseComObject(ref shell);
+        }
+
+        return false;
+    }
+
+    private static void ReleaseComObject(ref object? value)
+    {
+        if (value != null && Marshal.IsComObject(value))
+        {
+            _ = Marshal.FinalReleaseComObject(value);
+        }
+        value = null;
     }
 
     private static string[] DesktopChatProcessNames(string packageName) =>

@@ -88,6 +88,13 @@ if (-not (Test-Path -LiteralPath $shellDll)) {
 # new package be installed without trying to overwrite that locked DLL.
 $versionedShellName = "Hinge.ShellExtension.v$productVersion.dll"
 
+$sdkBin = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64'
+$makeAppx = Join-Path $sdkBin 'makeappx.exe'
+$signTool = Join-Path $sdkBin 'signtool.exe'
+if (-not (Test-Path -LiteralPath $makeAppx) -or -not (Test-Path -LiteralPath $signTool)) {
+    throw "未找到 Windows SDK 打包工具：$sdkBin"
+}
+
 $executablePath = Join-Path $nativeOutput 'Hinge.exe'
 if (-not (Test-Path -LiteralPath $executablePath)) {
     Write-Error "WinUI 3 输出中未找到 Hinge.exe：$nativeOutput"
@@ -207,12 +214,17 @@ if ($null -eq $signingCertificate) {
 $publicCertificate = Join-Path $bundleDir 'Hinge.Identity.cer'
 Export-Certificate -Cert $signingCertificate -FilePath $publicCertificate -Force | Out-Null
 
-$sdkBin = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64'
-$makeAppx = Join-Path $sdkBin 'makeappx.exe'
-$signTool = Join-Path $sdkBin 'signtool.exe'
-if (-not (Test-Path -LiteralPath $makeAppx) -or -not (Test-Path -LiteralPath $signTool)) {
-    throw "未找到 Windows SDK 打包工具：$sdkBin"
+# Sign the in-process shell extension with the same certificate used by the
+# sparse identity package. This does not claim public CA trust, but it avoids
+# shipping an unsigned COM DLL when the installer has already established the
+# local Hinge package certificate as trusted.
+& $signTool sign /fd SHA256 /sha1 $signingCertificate.Thumbprint /s My $shellDll
+if ($LASTEXITCODE -ne 0) {
+    throw 'Windows 11 右键菜单组件签名失败。'
 }
+Copy-Item -LiteralPath $shellDll -Destination (Join-Path $bundleDir $versionedShellName) -Force
+Copy-Item -LiteralPath $shellDll -Destination (Join-Path $sparseStage $versionedShellName) -Force
+
 $identityPackage = Join-Path $bundleDir 'Hinge.Identity.msix'
 & $makeAppx pack /d $sparseStage /p $identityPackage /nv /o
 if ($LASTEXITCODE -ne 0) {

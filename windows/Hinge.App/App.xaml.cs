@@ -19,13 +19,22 @@ public partial class App : Application
         // late for the already-created taskbar button.
         Win32NotificationPresenter.InitializeCurrentProcessAppUserModelId();
         InitializeComponent();
+        LogLifecycle($"process-start pid={Environment.ProcessId}");
         UnhandledException += OnUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var launchArguments = ResolveLaunchArguments(args.Arguments);
+        LogLifecycle(ShellSendRequest.IsMarked(launchArguments)
+            ? "launch-received mode=shell-send"
+            : string.IsNullOrWhiteSpace(launchArguments) ||
+              !launchArguments.Contains("--", StringComparison.Ordinal)
+                ? "launch-received mode=interactive"
+                : "launch-received mode=command-line");
         var instance = AppInstance.FindOrRegisterForKey("Hinge.Main");
         if (!instance.IsCurrent)
         {
@@ -39,6 +48,7 @@ public partial class App : Application
             }
             finally
             {
+                LogLifecycle("secondary-instance-exit after activation redirect");
                 Environment.Exit(0);
             }
 
@@ -46,20 +56,22 @@ public partial class App : Application
         }
 
         _mainInstance = instance;
+        LogLifecycle("primary-instance-registered");
         _mainInstance.Activated += MainInstance_Activated;
 
         if (_window is MainWindow existingWindow)
         {
-            if (!existingWindow.HandleActivationArguments(args.Arguments))
+            if (!existingWindow.HandleActivationArguments(launchArguments))
             {
                 existingWindow.Activate();
             }
             return;
         }
 
-        bool startSilently = MainWindow.ShouldStartSilently(args.Arguments);
+        bool startSilently = MainWindow.ShouldStartSilently(launchArguments);
         _window = new MainWindow();
-        if (_window is MainWindow mainWindow && mainWindow.HandleActivationArguments(args.Arguments))
+        LogLifecycle("main-window-created");
+        if (_window is MainWindow mainWindow && mainWindow.HandleActivationArguments(launchArguments))
         {
             mainWindow.StartSilentlyToTray();
         }
@@ -71,6 +83,22 @@ public partial class App : Application
         {
             _window.Activate();
         }
+    }
+
+    private static string? ResolveLaunchArguments(string? activationArguments)
+    {
+        if (!string.IsNullOrWhiteSpace(activationArguments))
+        {
+            return activationArguments;
+        }
+
+        // Direct CreateProcess launches of an unpackaged WinUI app can leave
+        // LaunchActivatedEventArgs.Arguments empty even though the process
+        // command line contains Explorer's --shell-send payload. The parser
+        // searches for explicit markers, so passing the full command line is
+        // safe and preserves Windows quoting for selected file paths.
+        var commandLine = Environment.CommandLine;
+        return string.IsNullOrWhiteSpace(commandLine) ? null : commandLine;
     }
 
     private void MainInstance_Activated(object? sender, AppActivationArguments args)
@@ -122,6 +150,29 @@ public partial class App : Application
         if (e.ExceptionObject is Exception exception)
         {
             LogException(exception);
+        }
+    }
+
+    private void OnProcessExit(object? sender, EventArgs e)
+    {
+        LogLifecycle("process-exit");
+    }
+
+    internal static void LogLifecycle(string message)
+    {
+        try
+        {
+            string directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Hinge");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "lifecycle.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Lifecycle diagnostics must never affect the resident process.
         }
     }
 

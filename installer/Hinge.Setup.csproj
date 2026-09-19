@@ -6,10 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>Hinge-Setup</AssemblyName>
-    <Version>1.1.18</Version>
-    <AssemblyVersion>1.1.18.0</AssemblyVersion>
-    <FileVersion>1.1.18.0</FileVersion>
-    <InformationalVersion>1.1.18</InformationalVersion>
+    <Version>1.1.21</Version>
+    <AssemblyVersion>1.1.21.0</AssemblyVersion>
+    <FileVersion>1.1.21.0</FileVersion>
+    <InformationalVersion>1.1.21</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <RootNamespace>Hinge.Setup</RootNamespace>
     <ApplicationIcon>..\windows\Hinge.App\Assets\app_icon.ico</ApplicationIcon>

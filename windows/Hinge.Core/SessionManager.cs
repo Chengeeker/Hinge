@@ -447,7 +447,7 @@ public class SessionManager : IDisposable
             try
             {
                 boundClient.Client.Bind(new IPEndPoint(matchingIp, 0));
-                await boundClient.ConnectAsync(remoteIp, port).WaitAsync(TimeSpan.FromSeconds(3));
+                await ConnectWithTimeoutAsync(boundClient, remoteIp, port);
                 return RegisterConnection(boundClient, isOutbound: true);
             }
             catch
@@ -460,13 +460,29 @@ public class SessionManager : IDisposable
         var client = new TcpClient(AddressFamily.InterNetwork) { NoDelay = true };
         try
         {
-            await client.ConnectAsync(remoteIp, port).WaitAsync(TimeSpan.FromSeconds(3));
+            await ConnectWithTimeoutAsync(client, remoteIp, port);
             return RegisterConnection(client, isOutbound: true);
         }
         catch
         {
             client.Dispose();
             throw;
+        }
+    }
+
+    private static async Task ConnectWithTimeoutAsync(
+        TcpClient client,
+        IPAddress remoteIp,
+        int port)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try
+        {
+            await client.ConnectAsync(remoteIp, port, timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException($"连接 {remoteIp}:{port} 超时。");
         }
     }
 

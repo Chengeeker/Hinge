@@ -3,7 +3,7 @@
   manifestVersion="1.0"
   xmlns="urn:schemas-microsoft-com:asm.v1"
   xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-    <assemblyIdentity version="1.1.18.0" name="Hinge.App" />
+    <assemblyIdentity version="1.1.21.0" name="Hinge.App" />
   <msix
     xmlns="urn:schemas-microsoft-com:msix.v1"
     publisher="CN=Hinge Package Identity"

@@ -411,6 +411,7 @@ public sealed partial class MainWindow : Window
             });
             _trayManager.ExitRequested += (_, _) => DispatcherQueue.TryEnqueue(() =>
             {
+                App.LogLifecycle("tray-exit-requested");
                 _allowClose = true;
                 _appWindow?.Show();
                 Close();
@@ -2287,10 +2288,21 @@ public sealed partial class MainWindow : Window
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_allowClose || !_minimizeToTray) return;
+        if (_allowClose)
+        {
+            App.LogLifecycle("window-close-explicit");
+            return;
+        }
+
+        if (!_minimizeToTray)
+        {
+            App.LogLifecycle("window-close-setting-allows-exit");
+            return;
+        }
 
         args.Cancel = true;
         sender.Hide();
+        App.LogLifecycle("window-close-hidden-to-tray");
         if (_showTrayBackgroundNotice)
         {
             _trayManager.ShowNotification("Hinge", "应用仍在后台运行，可从系统托盘恢复或退出。");
@@ -2585,11 +2597,16 @@ public sealed partial class MainWindow : Window
                 WriteUserSetting("MinimizeToTray", value ? 1 : 0);
                 return value;
             }
-            return false;
+            // Hinge is designed to remain available for Explorer sends and
+            // device reconnection. Package identity replacement can clear
+            // LocalSettings during an update, so a missing value must not turn
+            // a normal window close into an unexpected process exit.
+            SaveMinimizeToTray(true);
+            return true;
         }
         catch
         {
-            return ReadUserSetting("MinimizeToTray") is int registryValue && registryValue != 0;
+            return ReadUserSetting("MinimizeToTray") is not int registryValue || registryValue != 0;
         }
     }
 
@@ -5360,7 +5377,13 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            // A Window that has never been activated does not reliably keep a
+            // WinUI desktop process alive. Explorer's shell-send fallback and
+            // silent startup both arrive here before the first activation, so
+            // establish the window lifetime once and immediately hide it.
+            Activate();
             _appWindow?.Hide();
+            App.LogLifecycle("primary-window-activated-once-and-hidden");
         }
         catch
         {

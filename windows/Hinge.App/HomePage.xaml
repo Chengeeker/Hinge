@@ -53,7 +53,7 @@
                         <TextBlock Text="附近设备" Style="{StaticResource HingeSectionTitleStyle}" />
                             <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
-                        <Button x:Name="RefreshButton" Grid.Column="1" Content="重新搜索" />
+                        <Button x:Name="RefreshButton" Grid.Column="1" Content="重新搜索" Margin="0,0,16,0" />
                     </Grid>
                     <ListView
                         x:Name="DeviceListView"

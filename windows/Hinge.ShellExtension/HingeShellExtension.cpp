@@ -16,6 +16,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,67 @@ struct SnapshotData {
     std::wstring executable;
     std::vector<DeviceEntry> devices;
 };
+
+struct FileStamp {
+    bool exists = false;
+    FILETIME lastWrite{};
+    ULONGLONG size = 0;
+};
+
+struct ExecutableCache {
+    std::mutex mutex;
+    bool initialized = false;
+    bool fromRegistry = false;
+    FILETIME registryLastWrite{};
+    FileStamp fileStamp{};
+    std::wstring path;
+};
+
+struct DevicesCache {
+    std::mutex mutex;
+    bool initialized = false;
+    bool fromRegistry = false;
+    FILETIME registryLastWrite{};
+    FileStamp fileStamp{};
+    std::vector<DeviceEntry> devices;
+};
+
+ExecutableCache& CachedExecutable() {
+    static ExecutableCache cache;
+    return cache;
+}
+
+DevicesCache& CachedDevices() {
+    static DevicesCache cache;
+    return cache;
+}
+
+bool SameFileTime(const FILETIME& left, const FILETIME& right) {
+    return left.dwLowDateTime == right.dwLowDateTime &&
+        left.dwHighDateTime == right.dwHighDateTime;
+}
+
+bool SameFileStamp(const FileStamp& left, const FileStamp& right) {
+    return left.exists == right.exists &&
+        left.size == right.size &&
+        SameFileTime(left.lastWrite, right.lastWrite);
+}
+
+bool QueryLastWriteTime(HKEY key, FILETIME& lastWrite) {
+    return key != nullptr && RegQueryInfoKeyW(
+        key,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        &lastWrite) == ERROR_SUCCESS;
+}
 
 std::wstring SnapshotFilePath() {
     const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
@@ -104,6 +166,22 @@ std::string ReadUtf8File(const std::wstring& path) {
     CloseHandle(file);
     if (!read || bytesRead != contents.size()) return {};
     return contents;
+}
+
+FileStamp SnapshotFileStamp() {
+    FileStamp stamp;
+    const auto path = SnapshotFilePath();
+    if (path.empty()) return stamp;
+
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) {
+        return stamp;
+    }
+
+    stamp.exists = true;
+    stamp.lastWrite = data.ftLastWriteTime;
+    stamp.size = (static_cast<ULONGLONG>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+    return stamp;
 }
 
 SnapshotData ReadSnapshotFile() {
@@ -169,53 +247,110 @@ std::wstring ReadStringValue(HKEY key, const wchar_t* name) {
 }
 
 std::wstring ReadExecutablePath() {
+    auto& cache = CachedExecutable();
+    std::lock_guard<std::mutex> guard(cache.mutex);
+
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kSnapshotPath, 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        FILETIME lastWrite{};
+        const bool hasStamp = QueryLastWriteTime(key, lastWrite);
         const auto value = ReadStringValue(key, L"ExecutablePath");
         RegCloseKey(key);
-        if (!value.empty()) return value;
+        if (!value.empty()) {
+            if (cache.initialized && cache.fromRegistry &&
+                (!hasStamp || SameFileTime(cache.registryLastWrite, lastWrite))) {
+                return cache.path;
+            }
+
+            cache.initialized = true;
+            cache.fromRegistry = true;
+            cache.registryLastWrite = lastWrite;
+            cache.fileStamp = {};
+            cache.path = value;
+            return cache.path;
+        }
     }
-    return ReadSnapshotFile().executable;
+
+    const auto fileStamp = SnapshotFileStamp();
+    if (cache.initialized && !cache.fromRegistry && SameFileStamp(cache.fileStamp, fileStamp)) {
+        return cache.path;
+    }
+
+    cache.initialized = true;
+    cache.fromRegistry = false;
+    cache.registryLastWrite = {};
+    cache.fileStamp = fileStamp;
+    cache.path = ReadSnapshotFile().executable;
+    return cache.path;
 }
 
 std::vector<DeviceEntry> ReadDevices() {
+    auto& cache = CachedDevices();
+    std::lock_guard<std::mutex> guard(cache.mutex);
+
     std::vector<DeviceEntry> result;
     HKEY parent = nullptr;
     std::wstring path = std::wstring(kSnapshotPath) + L"\\" + kDevicesSubkey;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, KEY_READ, &parent) != ERROR_SUCCESS) {
-        return ReadSnapshotFile().devices;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, KEY_READ, &parent) == ERROR_SUCCESS) {
+        FILETIME lastWrite{};
+        const bool hasStamp = QueryLastWriteTime(parent, lastWrite);
+        if (cache.initialized && cache.fromRegistry &&
+            (!hasStamp || SameFileTime(cache.registryLastWrite, lastWrite))) {
+            return cache.devices;
+        }
+
+        DWORD index = 0;
+        for (;;) {
+            wchar_t subkeyName[256]{};
+            DWORD nameLength = static_cast<DWORD>(std::size(subkeyName));
+            const LONG enumResult = RegEnumKeyExW(
+                parent, index++, subkeyName, &nameLength, nullptr, nullptr, nullptr, nullptr);
+            if (enumResult == ERROR_NO_MORE_ITEMS) break;
+            if (enumResult != ERROR_SUCCESS) continue;
+
+            HKEY child = nullptr;
+            if (RegOpenKeyExW(parent, subkeyName, 0, KEY_READ, &child) != ERROR_SUCCESS) continue;
+            DeviceEntry entry{ReadStringValue(child, L"DeviceId"), ReadStringValue(child, L"Name")};
+            RegCloseKey(child);
+            if (entry.id.empty()) continue;
+            if (entry.name.empty()) entry.name = L"已连接设备";
+            result.push_back(std::move(entry));
+        }
+        RegCloseKey(parent);
+
+        // Preserve the existing file fallback for the short window where the
+        // registry key exists but its child records have not been published.
+        if (result.empty()) result = ReadSnapshotFile().devices;
+
+        std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+            const int byName = _wcsicmp(left.name.c_str(), right.name.c_str());
+            return byName == 0 ? _wcsicmp(left.id.c_str(), right.id.c_str()) < 0 : byName < 0;
+        });
+        result.erase(
+            std::unique(result.begin(), result.end(), [](const auto& left, const auto& right) {
+                return _wcsicmp(left.id.c_str(), right.id.c_str()) == 0;
+            }),
+            result.end());
+
+        cache.initialized = true;
+        cache.fromRegistry = true;
+        cache.registryLastWrite = lastWrite;
+        cache.fileStamp = {};
+        cache.devices = result;
+        return cache.devices;
     }
 
-    DWORD index = 0;
-    for (;;) {
-        wchar_t subkeyName[256]{};
-        DWORD nameLength = static_cast<DWORD>(std::size(subkeyName));
-        const LONG enumResult = RegEnumKeyExW(
-            parent, index++, subkeyName, &nameLength, nullptr, nullptr, nullptr, nullptr);
-        if (enumResult == ERROR_NO_MORE_ITEMS) break;
-        if (enumResult != ERROR_SUCCESS) continue;
-
-        HKEY child = nullptr;
-        if (RegOpenKeyExW(parent, subkeyName, 0, KEY_READ, &child) != ERROR_SUCCESS) continue;
-        DeviceEntry entry{ReadStringValue(child, L"DeviceId"), ReadStringValue(child, L"Name")};
-        RegCloseKey(child);
-        if (entry.id.empty()) continue;
-        if (entry.name.empty()) entry.name = L"已连接设备";
-        result.push_back(std::move(entry));
+    const auto fileStamp = SnapshotFileStamp();
+    if (cache.initialized && !cache.fromRegistry && SameFileStamp(cache.fileStamp, fileStamp)) {
+        return cache.devices;
     }
-    RegCloseKey(parent);
 
-    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
-        const int byName = _wcsicmp(left.name.c_str(), right.name.c_str());
-        return byName == 0 ? _wcsicmp(left.id.c_str(), right.id.c_str()) < 0 : byName < 0;
-    });
-    result.erase(
-        std::unique(result.begin(), result.end(), [](const auto& left, const auto& right) {
-            return _wcsicmp(left.id.c_str(), right.id.c_str()) == 0;
-        }),
-        result.end());
-    if (result.empty()) return ReadSnapshotFile().devices;
-    return result;
+    cache.initialized = true;
+    cache.fromRegistry = false;
+    cache.registryLastWrite = {};
+    cache.fileStamp = fileStamp;
+    cache.devices = ReadSnapshotFile().devices;
+    return cache.devices;
 }
 
 std::wstring QuoteArgument(const std::wstring& value) {

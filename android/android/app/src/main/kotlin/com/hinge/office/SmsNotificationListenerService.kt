@@ -49,7 +49,15 @@ class SmsNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        sbn?.key?.let(activeContentIntents::remove)
+        val posted = sbn ?: return
+        posted.key?.let(activeContentIntents::remove)
+        if (posted.packageName == packageName) return
+
+        try {
+            notificationHistoryStore().markDismissed(posted.packageName, posted.key)
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to mark notification dismissed", error)
+        }
     }
 
     override fun onDestroy() {
@@ -86,32 +94,71 @@ class SmsNotificationListenerService : NotificationListenerService() {
         if (NotificationHistorySettings.isEnabled(this)) {
             val appName = applicationLabel(posted.packageName)
             val verificationCode = VerificationCodeExtractor.find(body)
-            val record = NotificationHistoryStore.Record(
-                id = "${posted.packageName}|${posted.key}|${posted.postTime}",
-                packageName = posted.packageName,
-                appName = appName,
-                title = title,
-                content = body,
-                timestamp = posted.postTime,
-                category = notification.category.orEmpty(),
-                ongoing = notification.flags and Notification.FLAG_ONGOING_EVENT != 0,
-                notificationKey = posted.key,
-                isVerificationCode = verificationCode != null,
-                verificationCode = verificationCode,
-            )
-            if (notificationHistoryStore().upsert(record)) {
-                NotificationHistoryBridge.emit(
-                    mapOf(
-                        "id" to record.id,
-                        "packageName" to record.packageName,
-                        "appName" to record.appName,
-                        "title" to record.title,
-                        "content" to record.content,
-                        "timestamp" to record.timestamp,
-                        "isVerificationCode" to record.isVerificationCode,
-                        "verificationCode" to record.verificationCode,
-                    ),
+            val isOngoing = isOngoingNotification(notification)
+            val store = notificationHistoryStore()
+
+            val existing = store.findLatestByNotificationKey(posted.packageName, posted.key)
+
+            if (existing != null) {
+                val contentIdentical = existing.title == title && existing.content == body
+                if (isOngoing || existing.ongoing) {
+                    // Ongoing notifications (e.g. Google Play download, ongoing progress/service):
+                    // update existing entry in-place so 10 minutes of download keeps 1 single row.
+                    val updated = existing.copy(
+                        appName = appName,
+                        title = title,
+                        content = body,
+                        timestamp = posted.postTime,
+                        category = notification.category.orEmpty(),
+                        ongoing = isOngoing,
+                        isVerificationCode = verificationCode != null,
+                        verificationCode = verificationCode,
+                    )
+                    store.update(updated)
+                    NotificationHistoryBridge.emit(
+                        mapOf(
+                            "id" to updated.id,
+                            "packageName" to updated.packageName,
+                            "appName" to updated.appName,
+                            "title" to updated.title,
+                            "content" to updated.content,
+                            "timestamp" to updated.timestamp,
+                            "isVerificationCode" to updated.isVerificationCode,
+                            "verificationCode" to updated.verificationCode,
+                        ),
+                    )
+                } else if (contentIdentical) {
+                    // Non-ongoing notification repeated with exact same key & content:
+                    // do not insert duplicate, update timestamp in-place.
+                    val updated = existing.copy(timestamp = posted.postTime)
+                    store.update(updated)
+                } else {
+                    // Same notification key with new content (e.g. updated message)
+                    val recent = store.findRecentByContent(
+                        posted.packageName,
+                        title,
+                        body,
+                        posted.postTime - 5 * 60 * 1000L,
+                    )
+                    if (recent != null) {
+                        store.update(recent.copy(timestamp = posted.postTime))
+                    } else {
+                        insertNewRecord(store, posted, notification, appName, title, body, isOngoing, verificationCode)
+                    }
+                }
+            } else {
+                // No existing record with this key; suppress duplicate if same content posted recently
+                val recent = store.findRecentByContent(
+                    posted.packageName,
+                    title,
+                    body,
+                    posted.postTime - 5 * 60 * 1000L,
                 )
+                if (recent != null) {
+                    store.update(recent.copy(timestamp = posted.postTime))
+                } else {
+                    insertNewRecord(store, posted, notification, appName, title, body, isOngoing, verificationCode)
+                }
             }
         }
 
@@ -185,6 +232,75 @@ class SmsNotificationListenerService : NotificationListenerService() {
                 .toString()
         } catch (_: Exception) {
             packageName
+        }
+    }
+
+    private fun isOngoingNotification(notification: Notification): Boolean {
+        val flags = notification.flags
+        if (flags and Notification.FLAG_ONGOING_EVENT != 0 ||
+            flags and Notification.FLAG_FOREGROUND_SERVICE != 0 ||
+            flags and Notification.FLAG_NO_CLEAR != 0
+        ) {
+            return true
+        }
+
+        val category = notification.category
+        if (category == Notification.CATEGORY_PROGRESS ||
+            category == Notification.CATEGORY_SERVICE ||
+            category == Notification.CATEGORY_NAVIGATION ||
+            category == Notification.CATEGORY_TRANSPORT
+        ) {
+            return true
+        }
+
+        val extras = notification.extras
+        if (extras != null) {
+            val max = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+            val indeterminate = extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
+            if (max > 0 || indeterminate) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun insertNewRecord(
+        store: NotificationHistoryStore,
+        posted: StatusBarNotification,
+        notification: Notification,
+        appName: String,
+        title: String,
+        body: String,
+        isOngoing: Boolean,
+        verificationCode: String?,
+    ) {
+        val record = NotificationHistoryStore.Record(
+            id = "${posted.packageName}|${posted.key}|${posted.postTime}",
+            packageName = posted.packageName,
+            appName = appName,
+            title = title,
+            content = body,
+            timestamp = posted.postTime,
+            category = notification.category.orEmpty(),
+            ongoing = isOngoing,
+            notificationKey = posted.key,
+            isVerificationCode = verificationCode != null,
+            verificationCode = verificationCode,
+        )
+        if (store.upsert(record)) {
+            NotificationHistoryBridge.emit(
+                mapOf(
+                    "id" to record.id,
+                    "packageName" to record.packageName,
+                    "appName" to record.appName,
+                    "title" to record.title,
+                    "content" to record.content,
+                    "timestamp" to record.timestamp,
+                    "isVerificationCode" to record.isVerificationCode,
+                    "verificationCode" to record.verificationCode,
+                ),
+            )
         }
     }
 

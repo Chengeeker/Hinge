@@ -27,7 +27,7 @@ class WorkspaceState extends ChangeNotifier {
   int _fontWeightLevel = 0;
   int _seedColor = defaultSeedColor;
   AppNavigationStyle _navigationStyle = AppNavigationStyle.adaptive;
-  bool _floatingCapsuleNavigation = false;
+  bool _floatingCapsuleNavigation = true;
   String _imageStoragePath = '';
   String _videoStoragePath = '';
   String _fileStoragePath = '';
@@ -220,7 +220,9 @@ class WorkspaceState extends ChangeNotifier {
       (item) => item.name == navigation,
       orElse: () => AppNavigationStyle.adaptive,
     );
-    _floatingCapsuleNavigation = values['floatingCapsuleNavigation'] == true;
+    _floatingCapsuleNavigation = values.containsKey('floatingCapsuleNavigation')
+        ? values['floatingCapsuleNavigation'] == true
+        : true;
     _imageStoragePath = '${values['imageStoragePath'] ?? ''}'.trim();
     _videoStoragePath = '${values['videoStoragePath'] ?? ''}'.trim();
     _fileStoragePath = '${values['fileStoragePath'] ?? ''}'.trim();

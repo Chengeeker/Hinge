@@ -2,6 +2,7 @@
     x:Class="Hinge.App.FileManagementPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Hinge.App"
     AllowDrop="True"
     DragEnter="DropRootGrid_DragOver"
     DragOver="DropRootGrid_DragOver"
@@ -9,17 +10,8 @@
     Drop="DropRootGrid_Drop"
     Background="Transparent"
     NavigationCacheMode="Required">
-    <Page.Resources>
-        <Style x:Key="SectionCardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Padding" Value="20" />
-        </Style>
-    </Page.Resources>
     <Grid x:Name="DropRootGrid" Background="Transparent" AllowDrop="True" DragEnter="DropRootGrid_DragOver" DragOver="DropRootGrid_DragOver" DragLeave="DropRootGrid_DragLeave" Drop="DropRootGrid_Drop">
-        <Border Margin="24,0,24,32" Style="{StaticResource SectionCardStyle}" HorizontalAlignment="Stretch">
+        <Border Margin="24,16,24,32" Style="{StaticResource HingeCardStyle}" HorizontalAlignment="Stretch">
             <Grid ColumnSpacing="20">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="220" />
@@ -45,40 +37,35 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <Grid ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
                     <Button
                         x:Name="NavigateBackButton"
-                        Grid.Column="0"
                         Width="32"
                         Height="32"
                         Padding="0"
                         Visibility="Collapsed"
                         VerticalAlignment="Center"
-                        ToolTipService.ToolTip="返回上一级文件夹">
+                        ToolTipService.ToolTip="返回上一级文件夹"
+                        AutomationProperties.Name="返回上一级文件夹">
                         <SymbolIcon Symbol="Back" />
                     </Button>
-                    <StackPanel Grid.Column="1" Spacing="3">
+                    <StackPanel Spacing="3">
                         <TextBlock x:Name="FilePathText" Text="最近文件" FontSize="18" FontWeight="SemiBold" />
                         <TextBlock x:Name="FileManagementStatusText" Text="正在检查设备连接…" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Button x:Name="SelectFilesButton" Content="选择" Height="36" />
-                        <Button x:Name="ImportFileButton" Content="导入电脑文件" Height="36" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button x:Name="SelectFilesButton" Content="选择" Height="36" AutomationProperties.Name="选择文件" />
+                        <Button x:Name="ImportFileButton" Content="导入电脑文件" Height="36" AutomationProperties.Name="导入电脑文件" />
                         <ComboBox x:Name="FileViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" Height="36">
                             <ComboBoxItem Content="宫格" Tag="grid" />
                             <ComboBoxItem Content="列表" Tag="list" />
                         </ComboBox>
-                        <Button x:Name="RefreshFilesButton" Width="36" Height="36" Padding="0" ToolTipService.ToolTip="刷新文件">
+                        <Button x:Name="RefreshFilesButton" Style="{StaticResource HingeIconButtonStyle}" ToolTipService.ToolTip="刷新文件" AutomationProperties.Name="刷新文件">
                             <SymbolIcon Symbol="Refresh" />
                         </Button>
                     </StackPanel>
-                </Grid>
-                <StackPanel x:Name="FileFilterBar" Grid.Row="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
+                </local:HingeWrapPanel>
+                <local:HingeWrapPanel x:Name="FileFilterBar" Grid.Row="1" Spacing="8" LineSpacing="8" JustifyLastLine="False" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <TextBlock Text="类型" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <ComboBox x:Name="FileTypeFilterOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" Height="36">
                         <ComboBoxItem Content="全部类型" Tag="all" />
@@ -108,13 +95,13 @@
                         <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
                         <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
                     </ComboBox>
-                </StackPanel>
-                <StackPanel x:Name="SelectionActionBar" Grid.Row="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed">
+                </local:HingeWrapPanel>
+                <local:HingeWrapPanel x:Name="SelectionActionBar" Grid.Row="2" Spacing="8" JustifyLastLine="False" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed">
                     <TextBlock x:Name="SelectedCountText" Text="已选 0 项" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <Button x:Name="SaveSelectedFilesButton" Content="保存到电脑" Height="36" />
                     <Button x:Name="DeleteSelectedFilesButton" Content="删除" Height="36" />
                     <Button x:Name="CancelSelectionButton" Content="取消" Height="36" />
-                </StackPanel>
+                </local:HingeWrapPanel>
                 <Grid Grid.Row="3">
                     <ListView
                         x:Name="FileListView"
@@ -137,7 +124,7 @@
         </Border>
         <Border
             x:Name="DropHintOverlay"
-            Margin="24,0,24,32"
+            Margin="24,16,24,32"
             CornerRadius="12"
             Background="{ThemeResource AccentFillColorDefaultBrush}"
             BorderBrush="{ThemeResource AccentControlElevationBorderBrush}"

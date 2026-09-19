@@ -82,14 +82,30 @@ if (-not (Test-Path -LiteralPath $shellDll)) {
     throw "未找到 Windows 11 右键菜单组件：$shellDll"
 }
 
+# Do not reuse a fixed DLL filename across releases. Explorer's COM surrogate
+# can keep the previous shell extension loaded while the installer is
+# replacing the application directory. A release-specific filename lets the
+# new package be installed without trying to overwrite that locked DLL.
+$versionedShellName = "Hinge.ShellExtension.v$productVersion.dll"
+
 $executablePath = Join-Path $nativeOutput 'Hinge.exe'
 if (-not (Test-Path -LiteralPath $executablePath)) {
     Write-Error "WinUI 3 输出中未找到 Hinge.exe：$nativeOutput"
     exit 1
 }
 
+$artifactSuffix = ''
 if (Test-Path -LiteralPath $publishDir) {
-    Remove-Item -LiteralPath $publishDir -Recurse -Force
+    try {
+        Remove-Item -LiteralPath $publishDir -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+        # A previously launched installer can keep its own EXE open while a
+        # new release is being built. Keep the old artifact intact and emit a
+        # versioned pair beside it instead of aborting the build.
+        $artifactSuffix = "-v$productVersion"
+        Write-Warning "旧发布文件仍被占用，将生成版本化文件名：$artifactSuffix"
+    }
 }
 if (Test-Path -LiteralPath $bundleDir) {
     Remove-Item -LiteralPath $bundleDir -Recurse -Force
@@ -97,7 +113,7 @@ if (Test-Path -LiteralPath $bundleDir) {
 New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
 New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 Copy-Item -Path (Join-Path $nativeOutput '*') -Destination $bundleDir -Recurse -Force
-Copy-Item -LiteralPath $shellDll -Destination $bundleDir -Force
+Copy-Item -LiteralPath $shellDll -Destination (Join-Path $bundleDir $versionedShellName) -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\allow_hinge_firewall.ps1') -Destination $bundleDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\Uninstall-Hinge.ps1') -Destination $bundleDir -Force
 
@@ -108,8 +124,18 @@ if (Test-Path -LiteralPath $sparseStage) {
     Remove-Item -LiteralPath $sparseStage -Recurse -Force
 }
 New-Item -ItemType Directory -Path (Join-Path $sparseStage 'Assets') -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $repoRoot 'windows\Hinge.SparsePackage\AppxManifest.xml') -Destination $sparseStage -Force
-Copy-Item -LiteralPath $shellDll -Destination (Join-Path $sparseStage 'Hinge.ShellExtension.dll') -Force
+$stagedManifestPath = Join-Path $sparseStage 'AppxManifest.xml'
+$stagedManifest = $sparseManifest.Replace(
+    'Path="Hinge.ShellExtension.dll"',
+    ('Path="' + $versionedShellName + '"'))
+if ($stagedManifest -eq $sparseManifest) {
+    throw "稀疏身份包清单未找到 Shell 扩展 DLL 路径：$sparseManifestPath"
+}
+[System.IO.File]::WriteAllText(
+    $stagedManifestPath,
+    $stagedManifest,
+    [System.Text.UTF8Encoding]::new($false))
+Copy-Item -LiteralPath $shellDll -Destination (Join-Path $sparseStage $versionedShellName) -Force
 
 Add-Type -AssemblyName System.Drawing.Common
 
@@ -197,7 +223,7 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Hinge 稀疏身份包签名失败。'
 }
 
-$zipPath = Join-Path $publishDir 'Hinge-Windows.zip'
+$zipPath = Join-Path $publishDir ("Hinge-Windows$artifactSuffix.zip")
 # Put the runnable files at the archive root so extracting the ZIP does not
 # require users to guess which nested folder contains the actual application.
 Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $zipPath -Force
@@ -208,7 +234,7 @@ Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $zipPath -For
 # deployment rules or the system C: drive.
 $installerOutput = Join-Path $repoRoot 'tmp\Hinge-setup-publish'
 $installerProject = Join-Path $repoRoot 'installer\Hinge.Setup.csproj'
-$setupPath = Join-Path $publishDir 'Hinge-Setup.exe'
+$setupPath = Join-Path $publishDir ("Hinge-Setup$artifactSuffix.exe")
 if (Test-Path -LiteralPath $installerOutput) {
     Remove-Item -LiteralPath $installerOutput -Recurse -Force
 }
@@ -221,7 +247,7 @@ $installerArgs = @(
     '--self-contained', 'true',
     '--output', $installerOutput,
     '-p:PublishSingleFile=true',
-    '-p:IncludeNativeLibrariesForSelfExtract=true',
+    '-p:IncludeNativeLibrariesForSelfExtract=false',
     '-p:EnableCompressionInSingleFile=true',
     '-p:DebugType=None',
     '-p:DebugSymbols=false'

@@ -3,32 +3,14 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
-    <Page.Resources>
-        <Style x:Key="SectionCardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Padding" Value="20" />
-        </Style>
-        <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="20" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-        </Style>
-        <Style x:Key="CaptionStyle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
-        </Style>
-    </Page.Resources>
-
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
+        <StackPanel Style="{StaticResource HingePageStackStyle}">
             <Grid ColumnSpacing="16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" />
                     <ColumnDefinition Width="*" MinWidth="260" />
                 </Grid.ColumnDefinitions>
-                <Border Style="{StaticResource SectionCardStyle}">
+                <Border Style="{StaticResource HingeCardStyle}">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -43,7 +25,7 @@
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                             <TextBlock x:Name="HeroDeviceName" FontSize="20" FontWeight="SemiBold" />
-                            <TextBlock x:Name="HeroDeviceDetail" Style="{StaticResource CaptionStyle}" TextWrapping="Wrap" />
+                            <TextBlock x:Name="HeroDeviceDetail" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Button x:Name="SendFileButton" Content="发送文件" />
@@ -51,16 +33,16 @@
                         </StackPanel>
                     </Grid>
                 </Border>
-                <Border Grid.Column="1" Style="{StaticResource SectionCardStyle}">
+                <Border Grid.Column="1" Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock Text="本机服务" FontWeight="SemiBold" />
-                        <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource CaptionStyle}" TextWrapping="Wrap" />
-                        <TextBlock Text="UDP 52830 · TCP 52831" Style="{StaticResource CaptionStyle}" />
+                        <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource HingeCaptionStyle}" />
+                        <TextBlock Text="UDP 52830 · TCP 52831" Style="{StaticResource HingeCaptionStyle}" />
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <Border Style="{StaticResource SectionCardStyle}">
+            <Border Style="{StaticResource HingeCardStyle}">
                 <StackPanel Spacing="12">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -68,8 +50,8 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Spacing="2">
-                            <TextBlock Text="附近设备" Style="{StaticResource SectionTitleStyle}" />
-                            <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" Style="{StaticResource CaptionStyle}" />
+                        <TextBlock Text="附近设备" Style="{StaticResource HingeSectionTitleStyle}" />
+                            <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <Button x:Name="RefreshButton" Grid.Column="1" Content="重新搜索" />
                     </Grid>
@@ -85,9 +67,9 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border Style="{StaticResource SectionCardStyle}">
+                <Border Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="连接状态" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="连接状态" Style="{StaticResource HingeSectionTitleStyle}" />
                         <InfoBar
                             x:Name="ActivityInfoBar"
                             IsOpen="True"
@@ -95,22 +77,22 @@
                             Severity="Informational"
                             Title="Hinge 已就绪"
                             Message="等待设备发现或建立会话。" />
-                        <TextBlock x:Name="StatusText" Style="{StaticResource CaptionStyle}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="StatusText" Style="{StaticResource HingeCaptionStyle}" />
                     </StackPanel>
                 </Border>
-                <Border Grid.Column="1" Style="{StaticResource SectionCardStyle}">
+                <Border Grid.Column="1" Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="剪贴板同步" Style="{StaticResource SectionTitleStyle}" />
-                        <TextBlock x:Name="ClipboardStatusText" Text="等待设备连接" Style="{StaticResource CaptionStyle}" TextWrapping="Wrap" />
+                        <TextBlock Text="剪贴板同步" Style="{StaticResource HingeSectionTitleStyle}" />
+                        <TextBlock x:Name="ClipboardStatusText" Text="等待设备连接" Style="{StaticResource HingeCaptionStyle}" />
                         <Button x:Name="ClipboardButton" Content="切换剪贴板同步" HorizontalAlignment="Left" />
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <Border Style="{StaticResource SectionCardStyle}">
+            <Border Style="{StaticResource HingeCardStyle}">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="说明" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="首页只负责设备发现、连接状态和常用操作。笔记、待办、日历、相册等功能在侧边栏中独立打开。" Style="{StaticResource CaptionStyle}" TextWrapping="Wrap" />
+                    <TextBlock Text="说明" Style="{StaticResource HingeSectionTitleStyle}" />
+                    <TextBlock Text="首页只负责设备发现、连接状态和常用操作。笔记、待办、日历、相册等功能在侧边栏中独立打开。" Style="{StaticResource HingeCaptionStyle}" />
                 </StackPanel>
             </Border>
         </StackPanel>

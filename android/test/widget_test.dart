@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hinge/app/app.dart';
 import 'package:hinge/core/device_identity_manager.dart';
@@ -5,6 +7,7 @@ import 'package:hinge/core/device_model.dart';
 import 'package:hinge/core/device_registry.dart';
 import 'package:hinge/core/discovery_message.dart';
 import 'package:hinge/core/discovery_service.dart';
+import 'package:hinge/core/workspace_state.dart';
 
 void main() {
   group('Workspace UI tests', () {
@@ -24,6 +27,54 @@ void main() {
 
       expect(find.text('Hinge Work'), findsOneWidget);
       expect(find.text('没有已连接的机型'), findsOneWidget);
+      expect(find.text('工作区'), findsOneWidget);
+    });
+
+    testWidgets('HingeApp remains readable in dark theme', (tester) async {
+      const identity = DeviceIdentity(
+        deviceId: 'dark-theme-device',
+        name: 'Dark Theme Phone',
+      );
+      final service = DiscoveryService(
+        localIdentity: identity,
+        registry: DeviceRegistry(),
+      );
+      final workspaceState = WorkspaceState()
+        ..cycleThemePreference()
+        ..cycleThemePreference();
+
+      await tester.pumpWidget(
+        HingeApp(
+          identity: identity,
+          discoveryService: service,
+          workspaceState: workspaceState,
+        ),
+      );
+
+      expect(find.text('Hinge Work'), findsOneWidget);
+      expect(find.text('没有已连接的机型'), findsOneWidget);
+    });
+
+    testWidgets('HingeApp keeps navigation usable with larger text', (
+      tester,
+    ) async {
+      const identity = DeviceIdentity(
+        deviceId: 'large-text-device',
+        name: 'Large Text Phone',
+      );
+      final service = DiscoveryService(
+        localIdentity: identity,
+        registry: DeviceRegistry(),
+      );
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+          child: HingeApp(identity: identity, discoveryService: service),
+        ),
+      );
+
+      expect(find.text('Hinge Work'), findsOneWidget);
       expect(find.text('工作区'), findsOneWidget);
     });
 
@@ -116,5 +167,67 @@ void main() {
       expect(find.text('连接'), findsOneWidget);
       expect(find.text('配对'), findsNothing);
     });
+
+    testWidgets(
+      'Floating capsule navigation bar renders with centered capsule, full-column indicator, and switches in settings',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        try {
+          const identity = DeviceIdentity(
+            deviceId: 'test-capsule-device',
+            name: 'Capsule Phone',
+          );
+          final service = DiscoveryService(
+            localIdentity: identity,
+            registry: DeviceRegistry(),
+          );
+          final state = WorkspaceState()
+            ..setNavigationStyle(AppNavigationStyle.bottom)
+            ..setFloatingCapsuleNavigation(true);
+
+          await tester.pumpWidget(
+            HingeApp(
+              identity: identity,
+              discoveryService: service,
+              workspaceState: state,
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final capsuleFinder = find.byWidgetPredicate(
+            (widget) =>
+                widget is Container &&
+                widget.constraints ==
+                    const BoxConstraints.tightFor(width: 280, height: 64),
+          );
+          expect(capsuleFinder, findsOneWidget);
+
+          final indicatorFinder = find.byWidgetPredicate(
+            (widget) =>
+                widget is Container &&
+                widget.decoration is BoxDecoration &&
+                (widget.decoration as BoxDecoration).borderRadius ==
+                    BorderRadius.circular(28),
+          );
+          expect(indicatorFinder, findsOneWidget);
+
+          await tester.tap(
+            find.descendant(of: capsuleFinder, matching: find.text('笔记')),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(state.currentTabIndex, equals(3));
+
+          state.setFloatingCapsuleNavigation(false);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+
+          expect(find.byType(NavigationBar), findsOneWidget);
+          expect(capsuleFinder, findsNothing);
+        } finally {
+          debugDefaultTargetPlatformOverride = null;
+        }
+      },
+    );
   });
 }

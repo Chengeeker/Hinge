@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -22,10 +26,14 @@ class HingeForegroundService : Service() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var smsContentObserver: SmsContentObserver? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var boundNetwork: Network? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        registerPhysicalNetworkCallback()
         acquireMulticastLock()
         acquireWifiLock()
         smsContentObserver = SmsContentObserver(this)
@@ -90,6 +98,7 @@ class HingeForegroundService : Service() {
     override fun onDestroy() {
         smsContentObserver?.close()
         smsContentObserver = null
+        unregisterPhysicalNetworkCallback()
         releaseMulticastLock()
         releaseWifiLock()
         super.onDestroy()
@@ -175,6 +184,117 @@ class HingeForegroundService : Service() {
             wifiLock = null
         }
     }
+
+    /**
+     * Keep the process bound to the current physical LAN while the Activity is
+     * paused. MainActivity performs the same binding before creating Dart
+     * sockets, but that callback only runs when the UI is alive. A Wi-Fi roam,
+     * DHCP renewal or access-point change can otherwise leave an already
+     * running foreground service attached to a stale Network object until the
+     * user opens Hinge again.
+     */
+    private fun registerPhysicalNetworkCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? ConnectivityManager ?: return
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                bindToPhysicalNetwork(manager, network)
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                capabilities: NetworkCapabilities,
+            ) {
+                if (isPhysicalLan(capabilities)) {
+                    bindToPhysicalNetwork(manager, network)
+                }
+            }
+
+            override fun onLost(network: Network) {
+                if (boundNetwork != network) return
+                boundNetwork = null
+                val replacement = manager.allNetworks.firstOrNull { candidate ->
+                    val capabilities = manager.getNetworkCapabilities(candidate)
+                    capabilities != null && isPhysicalLan(capabilities)
+                }
+                if (replacement != null) {
+                    bindToPhysicalNetwork(manager, replacement)
+                } else {
+                    try {
+                        manager.bindProcessToNetwork(null)
+                    } catch (_: Exception) {
+                        // The process may already be shutting down.
+                    }
+                }
+            }
+        }
+
+        try {
+            manager.registerNetworkCallback(request, callback)
+            connectivityManager = manager
+            networkCallback = callback
+            manager.allNetworks
+                .asSequence()
+                .mapNotNull { network ->
+                    manager.getNetworkCapabilities(network)?.let { network to it }
+                }
+                .firstOrNull { (_, capabilities) -> isPhysicalLan(capabilities) }
+                ?.first
+                ?.let { bindToPhysicalNetwork(manager, it) }
+        } catch (_: Exception) {
+            connectivityManager = null
+            networkCallback = null
+        }
+    }
+
+    private fun unregisterPhysicalNetworkCallback() {
+        val manager = connectivityManager
+        val callback = networkCallback
+        try {
+            if (manager != null && callback != null) {
+                manager.unregisterNetworkCallback(callback)
+            }
+            if (manager != null && boundNetwork != null) {
+                manager.bindProcessToNetwork(null)
+            }
+        } catch (_: Exception) {
+            // The network service may already be unavailable during teardown.
+        } finally {
+            connectivityManager = null
+            networkCallback = null
+            boundNetwork = null
+        }
+    }
+
+    private fun bindToPhysicalNetwork(
+        manager: ConnectivityManager,
+        network: Network,
+    ) {
+        val capabilities = try {
+            manager.getNetworkCapabilities(network)
+        } catch (_: Exception) {
+            null
+        } ?: return
+        if (!isPhysicalLan(capabilities) || boundNetwork == network) return
+        try {
+            if (manager.bindProcessToNetwork(network)) {
+                boundNetwork = network
+            }
+        } catch (_: Exception) {
+            // MainActivity/Dart will retry the binding on its next refresh.
+        }
+    }
+
+    private fun isPhysicalLan(capabilities: NetworkCapabilities): Boolean =
+        !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+            (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
 
     private fun persistentNotificationEnabled(): Boolean =
         getSharedPreferences("app_settings", MODE_PRIVATE)

@@ -10,6 +10,7 @@ Future<void> main() async {
   String? initialDeviceName;
   String? initialDeviceManufacturer;
   String? initialDeviceModel;
+  String? persistentDataDirectory;
   if (Platform.isAndroid) {
     try {
       final info = await const MethodChannel('hinge/platform')
@@ -17,6 +18,7 @@ Future<void> main() async {
       initialDeviceName = info?['name'] as String?;
       initialDeviceManufacturer = info?['manufacturer'] as String?;
       initialDeviceModel = info?['model'] as String?;
+      persistentDataDirectory = info?['dataDirectory'] as String?;
     } on MissingPluginException {
       // Flutter tests and older installations use the Dart fallback name.
     } on PlatformException {
@@ -28,6 +30,7 @@ Future<void> main() async {
       initialDeviceName: initialDeviceName,
       initialDeviceManufacturer: initialDeviceManufacturer,
       initialDeviceModel: initialDeviceModel,
+      persistentDataDirectory: persistentDataDirectory,
     ),
   );
 }

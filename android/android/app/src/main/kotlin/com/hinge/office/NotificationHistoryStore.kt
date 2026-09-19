@@ -58,6 +58,10 @@ class NotificationHistoryStore(context: Context) :
             "CREATE INDEX notification_history_package_idx " +
                 "ON $TABLE_NOTIFICATIONS ($COLUMN_PACKAGE_NAME)",
         )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS notification_history_notif_key_idx " +
+                "ON $TABLE_NOTIFICATIONS ($COLUMN_PACKAGE_NAME, $COLUMN_NOTIFICATION_KEY)",
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -77,6 +81,14 @@ class NotificationHistoryStore(context: Context) :
                         "ADD COLUMN $COLUMN_VERIFICATION_CODE TEXT",
                 )
             }
+        }
+        if (oldVersion < 3) {
+            try {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS notification_history_notif_key_idx " +
+                        "ON $TABLE_NOTIFICATIONS ($COLUMN_PACKAGE_NAME, $COLUMN_NOTIFICATION_KEY)",
+                )
+            } catch (_: Exception) {}
         }
     }
 
@@ -140,46 +152,130 @@ class NotificationHistoryStore(context: Context) :
             "$COLUMN_TIMESTAMP $order, $COLUMN_ID $order",
             "$safeLimit OFFSET $safeOffset",
         ).use { cursor ->
-            val id = cursor.getColumnIndexOrThrow(COLUMN_ID)
-            val packageIndex = cursor.getColumnIndexOrThrow(COLUMN_PACKAGE_NAME)
-            val appName = cursor.getColumnIndexOrThrow(COLUMN_APP_NAME)
-            val title = cursor.getColumnIndexOrThrow(COLUMN_TITLE)
-            val content = cursor.getColumnIndexOrThrow(COLUMN_CONTENT)
-            val timestamp = cursor.getColumnIndexOrThrow(COLUMN_TIMESTAMP)
-            val category = cursor.getColumnIndexOrThrow(COLUMN_CATEGORY)
-            val ongoing = cursor.getColumnIndexOrThrow(COLUMN_ONGOING)
-            val notificationKey = cursor.getColumnIndexOrThrow(COLUMN_NOTIFICATION_KEY)
-            val isVerificationCode = cursor.getColumnIndexOrThrow(COLUMN_IS_VERIFICATION_CODE)
-            val verificationCode = cursor.getColumnIndexOrThrow(COLUMN_VERIFICATION_CODE)
             while (cursor.moveToNext()) {
-                val packageValue = cursor.getString(packageIndex)
-                val contentValue = cursor.getString(content)
-                val storedCode = cursor.getString(verificationCode)?.trim().orEmpty()
-                // Records written before verification fields were persisted
-                // can still be recovered. The extractor itself is strict:
-                // it requires a verification keyword and a standalone code,
-                // so ordinary notification numbers do not gain a copy action.
-                val recoveredCode = if (storedCode.isNotEmpty()) {
-                    storedCode
-                } else {
-                    VerificationCodeExtractor.find(contentValue).orEmpty()
-                }
-                result += Record(
-                    id = cursor.getString(id),
-                    packageName = packageValue,
-                    appName = cursor.getString(appName),
-                    title = cursor.getString(title),
-                    content = contentValue,
-                    timestamp = cursor.getLong(timestamp),
-                    category = cursor.getString(category),
-                    ongoing = cursor.getInt(ongoing) != 0,
-                    notificationKey = cursor.getString(notificationKey),
-                    isVerificationCode = cursor.getInt(isVerificationCode) != 0 || recoveredCode.isNotEmpty(),
-                    verificationCode = recoveredCode.ifEmpty { null },
-                )
+                result += readRecordFromCursor(cursor)
             }
         }
         return result
+    }
+
+    fun findLatestByNotificationKey(packageName: String, notificationKey: String): Record? {
+        if (notificationKey.isBlank()) return null
+        val selection = "$COLUMN_PACKAGE_NAME = ? AND $COLUMN_NOTIFICATION_KEY = ?"
+        val args = arrayOf(packageName, notificationKey)
+        readableDatabase.query(
+            TABLE_NOTIFICATIONS,
+            COLUMNS,
+            selection,
+            args,
+            null,
+            null,
+            "$COLUMN_TIMESTAMP DESC, $COLUMN_ID DESC",
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return readRecordFromCursor(cursor)
+        }
+    }
+
+    fun findRecentByContent(
+        packageName: String,
+        title: String,
+        content: String,
+        sinceTimestamp: Long,
+    ): Record? {
+        val selection = "$COLUMN_PACKAGE_NAME = ? AND $COLUMN_TITLE = ? AND $COLUMN_CONTENT = ? AND $COLUMN_TIMESTAMP >= ?"
+        val args = arrayOf(packageName, title, content, sinceTimestamp.toString())
+        readableDatabase.query(
+            TABLE_NOTIFICATIONS,
+            COLUMNS,
+            selection,
+            args,
+            null,
+            null,
+            "$COLUMN_TIMESTAMP DESC, $COLUMN_ID DESC",
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return readRecordFromCursor(cursor)
+        }
+    }
+
+    fun update(record: Record): Boolean {
+        val values = ContentValues().apply {
+            put(COLUMN_APP_NAME, record.appName)
+            put(COLUMN_TITLE, record.title)
+            put(COLUMN_CONTENT, record.content)
+            put(COLUMN_TIMESTAMP, record.timestamp)
+            put(COLUMN_CATEGORY, record.category)
+            put(COLUMN_ONGOING, if (record.ongoing) 1 else 0)
+            put(COLUMN_NOTIFICATION_KEY, record.notificationKey)
+            put(COLUMN_IS_VERIFICATION_CODE, if (record.isVerificationCode) 1 else 0)
+            if (record.verificationCode.isNullOrBlank()) {
+                putNull(COLUMN_VERIFICATION_CODE)
+            } else {
+                put(COLUMN_VERIFICATION_CODE, record.verificationCode)
+            }
+        }
+        return writableDatabase.update(
+            TABLE_NOTIFICATIONS,
+            values,
+            "$COLUMN_ID = ?",
+            arrayOf(record.id),
+        ) > 0
+    }
+
+    fun markDismissed(packageName: String, notificationKey: String): Boolean {
+        if (notificationKey.isBlank()) return false
+        val values = ContentValues().apply {
+            put(COLUMN_ONGOING, 0)
+        }
+        return writableDatabase.update(
+            TABLE_NOTIFICATIONS,
+            values,
+            "$COLUMN_PACKAGE_NAME = ? AND $COLUMN_NOTIFICATION_KEY = ? AND $COLUMN_ONGOING = 1",
+            arrayOf(packageName, notificationKey),
+        ) > 0
+    }
+
+    private fun readRecordFromCursor(cursor: android.database.Cursor): Record {
+        val id = cursor.getColumnIndexOrThrow(COLUMN_ID)
+        val packageIndex = cursor.getColumnIndexOrThrow(COLUMN_PACKAGE_NAME)
+        val appName = cursor.getColumnIndexOrThrow(COLUMN_APP_NAME)
+        val title = cursor.getColumnIndexOrThrow(COLUMN_TITLE)
+        val content = cursor.getColumnIndexOrThrow(COLUMN_CONTENT)
+        val timestamp = cursor.getColumnIndexOrThrow(COLUMN_TIMESTAMP)
+        val category = cursor.getColumnIndexOrThrow(COLUMN_CATEGORY)
+        val ongoing = cursor.getColumnIndexOrThrow(COLUMN_ONGOING)
+        val notificationKey = cursor.getColumnIndexOrThrow(COLUMN_NOTIFICATION_KEY)
+        val isVerificationCode = cursor.getColumnIndexOrThrow(COLUMN_IS_VERIFICATION_CODE)
+        val verificationCode = cursor.getColumnIndexOrThrow(COLUMN_VERIFICATION_CODE)
+
+        val packageValue = cursor.getString(packageIndex)
+        val contentValue = cursor.getString(content)
+        val storedCode = cursor.getString(verificationCode)?.trim().orEmpty()
+        // Records written before verification fields were persisted
+        // can still be recovered. The extractor itself is strict:
+        // it requires a verification keyword and a standalone code,
+        // so ordinary notification numbers do not gain a copy action.
+        val recoveredCode = if (storedCode.isNotEmpty()) {
+            storedCode
+        } else {
+            VerificationCodeExtractor.find(contentValue).orEmpty()
+        }
+        return Record(
+            id = cursor.getString(id),
+            packageName = packageValue,
+            appName = cursor.getString(appName),
+            title = cursor.getString(title),
+            content = contentValue,
+            timestamp = cursor.getLong(timestamp),
+            category = cursor.getString(category),
+            ongoing = cursor.getInt(ongoing) != 0,
+            notificationKey = cursor.getString(notificationKey),
+            isVerificationCode = cursor.getInt(isVerificationCode) != 0 || recoveredCode.isNotEmpty(),
+            verificationCode = recoveredCode.ifEmpty { null },
+        )
     }
 
     fun applications(): List<ApplicationSummary> {
@@ -221,7 +317,7 @@ class NotificationHistoryStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "notification_history.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
         private const val TABLE_NOTIFICATIONS = "notifications"
         private const val COLUMN_ID = "id"
         private const val COLUMN_PACKAGE_NAME = "package_name"

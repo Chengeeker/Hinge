@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
@@ -80,7 +81,9 @@ public sealed partial class MainWindow : Window
     private const int ThumbnailBudgetPerBatch = 80;
     private readonly HashSet<SessionConnection> _observedConnections = new();
     private readonly Dictionary<string, DateTime> _automaticConnectAttempts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _manualDisconnectSuppressedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _historicalReconnectTimer;
+    private int _connectionAttemptGeneration;
     private Device? _activeDevice;
     private SessionConnection? _activeConnection;
     private string? _connectingDeviceId;
@@ -127,6 +130,7 @@ public sealed partial class MainWindow : Window
     private DateTime _nativeExternalDragCandidateSince;
     private CancellationTokenSource? _computerDropCancellation;
     private readonly SemaphoreSlim _shellSendGate = new(1, 1);
+    private readonly PendingFileSendStore _pendingFileSendStore = new();
     private readonly ShellSendPipeServer _shellSendPipeServer;
     private IntPtr _windowIconLarge;
     private IntPtr _windowIconSmall;
@@ -2755,9 +2759,17 @@ public sealed partial class MainWindow : Window
             // already present in this installation's trust store. Requests
             // without the marker remain manual-connect compatibility paths.
             if (args.Message.AutomaticReconnect &&
-                !_trustStore.IsTrusted(args.Message.DeviceId))
+                (!_trustStore.IsTrusted(args.Message.DeviceId) ||
+                 IsHistoricalReconnectSuppressed(args.Message.DeviceId)))
             {
                 return;
+            }
+
+            // A manual request from the other side is an explicit user action
+            // and re-enables this device for the current process lifetime.
+            if (!args.Message.AutomaticReconnect)
+            {
+                _manualDisconnectSuppressedDeviceIds.TryRemove(args.Message.DeviceId, out _);
             }
 
             if (_sessionManager.ConnectionForDevice(args.Message.DeviceId) != null)
@@ -2776,7 +2788,14 @@ public sealed partial class MainWindow : Window
             }
             if (_connectingDeviceId != null) return;
 
-            if (_registry.TryGetDevice(args.Message.DeviceId, out var device) && device != null)
+            if (!_registry.TryGetDevice(args.Message.DeviceId, out var device) || device == null)
+            {
+                string remoteIp = args.RemoteAddress.ToString();
+                _registry.UpsertDevice(args.Message, remoteIp);
+                _registry.TryGetDevice(args.Message.DeviceId, out device);
+            }
+
+            if (device != null)
             {
                 await ConnectDeviceAsync(
                     device,
@@ -2798,7 +2817,8 @@ public sealed partial class MainWindow : Window
         Device? candidate = devices.FirstOrDefault(device =>
             device.ConnectionState != ConnectionState.Disconnected &&
             device.NetworkAddresses.Count > 0 &&
-            _trustStore.IsTrusted(device.DeviceId));
+            _trustStore.IsTrusted(device.DeviceId) &&
+            !IsHistoricalReconnectSuppressed(device.DeviceId));
         if (candidate == null) return;
 
         DateTime now = DateTime.UtcNow;
@@ -2825,7 +2845,12 @@ public sealed partial class MainWindow : Window
 
     private void ScheduleHistoricalReconnect(string? deviceId = null)
     {
-        if (deviceId != null && !_trustStore.IsTrusted(deviceId)) return;
+        if (deviceId != null &&
+            (!_trustStore.IsTrusted(deviceId) ||
+             IsHistoricalReconnectSuppressed(deviceId)))
+        {
+            return;
+        }
         if (_historicalReconnectTimer != null) return;
 
         var timer = DispatcherQueue.CreateTimer();
@@ -2850,6 +2875,10 @@ public sealed partial class MainWindow : Window
         _historicalReconnectTimer?.Stop();
         _historicalReconnectTimer = null;
     }
+
+    private bool IsHistoricalReconnectSuppressed(string? deviceId) =>
+        !string.IsNullOrWhiteSpace(deviceId) &&
+        _manualDisconnectSuppressedDeviceIds.ContainsKey(deviceId);
 
     private void OnClientConnected(object? sender, SessionConnection connection)
     {
@@ -3058,9 +3087,9 @@ public sealed partial class MainWindow : Window
 
             var connectButton = new Button
             {
-                Content = connected ? "已连接" : online ? "连接" : "重试",
+                Content = connected ? "断开连接" : online ? "连接" : "重试",
                 Tag = device,
-                IsEnabled = !connected
+                IsEnabled = connected || online
             };
             connectButton.Click += DeviceConnect_Click;
             actions.Children.Add(connectButton);
@@ -3099,12 +3128,65 @@ public sealed partial class MainWindow : Window
     {
         if (sender is Button { Tag: Device device })
         {
-            await ConnectDeviceAsync(device, automatic: false);
+            if (IsDeviceSessionConnected(device))
+            {
+                DisconnectDevice(device);
+            }
+            else
+            {
+                await ConnectDeviceAsync(device, automatic: false);
+            }
         }
+    }
+
+    private void DisconnectDevice(Device device)
+    {
+        _manualDisconnectSuppressedDeviceIds[device.DeviceId] = 0;
+        _automaticConnectAttempts.Remove(device.DeviceId);
+        _connectionAttemptGeneration++;
+        CancelHistoricalReconnect();
+
+        var connections = _sessionManager.ActiveConnections
+            .Where(connection => string.Equals(
+                connection.RemoteDeviceId,
+                device.DeviceId,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (var connection in connections)
+        {
+            connection.Dispose();
+        }
+
+        if (connections.Length == 0 &&
+            _activeConnection is { } activeConnection &&
+            string.Equals(
+                activeConnection.RemoteDeviceId,
+                device.DeviceId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            activeConnection.Dispose();
+        }
+
+        _registry.MarkSessionDisconnected(device.DeviceId);
+        StatusText.Text = $"已断开 {device.Name}";
+        HeaderStatusText.Text = "局域网就绪";
+        RefreshDeviceList(_registry.GetAllDevices());
     }
 
     private async Task ConnectDeviceAsync(Device device, bool automatic)
     {
+        if (automatic && IsHistoricalReconnectSuppressed(device.DeviceId))
+        {
+            return;
+        }
+
+        if (!automatic)
+        {
+            // A manual connect is the explicit way to re-enable a device after
+            // the user previously disconnected it in this process.
+            _manualDisconnectSuppressedDeviceIds.TryRemove(device.DeviceId, out _);
+        }
+
         if (device.NetworkAddresses.Count == 0)
         {
             if (!automatic) ShowStatus("无法连接", $"未找到 {device.Name} 的局域网地址。");
@@ -3118,6 +3200,7 @@ public sealed partial class MainWindow : Window
         }
 
         _connectingDeviceId = device.DeviceId;
+        var attemptGeneration = ++_connectionAttemptGeneration;
         SessionConnection? connection = null;
         try
         {
@@ -3128,41 +3211,98 @@ public sealed partial class MainWindow : Window
             Exception? lastError = null;
             var addresses = OrderAddresses(device.NetworkAddresses).ToArray();
 
-            // Request the reverse path immediately instead of waiting for a
-            // blocked inbound TCP attempt to time out. SessionManager removes
-            // duplicate sockets deterministically after identity exchange.
-            foreach (var address in addresses)
+            // Request the reverse path immediately in the background with multi-burst
+            // instead of waiting for a blocked inbound TCP attempt to time out.
+            _ = Task.Run(async () =>
             {
-                try
-                {
-                    await _discoveryService.RequestReverseConnectionAsync(
-                        address,
-                        device.DiscoveryPort,
-                        automaticReconnect: automatic);
-                }
-                catch { }
-            }
-
-            foreach (var address in addresses)
-            {
-                foreach (var port in new[] { device.SessionPort, Constants.SessionTcpPort }.Distinct())
+                foreach (var address in addresses)
                 {
                     try
                     {
-                        connection = await _sessionManager.ConnectToPeerAsync(address, port);
+                        await _discoveryService.RequestReverseConnectionAsync(
+                            address,
+                            device.DiscoveryPort,
+                            automaticReconnect: automatic);
+                    }
+                    catch { }
+                }
+            });
+
+            // Parallel race between inbound reverse connection and direct outbound TCP.
+            // On standalone mobile VPNs, direct inbound TCP SYN is dropped by Android's kernel,
+            // but the reverse connection from Android to PC arrives in ~50-150ms.
+            using var cts = new CancellationTokenSource();
+            var tcs = new TaskCompletionSource<SessionConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            // Path 1: High-sensitivity reverse connection watcher
+            _ = Task.Run(async () =>
+            {
+                DateTime deadline = DateTime.UtcNow.AddSeconds(6);
+                while (DateTime.UtcNow < deadline && !cts.Token.IsCancellationRequested)
+                {
+                    var rev = _sessionManager.ConnectionForDevice(device.DeviceId);
+                    if (rev is { State: SessionState.Connected })
+                    {
+                        if (tcs.TrySetResult(rev))
+                        {
+                            cts.Cancel();
+                            return;
+                        }
+                    }
+                    try
+                    {
+                        await Task.Delay(50, cts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
                         break;
                     }
-                    catch (Exception exception)
+                }
+            });
+
+            // Path 2: Direct outbound TCP connection attempts
+            _ = Task.Run(async () =>
+            {
+                foreach (var address in addresses)
+                {
+                    if (cts.Token.IsCancellationRequested) break;
+                    foreach (var port in new[] { device.SessionPort, Constants.SessionTcpPort }.Distinct())
                     {
-                        lastError = exception;
+                        if (cts.Token.IsCancellationRequested) break;
+                        try
+                        {
+                            var direct = await _sessionManager.ConnectToPeerAsync(address, port);
+                            if (tcs.TrySetResult(direct))
+                            {
+                                cts.Cancel();
+                                return;
+                            }
+                            else
+                            {
+                                direct.Dispose();
+                                return;
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            lastError = exception;
+                        }
                     }
                 }
-                if (connection != null) break;
+            });
+
+            try
+            {
+                connection = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(6.5));
+            }
+            catch (TimeoutException)
+            {
+                connection = _sessionManager.ConnectionForDevice(device.DeviceId);
             }
 
             if (connection == null)
             {
-                connection = await WaitForReverseConnectionAsync(device.DeviceId);
+                connection = await WaitForReverseConnectionAsync(device.DeviceId, TimeSpan.FromSeconds(1));
             }
             if (connection == null)
             {
@@ -3178,6 +3318,13 @@ public sealed partial class MainWindow : Window
             }
             await Task.Delay(20);
             connection = _sessionManager.ConnectionForDevice(device.DeviceId) ?? connection;
+
+            if (attemptGeneration != _connectionAttemptGeneration ||
+                (automatic && IsHistoricalReconnectSuppressed(device.DeviceId)))
+            {
+                connection.Dispose();
+                return;
+            }
 
             // Only register and persist the peer after the hello identity has
             // matched the device discovered on the network. This prevents an
@@ -3221,7 +3368,7 @@ public sealed partial class MainWindow : Window
         {
             var connection = _sessionManager.ConnectionForDevice(deviceId);
             if (connection != null) return connection;
-            await Task.Delay(100);
+            await Task.Delay(50);
         }
         return _sessionManager.ConnectionForDevice(deviceId);
     }
@@ -3506,6 +3653,15 @@ public sealed partial class MainWindow : Window
     {
         if (sender is not SessionConnection connection || connection.State != SessionState.Connected) return;
 
+        // Direct TCP can arrive without the UDP reverse-request marker. Do
+        // the same process-lifetime manual-disconnect check here so an
+        // automatic reconnect cannot bypass the request-level gate.
+        if (IsHistoricalReconnectSuppressed(peer.DeviceId))
+        {
+            connection.Dispose();
+            return;
+        }
+
         // 用户主动建立的局域网连接即视为授权。保留 TrustStore 作为底层
         // 兼容层，使通知、剪贴板等敏感通道继续沿用现有信任检查。
         _pairingManager.SaveTrustedPeer(peer.DeviceId, peer.Name);
@@ -3562,6 +3718,7 @@ public sealed partial class MainWindow : Window
             Home.ApplyThemePalette();
             RefreshExplorerSendMenu();
             RefreshCurrentWorkspacePage(connection);
+            _ = ProcessPendingShellSendsAsync();
         });
 
         // 握手名称可能来自 Android 上一次启动时保存的身份文件。连接真正建立后，
@@ -5405,27 +5562,66 @@ public sealed partial class MainWindow : Window
         await _shellSendGate.WaitAsync();
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-            var connection = await WaitForConnectionForDeviceAsync(request.DeviceId, timeout.Token);
-            if (connection == null)
+            PendingFileSend pending;
+            try
             {
-                _trayManager.ShowNotification(
-                    "Hinge",
-                    "目标设备当前未连接，无法发送。请先让 Hinge 与手机建立会话。");
+                // Record the click before inspecting the socket. The session
+                // may disappear between these two operations.
+                pending = _pendingFileSendStore.Enqueue(request.DeviceId, request.FilePaths);
+            }
+            catch (ArgumentException exception)
+            {
+                _trayManager.ShowNotification("Hinge", exception.Message);
                 return;
             }
 
+            var connection = _sessionManager.ConnectionForDevice(request.DeviceId);
+            if (connection == null)
+            {
+                try
+                {
+                    _trayManager.ShowNotification(
+                        "Hinge",
+                        "目标设备当前未连接，文件已加入待发送队列；连接恢复后会自动发送。");
+                }
+                catch (ArgumentException exception)
+                {
+                    _trayManager.ShowNotification("Hinge", exception.Message);
+                }
+                return;
+            }
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
             var result = await SendFilesToConnectionAsync(
                 connection,
                 request.FilePaths,
                 "Download/Hinge",
                 timeout.Token,
                 showFailureDialog: false);
-            if (result == null) return;
+            if (result == null)
+            {
+                _pendingFileSendStore.Remove(pending.Id);
+                return;
+            }
+
+            var completed = result.CompletedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var remaining = pending.FilePaths
+                .Where(path => !completed.Contains(path))
+                .ToArray();
+            if (result.Failures.Count == 0 || remaining.Length == 0)
+            {
+                _pendingFileSendStore.Remove(pending.Id);
+            }
+            else
+            {
+                // Keep only files that were not acknowledged by the phone.
+                // A transient disconnect is retried after the next handshake.
+                _pendingFileSendStore.ReplacePaths(pending.Id, remaining);
+            }
 
             var message = result.Failures.Count == 0
                 ? $"已发送 {result.Completed} 个文件到 {result.DestinationLabel}。"
-                : $"已发送 {result.Completed} 个文件，失败 {result.Failures.Count} 个。";
+                : $"已发送 {result.Completed} 个文件，失败 {result.Failures.Count} 个；未完成文件已加入重试队列。";
             _trayManager.ShowNotification("Hinge", message);
         }
         catch (OperationCanceledException)
@@ -5442,24 +5638,100 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task<SessionConnection?> WaitForConnectionForDeviceAsync(
-        string deviceId,
-        CancellationToken cancellationToken)
+    private async Task ProcessPendingShellSendsAsync()
     {
-        while (!cancellationToken.IsCancellationRequested)
+        var gateAcquired = false;
+        try
         {
-            var connection = _sessionManager.ConnectionForDevice(deviceId);
-            if (connection != null) return connection;
-            await Task.Delay(250, cancellationToken);
-        }
+            await _shellSendGate.WaitAsync();
+            gateAcquired = true;
+            foreach (var pending in _pendingFileSendStore.GetAll())
+            {
+                var connection = _sessionManager.ConnectionForDevice(pending.DeviceId);
+                if (connection == null) continue;
 
-        return _sessionManager.ConnectionForDevice(deviceId);
+                var existingPaths = pending.FilePaths
+                    .Where(File.Exists)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (existingPaths.Length == 0)
+                {
+                    _pendingFileSendStore.Remove(pending.Id);
+                    _trayManager.ShowNotification("Hinge", "待发送任务中的本地文件已不存在，任务已移除。");
+                    continue;
+                }
+
+                try
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                    var result = await SendFilesToConnectionAsync(
+                        connection,
+                        existingPaths,
+                        "Download/Hinge",
+                        timeout.Token,
+                        showFailureDialog: false);
+                    if (result == null)
+                    {
+                        _pendingFileSendStore.Remove(pending.Id);
+                        continue;
+                    }
+
+                    var completed = result.CompletedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var remaining = existingPaths
+                        .Where(path => !completed.Contains(path))
+                        .ToArray();
+                    if (result.Failures.Count == 0 || remaining.Length == 0)
+                    {
+                        _pendingFileSendStore.Remove(pending.Id);
+                    }
+                    else
+                    {
+                        _pendingFileSendStore.ReplacePaths(pending.Id, remaining);
+                    }
+
+                    var message = result.Failures.Count == 0
+                        ? $"已自动发送 {result.Completed} 个排队文件到 {result.DestinationLabel}。"
+                        : $"已自动发送 {result.Completed} 个排队文件，仍有 {remaining.Length} 个将在下次连接后重试。";
+                    _trayManager.ShowNotification("Hinge", message);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Keep the item. A subsequent connection event will retry
+                    // it without losing the user's original shell action.
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    // A transient session failure must not discard the task.
+                    _trayManager.ShowNotification("Hinge", $"排队文件暂时未发送：{exception.Message}");
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Keep queued files for the next connection event.
+        }
+        catch (Exception exception)
+        {
+            // The connection callback invokes this method without awaiting it;
+            // contain every unexpected queue failure here.
+            _trayManager.ShowNotification("Hinge", $"排队文件暂时未发送：{exception.Message}");
+        }
+        finally
+        {
+            if (gateAcquired)
+            {
+                _shellSendGate.Release();
+            }
+        }
     }
 
     private sealed record TransferBatchResult(
         int Completed,
         IReadOnlyList<string> Failures,
-        string DestinationLabel);
+        string DestinationLabel,
+        IReadOnlyList<string> CompletedPaths);
 
     private async Task<TransferBatchResult?> SendFilesToConnectionAsync(
         SessionConnection connection,
@@ -5483,6 +5755,7 @@ public sealed partial class MainWindow : Window
 
         var completed = 0;
         var failures = new List<string>();
+        var completedPaths = new List<string>();
         foreach (var path in paths)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -5494,6 +5767,7 @@ public sealed partial class MainWindow : Window
                     cancellationToken: cancellationToken,
                     destinationPath: destination);
                 completed++;
+                completedPaths.Add(path);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -5511,7 +5785,7 @@ public sealed partial class MainWindow : Window
             ? "手机默认目录"
             : $"手机 /{destination}";
 
-        var result = new TransferBatchResult(completed, failures, destinationLabel);
+        var result = new TransferBatchResult(completed, failures, destinationLabel, completedPaths);
         if (failures.Count == 0)
         {
             StatusText.Text = $"已发送 {completed} 个文件到 {destinationLabel}";
@@ -5532,16 +5806,38 @@ public sealed partial class MainWindow : Window
 
     private void RefreshExplorerSendMenu()
     {
-        var devices = _sessionManager.ActiveConnections
-            .Where(connection =>
-                connection.State == SessionState.Connected &&
-                !string.IsNullOrWhiteSpace(connection.RemoteDeviceId))
-            .Select(connection => new ExplorerSendDevice(
-                connection.RemoteDeviceId!,
-                connection.PeerInfo?.Name ?? "已连接设备"))
-            .ToArray();
-        ExplorerSendMenu.Refresh(Environment.ProcessPath, devices);
+        // The shell menu is a single-target shortcut, not a history browser.
+        // Keep only the most recently connected trusted device so old Android
+        // IDs do not accumulate as duplicate model entries. The latest trusted
+        // record remains visible while offline, which lets the shell click be
+        // persisted as a pending send for that same device.
+        var latestTrusted = _trustStore.GetAllTrustedDevices()
+            .Where(device => device.TrustState == TrustState.Trusted &&
+                !string.IsNullOrWhiteSpace(device.DeviceId))
+            .OrderByDescending(device => device.LastSeen)
+            .ThenByDescending(device => device.PairedAt)
+            .FirstOrDefault();
+
+        if (latestTrusted == null)
+        {
+            ExplorerSendMenu.Refresh(Environment.ProcessPath, Array.Empty<ExplorerSendDevice>());
+            return;
+        }
+
+        var connected = _sessionManager.ActiveConnections.FirstOrDefault(connection =>
+            connection.State == SessionState.Connected &&
+            string.Equals(connection.RemoteDeviceId, latestTrusted.DeviceId,
+                StringComparison.OrdinalIgnoreCase));
+        var latestDevice = new ExplorerSendDevice(
+            latestTrusted.DeviceId,
+            connected?.PeerInfo?.Name ?? NormalizeExplorerDeviceName(latestTrusted.Name));
+        ExplorerSendMenu.Refresh(Environment.ProcessPath, new[] { latestDevice });
+        return;
+
     }
+
+    private static string NormalizeExplorerDeviceName(string? name) =>
+        string.IsNullOrWhiteSpace(name) ? "已配对设备" : name.Trim();
 
     private SessionConnection? GetConnectedConnection()
     {
@@ -5629,7 +5925,8 @@ public sealed partial class MainWindow : Window
         foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (networkInterface.OperationalStatus != OperationalStatus.Up ||
-                networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                NetworkInterfaceHelper.IsVirtualOrVpnInterface(networkInterface))
             {
                 continue;
             }

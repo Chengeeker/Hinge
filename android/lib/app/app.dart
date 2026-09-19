@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -15,6 +16,8 @@ import 'keep_alive_settings_screen.dart';
 import 'default_apps_screen.dart';
 import 'sms_relay_settings_screen.dart';
 import 'notification_history_screen.dart';
+import 'navigation_components.dart';
+import 'page_components.dart';
 
 import '../core/clipboard_adapter.dart';
 import '../core/clipboard_manager.dart';
@@ -39,6 +42,7 @@ class HingeApp extends StatefulWidget {
   final String? initialDeviceName;
   final String? initialDeviceManufacturer;
   final String? initialDeviceModel;
+  final String? persistentDataDirectory;
   final TrustStore? trustStore;
   final TransferManager? transferManager;
   final ClipboardManager? clipboardManager;
@@ -52,6 +56,7 @@ class HingeApp extends StatefulWidget {
     this.initialDeviceName,
     this.initialDeviceManufacturer,
     this.initialDeviceModel,
+    this.persistentDataDirectory,
     this.trustStore,
     this.transferManager,
     this.clipboardManager,
@@ -97,7 +102,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
         TrustStore(
           Platform.environment.containsKey('FLUTTER_TEST')
               ? '${Directory.systemTemp.path}${Platform.pathSeparator}hinge_test_trust_${DateTime.now().microsecondsSinceEpoch}.json'
-              : null,
+              : _persistentPath('trust_store.json'),
         );
     _transferManager = widget.transferManager ?? TransferManager();
     _ownsTransfer = widget.transferManager == null;
@@ -108,7 +113,9 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
       _registry = _discoveryService.registry;
     } else {
       _ownsDiscovery = true;
-      final identityManager = DeviceIdentityManager();
+      final identityManager = DeviceIdentityManager(
+        _persistentPath('identity.json'),
+      );
       _identity = identityManager.getOrCreateIdentity(
         widget.initialDeviceName ??
             (Platform.isWindows ? 'Windows Desktop' : 'Android Device'),
@@ -337,6 +344,12 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
           : _workspaceState.fileStoragePath,
     );
   }
+
+  String? _persistentPath(String fileName) {
+    final root = widget.persistentDataDirectory?.trim();
+    if (root == null || root.isEmpty) return null;
+    return '$root${Platform.pathSeparator}$fileName';
+  }
 }
 
 ColorScheme? _nativeDynamicScheme(
@@ -463,10 +476,54 @@ ThemeData _hingeTheme(
       onTertiaryContainer: scheme.onPrimaryContainer,
     );
   }
-  final textTheme = _withFontWeight(
+  final configuredFontWeightDelta = state.fontWeightDelta;
+  final defaultFontWeightDelta =
+      configuredFontWeightDelta + (Platform.isAndroid ? 50 : 0);
+  var textTheme = _withFontWeight(
     ThemeData(useMaterial3: true, colorScheme: scheme).textTheme,
-    state.fontWeightDelta,
+    defaultFontWeightDelta,
   );
+  if (Platform.isAndroid) {
+    FontWeight reviewWeight(FontWeight base) =>
+        _fontWeightFromNumeric(base.value + configuredFontWeightDelta);
+    textTheme = textTheme.copyWith(
+      bodyLarge: textTheme.bodyLarge?.copyWith(
+        color: scheme.onSurface,
+        letterSpacing: 0,
+      ),
+      bodyMedium: textTheme.bodyMedium?.copyWith(
+        color: scheme.onSurface,
+        letterSpacing: 0,
+      ),
+      bodySmall: textTheme.bodySmall?.copyWith(
+        color: scheme.onSurfaceVariant,
+        letterSpacing: 0,
+      ),
+      titleLarge: textTheme.titleLarge?.copyWith(
+        color: scheme.onSurface,
+        fontWeight: reviewWeight(FontWeight.w700),
+        letterSpacing: 0,
+      ),
+      titleMedium: textTheme.titleMedium?.copyWith(
+        color: scheme.onSurface,
+        fontWeight: reviewWeight(FontWeight.w600),
+        letterSpacing: 0,
+      ),
+      titleSmall: textTheme.titleSmall?.copyWith(
+        color: scheme.onSurfaceVariant,
+        fontWeight: reviewWeight(FontWeight.w600),
+        letterSpacing: 0,
+      ),
+      labelLarge: textTheme.labelLarge?.copyWith(
+        fontWeight: reviewWeight(FontWeight.w600),
+        letterSpacing: 0,
+      ),
+      labelMedium: textTheme.labelMedium?.copyWith(
+        fontWeight: reviewWeight(FontWeight.w500),
+        letterSpacing: 0,
+      ),
+    );
+  }
 
   return ThemeData(
     useMaterial3: true,
@@ -565,18 +622,9 @@ TextTheme _withFontWeight(TextTheme theme, int delta) {
   if (delta == 0) return theme;
   TextStyle? adjust(TextStyle? style) {
     if (style == null) return null;
-    final value = ((style.fontWeight?.value ?? 400) + delta).clamp(100, 900);
-    final weight = switch (value) {
-      100 => FontWeight.w100,
-      200 => FontWeight.w200,
-      300 => FontWeight.w300,
-      500 => FontWeight.w500,
-      600 => FontWeight.w600,
-      700 => FontWeight.w700,
-      800 => FontWeight.w800,
-      900 => FontWeight.w900,
-      _ => FontWeight.w400,
-    };
+    final weight = _fontWeightFromNumeric(
+      (style.fontWeight?.value ?? 400) + delta,
+    );
     return style.copyWith(fontWeight: weight);
   }
 
@@ -597,6 +645,22 @@ TextTheme _withFontWeight(TextTheme theme, int delta) {
     labelMedium: adjust(theme.labelMedium),
     labelSmall: adjust(theme.labelSmall),
   );
+}
+
+FontWeight _fontWeightFromNumeric(int value) {
+  final roundedValue = (((value / 100).round()) * 100).clamp(100, 900).toInt();
+  return switch (roundedValue) {
+    100 => FontWeight.w100,
+    200 => FontWeight.w200,
+    300 => FontWeight.w300,
+    400 => FontWeight.w400,
+    500 => FontWeight.w500,
+    600 => FontWeight.w600,
+    700 => FontWeight.w700,
+    800 => FontWeight.w800,
+    900 => FontWeight.w900,
+    _ => FontWeight.w400,
+  };
 }
 
 class _HingeLogo extends StatelessWidget {
@@ -713,7 +777,10 @@ class _DevicesScreenState extends State<DevicesScreen>
   final Set<String> _manualDisconnectSuppressedDeviceIds = <String>{};
   bool _resumeReconnectScheduled = false;
   final Map<String, DateTime> _automaticConnectAttempts = <String, DateTime>{};
+  Timer? _startupAutoConnectTimer;
   Timer? _historicalReconnectTimer;
+  Timer? _backgroundReconnectWatchdog;
+  bool _backgroundRecoveryInFlight = false;
   int _connectionAttemptGeneration = 0;
 
   bool _isHistoricalReconnectSuppressed(String? deviceId) =>
@@ -783,6 +850,19 @@ class _DevicesScreenState extends State<DevicesScreen>
       if (!mounted) return;
       _refreshStorage();
       unawaited(_maybeRequestAndroidPermissions());
+      // The network service starts from the parent state. A short second
+      // check closes the startup race where the first discovery packet was
+      // received before this page attached its registry subscription.
+      _startupAutoConnectTimer = Timer(const Duration(seconds: 2), () {
+        _startupAutoConnectTimer = null;
+        if (mounted) {
+          unawaited(
+            _maybeAutoConnectHistoricalDevice(
+              widget.discoveryService.registry.devices,
+            ),
+          );
+        }
+      });
     });
     _listenerStatusTimer = Timer(const Duration(milliseconds: 800), () {
       if (mounted) setState(() {});
@@ -802,8 +882,12 @@ class _DevicesScreenState extends State<DevicesScreen>
     _fileReceivedSubscription?.cancel();
     _listenerStatusTimer?.cancel();
     _listenerStatusTimer = null;
+    _startupAutoConnectTimer?.cancel();
+    _startupAutoConnectTimer = null;
     _historicalReconnectTimer?.cancel();
     _historicalReconnectTimer = null;
+    _backgroundReconnectWatchdog?.cancel();
+    _backgroundReconnectWatchdog = null;
     for (final subscription in _incomingPeerSubscriptions) {
       subscription.cancel();
     }
@@ -819,13 +903,58 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed || _isDesktop) return;
+    if (_isDesktop) return;
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _startBackgroundReconnectWatchdog();
+      return;
+    }
+    if (state != AppLifecycleState.resumed) return;
+    _backgroundReconnectWatchdog?.cancel();
+    _backgroundReconnectWatchdog = null;
     // The foreground service keeps the listener alive while the app is
     // backgrounded. Refresh discovery and repair a stale Dart socket when the
     // activity becomes visible again, which also covers OEMs that reclaim the
     // Flutter process despite the service notification.
     unawaited(widget.discoveryService.refreshNetwork());
     unawaited(_reconnectAfterResume());
+  }
+
+  void _startBackgroundReconnectWatchdog() {
+    if (_backgroundReconnectWatchdog != null || _isDesktop) return;
+    // The Android foreground service keeps the process important while the
+    // screen is off. The timer is deliberately low frequency and returns
+    // immediately while the session is healthy, so it is a recovery trigger,
+    // not a second discovery loop.
+    _backgroundReconnectWatchdog = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => unawaited(_recoverBackgroundConnection()),
+    );
+  }
+
+  Future<void> _recoverBackgroundConnection() async {
+    if (!mounted ||
+        _isDesktop ||
+        _backgroundRecoveryInFlight ||
+        _activeConnection?.state == SessionState.connected ||
+        _connectingDeviceId != null ||
+        _lastConnectedDevice == null ||
+        _isHistoricalReconnectSuppressed(_lastConnectedDevice?.deviceId)) {
+      return;
+    }
+    _backgroundRecoveryInFlight = true;
+    try {
+      // Rebind the Android process first. This is important after Wi-Fi roam,
+      // DHCP renewal or a router changing the phone's local address.
+      await widget.discoveryService.refreshNetwork();
+      if (!mounted || _activeConnection?.state == SessionState.connected) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await _reconnectAfterResume();
+    } finally {
+      _backgroundRecoveryInFlight = false;
+    }
   }
 
   Future<void> _reconnectAfterResume() async {
@@ -1333,16 +1462,29 @@ class _DevicesScreenState extends State<DevicesScreen>
         return;
       }
     }
-    if (!mounted || _connectingDeviceId != null) return;
-
-    final device = widget.discoveryService.registry.devices
+    widget.discoveryService.registry.upsertDevice(
+      request.message,
+      request.remoteAddress,
+    );
+    final targetDevice = widget.discoveryService.registry.devices
         .cast<Device?>()
         .firstWhere(
           (candidate) => candidate?.deviceId == deviceId,
           orElse: () => null,
         );
-    if (device != null) {
-      await _connect(device, automatic: request.message.automaticReconnect);
+    if (targetDevice != null) {
+      final remoteIp = request.remoteAddress;
+      final prioritizedAddresses = <String>[
+        remoteIp,
+        ...targetDevice.networkAddresses.where((addr) => addr != remoteIp),
+      ];
+      final deviceToConnect = targetDevice.copyWith(
+        networkAddresses: prioritizedAddresses,
+      );
+      await _connect(
+        deviceToConnect,
+        automatic: request.message.automaticReconnect,
+      );
     }
   }
 
@@ -1553,9 +1695,9 @@ class _DevicesScreenState extends State<DevicesScreen>
       );
       SessionConnection? connection;
       var reverseConnection = false;
-      // Start both directions at once. Duplicate sockets are collapsed by
+      // Start both directions in parallel. Duplicate sockets are collapsed by
       // SessionManager after the identity handshake, while the first usable
-      // path wins without waiting for an inbound TCP timeout.
+      // path wins immediately without waiting for an inbound TCP timeout.
       for (final address in addresses) {
         widget.discoveryService.requestReverseConnection(
           address,
@@ -1563,22 +1705,69 @@ class _DevicesScreenState extends State<DevicesScreen>
           automatic,
         );
       }
-      for (final address in addresses) {
-        for (final port in {device.sessionPort, AppConstants.sessionTcpPort}) {
-          try {
-            connection = await widget.sessionManager.connectToPeer(
-              InternetAddress(address),
-              port,
-            );
-            break;
-          } catch (error) {
-            lastError = error;
+
+      final completer = Completer<SessionConnection>();
+      var resolved = false;
+
+      // Parallel Branch 1: High-sensitivity polling for incoming reverse connection
+      unawaited(() async {
+        final deadline = DateTime.now().add(const Duration(seconds: 6));
+        while (DateTime.now().isBefore(deadline) && !resolved) {
+          final rev = widget.sessionManager.connectionForDevice(
+            device.deviceId,
+          );
+          if (rev != null && rev.state == SessionState.connected) {
+            if (!resolved) {
+              resolved = true;
+              reverseConnection = true;
+              completer.complete(rev);
+            }
+            return;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      }());
+
+      // Parallel Branch 2: Direct outbound TCP connection attempts
+      unawaited(() async {
+        for (final address in addresses) {
+          if (resolved) break;
+          for (final port in {
+            device.sessionPort,
+            AppConstants.sessionTcpPort,
+          }) {
+            if (resolved) break;
+            try {
+              final direct = await widget.sessionManager.connectToPeer(
+                InternetAddress(address),
+                port,
+              );
+              if (!resolved) {
+                resolved = true;
+                completer.complete(direct);
+              } else {
+                direct.dispose();
+              }
+              return;
+            } catch (error) {
+              lastError = error;
+            }
           }
         }
-        if (connection != null) break;
+      }());
+
+      try {
+        connection = await completer.future.timeout(const Duration(seconds: 6));
+      } catch (_) {
+        connection = widget.sessionManager.connectionForDevice(device.deviceId);
+        reverseConnection = connection != null;
       }
+
       if (connection == null) {
-        connection = await _waitForReverseConnection(device.deviceId);
+        connection = await _waitForReverseConnection(
+          device.deviceId,
+          timeout: const Duration(seconds: 1),
+        );
         reverseConnection = connection != null;
       }
       if (connection == null) {
@@ -1647,7 +1836,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     while (DateTime.now().isBefore(deadline)) {
       final connection = widget.sessionManager.connectionForDevice(deviceId);
       if (connection != null) return connection;
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
     }
     return widget.sessionManager.connectionForDevice(deviceId);
   }
@@ -1664,6 +1853,15 @@ class _DevicesScreenState extends State<DevicesScreen>
       );
       final localPrefixes = <String>{};
       for (final networkInterface in interfaces) {
+        final name = networkInterface.name.toLowerCase();
+        if (name.startsWith('tun') ||
+            name.startsWith('tap') ||
+            name.startsWith('ppp') ||
+            name.contains('vpn') ||
+            name.startsWith('wg') ||
+            name.contains('wintun')) {
+          continue;
+        }
         for (final address in networkInterface.addresses) {
           final parts = address.address.split('.');
           if (parts.length == 4) {
@@ -2291,8 +2489,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         final desktop = constraints.maxWidth >= 900;
         final bottomNavigation =
             !_isDesktop ||
-            _workspaceState.navigationStyle == AppNavigationStyle.bottom ||
-            _workspaceState.floatingCapsuleNavigation;
+            _workspaceState.navigationStyle == AppNavigationStyle.bottom;
         final hasDrawer = _isDesktop && !desktop && !bottomNavigation;
         final floatingCapsule =
             bottomNavigation && _workspaceState.floatingCapsuleNavigation;
@@ -2304,8 +2501,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           child: Scaffold(
             drawer: hasDrawer ? _buildDrawer() : null,
             appBar: _buildAppBar(desktop, hasDrawer: hasDrawer),
-            bottomNavigationBar:
-                bottomNavigation && !_workspaceState.floatingCapsuleNavigation
+            bottomNavigationBar: bottomNavigation && !floatingCapsule
                 ? _buildBottomNavigationBar()
                 : null,
             body: Stack(
@@ -2417,94 +2613,120 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _buildFloatingNavigationBar() {
-    final scheme = Theme.of(context).colorScheme;
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      return const SizedBox.shrink();
+    }
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final destinations = _navigationBarDestinations;
-    return SafeArea(
-      top: false,
-      minimum: const EdgeInsets.only(bottom: 12),
-      child: Align(
-        alignment: Alignment.bottomCenter,
-        child: FractionallySizedBox(
-          widthFactor: 0.62,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 260),
-            child: Material(
-              color: scheme.surfaceContainer,
-              elevation: 8,
-              shadowColor: scheme.shadow.withValues(alpha: 0.28),
-              shape: StadiumBorder(
-                side: BorderSide(color: scheme.outlineVariant),
+    final viewPadding = MediaQuery.viewPaddingOf(context);
+    final bottomMargin = viewPadding.bottom > 0
+        ? viewPadding.bottom + 8.0
+        : 16.0;
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: bottomMargin),
+        child: Container(
+          width: 280,
+          height: 64,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
               ),
-              clipBehavior: Clip.antiAlias,
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Row(
-                  children: List.generate(destinations.length, (index) {
-                    final destination = destinations[index];
-                    final selected = index == _selectedNavigationIndex;
-                    final foreground = selected
-                        ? scheme.onSecondaryContainer
-                        : scheme.onSurfaceVariant;
-                    return Expanded(
-                      child: Semantics(
-                        button: true,
-                        selected: selected,
-                        label: destination.label,
-                        child: Tooltip(
-                          message: destination.label,
-                          child: InkWell(
-                            onTap: () => _selectNavigationDestination(index),
-                            borderRadius: BorderRadius.circular(28),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 180),
-                              curve: Curves.easeOutCubic,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 3,
-                                vertical: 5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? scheme.secondaryContainer
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(28),
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconTheme(
-                                    data: IconThemeData(
-                                      color: foreground,
-                                      size: 20,
-                                    ),
-                                    child: selected
-                                        ? (destination.selectedIcon ??
-                                              destination.icon)
-                                        : destination.icon,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    destination.label,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: foreground,
-                                      fontSize: 11,
-                                      fontWeight: selected
-                                          ? FontWeight.w700
-                                          : FontWeight.w500,
+            ],
+          ),
+          child: Row(
+            children: List.generate(destinations.length, (index) {
+              final destination = destinations[index];
+              final selected = index == _selectedNavigationIndex;
+              final foreground = selected
+                  ? scheme.onPrimaryContainer
+                  : scheme.onSurfaceVariant;
+              return Expanded(
+                child: Semantics(
+                  button: true,
+                  selected: selected,
+                  label: destination.label,
+                  child: Tooltip(
+                    message: destination.label,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _selectNavigationDestination(index),
+                        borderRadius: BorderRadius.circular(28),
+                        splashFactory: NoSplash.splashFactory,
+                        overlayColor: const WidgetStatePropertyAll(
+                          Colors.transparent,
+                        ),
+                        splashColor: Colors.transparent,
+                        highlightColor: Colors.transparent,
+                        hoverColor: Colors.transparent,
+                        focusColor: Colors.transparent,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          alignment: Alignment.center,
+                          children: [
+                            if (selected)
+                              Positioned.fill(
+                                child: TweenAnimationBuilder<double>(
+                                  key: ValueKey('capsule_indicator_$index'),
+                                  tween: Tween<double>(begin: 0.0, end: 1.0),
+                                  duration: const Duration(milliseconds: 160),
+                                  curve: Curves.easeOutCubic,
+                                  builder: (context, opacity, child) =>
+                                      Opacity(opacity: opacity, child: child),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: scheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(28),
                                     ),
                                   ),
-                                ],
+                                ),
                               ),
+                            Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                IconTheme(
+                                  data: IconThemeData(
+                                    color: foreground,
+                                    size: 22,
+                                  ),
+                                  child: selected
+                                      ? (destination.selectedIcon ??
+                                            destination.icon)
+                                      : destination.icon,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  destination.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: selected
+                                        ? FontWeight.w600
+                                        : FontWeight.w500,
+                                    color: foreground,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
+                          ],
                         ),
                       ),
-                    );
-                  }),
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            }),
           ),
         ),
       ),
@@ -2608,137 +2830,28 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
   }
 
-  List<NavigationRailDestination> get _navigationRailDestinations => const [
-    NavigationRailDestination(
-      icon: Icon(Symbols.home_rounded),
-      selectedIcon: Icon(Symbols.home_rounded, fill: 1),
-      label: Text('首页'),
-    ),
-    NavigationRailDestination(
-      icon: Icon(Symbols.devices_rounded),
-      selectedIcon: Icon(Symbols.devices_rounded, fill: 1),
-      label: Text('已连接的机型'),
-    ),
-    NavigationRailDestination(
-      icon: Icon(Symbols.add_link_rounded),
-      selectedIcon: Icon(Symbols.add_link_rounded, fill: 1),
-      label: Text('连接设备'),
-    ),
-    NavigationRailDestination(
-      icon: Icon(Symbols.note_rounded),
-      selectedIcon: Icon(Symbols.note_rounded, fill: 1),
-      label: Text('笔记代办'),
-    ),
-    NavigationRailDestination(
-      icon: Icon(Symbols.calendar_month_rounded),
-      selectedIcon: Icon(Symbols.calendar_month_rounded, fill: 1),
-      label: Text('日历'),
-    ),
-    NavigationRailDestination(
-      icon: Icon(Symbols.photo_library_rounded),
-      selectedIcon: Icon(Symbols.photo_library_rounded, fill: 1),
-      label: Text('相册'),
-    ),
-    NavigationRailDestination(
-      icon: Icon(Symbols.settings_rounded),
-      selectedIcon: Icon(Symbols.settings_rounded, fill: 1),
-      label: Text('设置'),
-    ),
-  ];
+  List<NavigationRailDestination> get _navigationRailDestinations =>
+      hingeNavigationDestinationSpecs
+          .map((spec) => spec.toRailDestination())
+          .toList(growable: false);
 
-  List<Widget> get _navigationDrawerDestinations => const [
-    NavigationDrawerDestination(
-      icon: Icon(Symbols.home_rounded),
-      selectedIcon: Icon(Symbols.home_rounded, fill: 1),
-      label: Text('首页'),
-    ),
-    NavigationDrawerDestination(
-      icon: Icon(Symbols.devices_rounded),
-      selectedIcon: Icon(Symbols.devices_rounded, fill: 1),
-      label: Text('已连接的机型'),
-    ),
-    NavigationDrawerDestination(
-      icon: Icon(Symbols.add_link_rounded),
-      selectedIcon: Icon(Symbols.add_link_rounded, fill: 1),
-      label: Text('连接设备'),
-    ),
-    NavigationDrawerDestination(
-      icon: Icon(Symbols.note_rounded),
-      selectedIcon: Icon(Symbols.note_rounded, fill: 1),
-      label: Text('笔记代办'),
-    ),
-    NavigationDrawerDestination(
-      icon: Icon(Symbols.calendar_month_rounded),
-      selectedIcon: Icon(Symbols.calendar_month_rounded, fill: 1),
-      label: Text('日历'),
-    ),
-    NavigationDrawerDestination(
-      icon: Icon(Symbols.photo_library_rounded),
-      selectedIcon: Icon(Symbols.photo_library_rounded, fill: 1),
-      label: Text('相册'),
-    ),
-    NavigationDrawerDestination(
-      icon: Icon(Symbols.settings_rounded),
-      selectedIcon: Icon(Symbols.settings_rounded, fill: 1),
-      label: Text('设置'),
-    ),
-  ];
+  List<Widget> get _navigationDrawerDestinations =>
+      hingeNavigationDestinationSpecs
+          .map((spec) => spec.toDrawerDestination())
+          .toList(growable: false);
 
-  List<NavigationDestination> get _navigationBarDestinations => _isDesktop
-      ? const [
-          NavigationDestination(
-            icon: Icon(Symbols.home_rounded),
-            selectedIcon: Icon(Symbols.home_rounded, fill: 1),
-            label: '首页',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.devices_rounded),
-            selectedIcon: Icon(Symbols.devices_rounded, fill: 1),
-            label: '机型',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.add_link_rounded),
-            selectedIcon: Icon(Symbols.add_link_rounded, fill: 1),
-            label: '连接',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.note_rounded),
-            selectedIcon: Icon(Symbols.note_rounded, fill: 1),
-            label: '笔记',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.calendar_month_rounded),
-            selectedIcon: Icon(Symbols.calendar_month_rounded, fill: 1),
-            label: '日历',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.photo_library_rounded),
-            selectedIcon: Icon(Symbols.photo_library_rounded, fill: 1),
-            label: '相册',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.settings_rounded),
-            selectedIcon: Icon(Symbols.settings_rounded, fill: 1),
-            label: '设置',
-          ),
-        ]
-      : const [
-          NavigationDestination(
-            icon: Icon(Symbols.home_rounded),
-            selectedIcon: Icon(Symbols.home_rounded, fill: 1),
-            label: '首页',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.workspaces_rounded),
-            selectedIcon: Icon(Symbols.workspaces_rounded, fill: 1),
-            label: '工作区',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.settings_rounded),
-            selectedIcon: Icon(Symbols.settings_rounded, fill: 1),
-            label: '设置',
-          ),
-        ];
+  List<NavigationDestination> get _navigationBarDestinations {
+    if (_isDesktop) {
+      return hingeNavigationDestinationSpecs
+          .map((spec) => spec.toBarDestination(desktop: true))
+          .toList(growable: false);
+    }
+    return <NavigationDestination>[
+      hingeNavigationDestinationSpecs[0].toBarDestination(desktop: false),
+      hingeNavigationDestinationSpecs[3].toBarDestination(desktop: false),
+      hingeNavigationDestinationSpecs[6].toBarDestination(desktop: false),
+    ];
+  }
 
   Widget _buildPage() {
     if (!_isDesktop && _showMobileWorkspaceOverview) {
@@ -2769,18 +2882,10 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _pageBody(Widget child) {
-    final bottomPadding =
-        !_isDesktop && _workspaceState.floatingCapsuleNavigation
-        ? 136 + MediaQuery.viewPaddingOf(context).bottom
-        : 32.0;
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(24, 8, 24, bottomPadding),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1180),
-          child: child,
-        ),
-      ),
+    return HingePageBody(
+      reserveFloatingNavigation:
+          !_isDesktop && _workspaceState.floatingCapsuleNavigation,
+      child: child,
     );
   }
 
@@ -3277,13 +3382,25 @@ class _DevicesScreenState extends State<DevicesScreen>
                   color: Theme.of(context).colorScheme.primary,
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 4),
-                    Text(value, style: Theme.of(context).textTheme.bodyMedium),
-                  ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -5020,19 +5137,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _buildSectionTitle(String title, String subtitle) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title, style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ],
-    );
+    return HingeSectionTitle(title: title, subtitle: subtitle);
   }
 
   Widget _statusCard({

@@ -1219,6 +1219,7 @@ public sealed partial class PhotosPage : Page
 
     private void SetStatus(string title, string message, InfoBarSeverity severity)
     {
+        StatusInfoBar.IsOpen = true;
         StatusInfoBar.Title = title;
         StatusInfoBar.Message = message;
         StatusInfoBar.Severity = severity;

@@ -59,6 +59,13 @@ class DeviceIdentityManager {
     return File('${dir.path}/identity.json');
   }
 
+  File? _getLegacyStorageFile() {
+    if (!Platform.isAndroid || _customPath == null) return null;
+    final home = Platform.environment['HOME'];
+    if (home == null || home.trim().isEmpty) return null;
+    return File('$home/.hinge/identity.json');
+  }
+
   DeviceIdentity getOrCreateIdentity([
     String? defaultName,
     String? manufacturer,
@@ -70,9 +77,16 @@ class DeviceIdentityManager {
     }
 
     final file = _getStorageFile();
-    if (file.existsSync()) {
+    final legacy = _getLegacyStorageFile();
+    final candidates = <File>[
+      file,
+      if (legacy != null && legacy.path != file.path)
+        legacy,
+    ];
+    for (final candidate in candidates) {
+      if (!candidate.existsSync()) continue;
       try {
-        final content = file.readAsStringSync();
+        final content = candidate.readAsStringSync();
         final json = jsonDecode(content) as Map<String, dynamic>;
         final id = DeviceIdentity.fromJson(json);
         if (id.deviceId.isNotEmpty) {
@@ -104,11 +118,17 @@ class DeviceIdentityManager {
             _cachedIdentity = updated;
             return updated;
           }
+          if (candidate.path != file.path) {
+            try {
+              file.parent.createSync(recursive: true);
+              file.writeAsStringSync(jsonEncode(id.toJson()));
+            } catch (_) {}
+          }
           _cachedIdentity = id;
           return id;
         }
       } catch (_) {
-        // Corrupt file, re-generate
+        // Try the next location before generating a new identity.
       }
     }
 

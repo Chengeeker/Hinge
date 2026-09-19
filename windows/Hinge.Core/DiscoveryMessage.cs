@@ -45,4 +45,7 @@ public class DiscoveryMessage
     // connection requests.
     [JsonPropertyName("automaticReconnect")]
     public bool AutomaticReconnect { get; set; }
+
+    [JsonPropertyName("addresses")]
+    public List<string> Addresses { get; set; } = new();
 }

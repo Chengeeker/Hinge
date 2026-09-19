@@ -294,4 +294,66 @@ public class DiscoveryTests
         Assert.Equal(4, parsed.Capabilities.Count);
         Assert.Contains("file_transfer", parsed.Capabilities);
     }
+
+    [Fact]
+    public void NetworkInterfaceHelper_Calculates_BroadcastAddress_Correctly()
+    {
+        var ip = IPAddress.Parse("192.168.3.34");
+        var mask = IPAddress.Parse("255.255.255.0");
+        var broadcast = NetworkInterfaceHelper.CalculateBroadcastAddress(ip, mask);
+        Assert.Equal(IPAddress.Parse("192.168.3.255"), broadcast);
+
+        var ip2 = IPAddress.Parse("10.0.1.50");
+        var mask2 = IPAddress.Parse("255.255.0.0");
+        var broadcast2 = NetworkInterfaceHelper.CalculateBroadcastAddress(ip2, mask2);
+        Assert.Equal(IPAddress.Parse("10.0.255.255"), broadcast2);
+    }
+
+    [Fact]
+    public void NetworkInterfaceHelper_Identifies_VirtualOrReservedIp()
+    {
+        Assert.True(NetworkInterfaceHelper.IsReservedOrVirtualIp(IPAddress.Parse("127.0.0.1")));
+        Assert.True(NetworkInterfaceHelper.IsReservedOrVirtualIp(IPAddress.Parse("169.254.5.10")));
+        Assert.True(NetworkInterfaceHelper.IsReservedOrVirtualIp(IPAddress.Parse("198.18.0.1")));
+        Assert.True(NetworkInterfaceHelper.IsReservedOrVirtualIp(IPAddress.Parse("198.19.2.3")));
+        Assert.False(NetworkInterfaceHelper.IsReservedOrVirtualIp(IPAddress.Parse("192.168.1.100")));
+        Assert.False(NetworkInterfaceHelper.IsReservedOrVirtualIp(IPAddress.Parse("10.10.1.20")));
+    }
+
+    [Fact]
+    public void DiscoveryMessage_RoundTrip_WithAddresses()
+    {
+        var msg = new DiscoveryMessage
+        {
+            DeviceId = "win-dev-1",
+            Name = "Desktop",
+            Addresses = new List<string> { "192.168.3.34", "10.0.0.5" }
+        };
+
+        string json = JsonSerializer.Serialize(msg);
+        var deserialized = JsonSerializer.Deserialize<DiscoveryMessage>(json);
+
+        Assert.NotNull(deserialized);
+        Assert.Equal(2, deserialized.Addresses.Count);
+        Assert.Contains("192.168.3.34", deserialized.Addresses);
+        Assert.Contains("10.0.0.5", deserialized.Addresses);
+    }
+
+    [Fact]
+    public void DeviceRegistry_MergesCandidateAddresses()
+    {
+        var registry = new DeviceRegistry();
+        var msg = new DiscoveryMessage
+        {
+            DeviceId = "phone-dev-1",
+            Name = "Phone",
+            Addresses = new List<string> { "192.168.3.55", "10.0.0.8" }
+        };
+
+        registry.UpsertDevice(msg, "192.168.3.55");
+        var devices = registry.GetAllDevices();
+        Assert.Single(devices);
+        Assert.Contains("192.168.3.55", devices[0].NetworkAddresses);
+        Assert.Contains("10.0.0.8", devices[0].NetworkAddresses);
+    }
 }

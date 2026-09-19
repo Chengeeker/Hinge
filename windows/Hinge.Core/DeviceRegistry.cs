@@ -91,7 +91,8 @@ public class DeviceRegistry
                         Capabilities = message.Capabilities,
                         NetworkAddresses = MergeAddresses(
                             replacedRecord?.Device.NetworkAddresses,
-                            remoteAddress),
+                            remoteAddress,
+                            message.Addresses),
                         ConnectionState = ConnectionState.Discovered,
                         TrustState = replacedRecord?.Device.TrustState ?? TrustState.Untrusted
                     }, now);
@@ -102,10 +103,22 @@ public class DeviceRegistry
                     var dev = existing.Device;
                     int addressIndex = dev.NetworkAddresses.FindIndex(address =>
                         string.Equals(address, remoteAddress, StringComparison.OrdinalIgnoreCase));
-                    if (addressIndex < 0)
+                    if (addressIndex < 0 && !string.IsNullOrWhiteSpace(remoteAddress))
                     {
                         dev.NetworkAddresses.Add(remoteAddress);
                         isNewOrChanged = true;
+                    }
+                    if (message.Addresses != null)
+                    {
+                        foreach (var addr in message.Addresses)
+                        {
+                            if (!string.IsNullOrWhiteSpace(addr) &&
+                                !dev.NetworkAddresses.Contains(addr, StringComparer.OrdinalIgnoreCase))
+                            {
+                                dev.NetworkAddresses.Add(addr);
+                                isNewOrChanged = true;
+                            }
+                        }
                     }
                     if (dev.ConnectionState == ConnectionState.Disconnected)
                     {
@@ -337,15 +350,28 @@ public class DeviceRegistry
 
     private static List<string> MergeAddresses(
         IEnumerable<string>? previous,
-        string current)
+        string current,
+        IEnumerable<string>? candidates = null)
     {
         var addresses = previous?
             .Where(address => !string.IsNullOrWhiteSpace(address))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? new List<string>();
-        if (!addresses.Contains(current, StringComparer.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(current) &&
+            !addresses.Contains(current, StringComparer.OrdinalIgnoreCase))
         {
             addresses.Add(current);
+        }
+        if (candidates != null)
+        {
+            foreach (var candidate in candidates)
+            {
+                if (!string.IsNullOrWhiteSpace(candidate) &&
+                    !addresses.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+                {
+                    addresses.Add(candidate);
+                }
+            }
         }
         return addresses;
     }

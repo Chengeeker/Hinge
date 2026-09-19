@@ -264,6 +264,7 @@ public sealed partial class CalendarPage : Page
         {
             Tag = date,
             Padding = new Thickness(12, 10, 12, 10),
+            CornerRadius = new CornerRadius(0),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch,
             Background = selected ? AccentBrush() : TransparentBrush(),

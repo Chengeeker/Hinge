@@ -8,6 +8,7 @@ import 'constants.dart';
 import 'device_identity_manager.dart';
 import 'device_registry.dart';
 import 'discovery_message.dart';
+import 'network_interface_helper.dart';
 
 class DiscoveryConnectionRequest {
   final DiscoveryMessage message;
@@ -33,6 +34,7 @@ class DiscoveryService {
   bool _isRunning = false;
   bool _isListening = false;
   String? _lastError;
+  List<String> _cachedPhysicalAddresses = const [];
   final Map<String, DateTime> _lastPeerReplies = {};
   final Map<String, DateTime> _lastConnectionRequests = {};
   final StreamController<DiscoveryConnectionRequest>
@@ -204,45 +206,56 @@ class DiscoveryService {
   }
 
   Future<void> broadcastOnce() async {
-    final socket = _socket;
-    if (socket == null) {
-      _lastError = '设备发现服务没有可用的 UDP socket';
-      return;
-    }
-
     bool sent = false;
     String? lastSendError;
-    try {
-      final message = _createDiscoveryMessage();
-      final data = utf8.encode(jsonEncode(message.toJson()));
-      final targets = <InternetAddress>[InternetAddress('255.255.255.255')];
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      for (final networkInterface in interfaces) {
-        for (final interfaceAddress in networkInterface.addresses) {
-          final broadcast = interfaceAddress.broadcast;
-          if (broadcast != null &&
-              !targets.any((target) => target.address == broadcast.address)) {
-            targets.add(broadcast);
+
+    // Refresh candidate physical addresses
+    final physicalEndpoints =
+        await NetworkInterfaceHelper.getPhysicalLanEndpoints();
+    _cachedPhysicalAddresses =
+        physicalEndpoints.map((e) => e.address.address).toSet().toList();
+
+    final message = _createDiscoveryMessage();
+    final data = utf8.encode(jsonEncode(message.toJson()));
+
+    // 1. Explicitly bind and broadcast out of EVERY physical LAN/Wi-Fi interface.
+    // This forces packets out of wlan0/eth0 even if a VPN tunnel default route is active.
+    for (final ep in physicalEndpoints) {
+      RawDatagramSocket? boundSocket;
+      try {
+        boundSocket = await RawDatagramSocket.bind(ep.address, 0);
+        boundSocket.broadcastEnabled = true;
+        boundSocket.send(data, InternetAddress('255.255.255.255'), _listenPort);
+        boundSocket.send(data, ep.broadcast, _listenPort);
+        sent = true;
+      } catch (error) {
+        lastSendError = '$error';
+      } finally {
+        boundSocket?.close();
+      }
+    }
+
+    // 2. Fallback: also send through the main socket if available
+    final socket = _socket;
+    if (socket != null) {
+      try {
+        final targets = <InternetAddress>[InternetAddress('255.255.255.255')];
+        for (final ep in physicalEndpoints) {
+          if (!targets.any((t) => t.address == ep.broadcast.address)) {
+            targets.add(ep.broadcast);
           }
         }
-      }
-
-      for (final target in targets) {
-        try {
-          final bytesSent = socket.send(data, target, _listenPort);
-          sent = sent || bytesSent > 0;
-        } catch (error) {
-          // One blocked broadcast target must not prevent the directed
-          // broadcast addresses of the other active adapters from running.
-          lastSendError = '$error';
+        for (final target in targets) {
+          try {
+            final bytesSent = socket.send(data, target, _listenPort);
+            sent = sent || bytesSent > 0;
+          } catch (error) {
+            lastSendError ??= '$error';
+          }
         }
+      } catch (error) {
+        lastSendError ??= '$error';
       }
-    } catch (error) {
-      lastSendError = '$error';
     }
 
     if (sent) {
@@ -255,54 +268,66 @@ class DiscoveryService {
   }
 
   Future<void> probeLocalSubnets() async {
-    final socket = _socket;
-    if (socket == null) return;
+    final physicalEndpoints =
+        await NetworkInterfaceHelper.getPhysicalLanEndpoints();
+    final message = _createDiscoveryMessage();
+    final data = utf8.encode(jsonEncode(message.toJson()));
+    var sent = false;
 
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      final localAddresses = <String>{};
-      var sent = false;
-      final data = utf8.encode(jsonEncode(_createDiscoveryMessage().toJson()));
+    for (final ep in physicalEndpoints) {
+      final octets = _ipv4Octets(ep.address.address);
+      if (octets == null) continue;
 
-      for (final networkInterface in interfaces) {
-        for (final interfaceAddress in networkInterface.addresses) {
-          final octets = _ipv4Octets(interfaceAddress.address);
-          if (octets == null || interfaceAddress.prefixLength <= 0) continue;
-          final local = octets.join('.');
-          localAddresses.add(local);
+      final prefix = ep.prefixLength < 24 ? 24 : ep.prefixLength;
+      if (prefix > 30) continue;
+      final base = _networkBase(octets, prefix);
+      final hostCount = 1 << (32 - prefix);
 
-          // Limit the fallback sweep to the /24 containing this device. This
-          // avoids scanning an entire /16 while still covering normal home
-          // and home or enterprise Wi-Fi networks.
-          final prefix = interfaceAddress.prefixLength < 24
-              ? 24
-              : interfaceAddress.prefixLength;
-          if (prefix > 30) continue;
-          final base = _networkBase(octets, prefix);
-          final hostCount = 1 << (32 - prefix);
-          for (var host = 1; host < hostCount - 1; host++) {
-            final target = '${base[0]}.${base[1]}.${base[2]}.$host';
-            if (localAddresses.contains(target)) continue;
-            try {
-              sent =
-                  socket.send(data, InternetAddress(target), _listenPort) > 0 ||
-                  sent;
-            } catch (_) {
-              // A host may be offline or filtered; continue probing others.
-            }
+      RawDatagramSocket? boundSocket;
+      try {
+        boundSocket = await RawDatagramSocket.bind(ep.address, 0);
+        for (var host = 1; host < hostCount - 1; host++) {
+          final target = '${base[0]}.${base[1]}.${base[2]}.$host';
+          if (target == ep.address.address) continue;
+          try {
+            sent =
+                boundSocket.send(data, InternetAddress(target), _listenPort) >
+                    0 ||
+                sent;
+          } catch (_) {
+            // A host may be offline or filtered; continue probing others.
           }
         }
+      } catch (_) {
+      } finally {
+        boundSocket?.close();
       }
+    }
 
-      if (sent && _isListening && _lastError?.startsWith('无法发送') == true) {
-        _lastError = null;
+    // Also fallback to probing from main socket if needed
+    final socket = _socket;
+    if (socket != null && !sent) {
+      for (final ep in physicalEndpoints) {
+        final octets = _ipv4Octets(ep.address.address);
+        if (octets == null) continue;
+        final prefix = ep.prefixLength < 24 ? 24 : ep.prefixLength;
+        if (prefix > 30) continue;
+        final base = _networkBase(octets, prefix);
+        final hostCount = 1 << (32 - prefix);
+        for (var host = 1; host < hostCount - 1; host++) {
+          final target = '${base[0]}.${base[1]}.${base[2]}.$host';
+          if (target == ep.address.address) continue;
+          try {
+            sent =
+                socket.send(data, InternetAddress(target), _listenPort) > 0 ||
+                sent;
+          } catch (_) {}
+        }
       }
-    } catch (error) {
-      _lastError = '局域网定向探测失败：$error';
+    }
+
+    if (sent && _isListening && _lastError?.startsWith('无法发送') == true) {
+      _lastError = null;
     }
   }
 
@@ -331,17 +356,33 @@ class DiscoveryService {
     ];
   }
 
-  void probeManualIp(String ip, [int port = AppConstants.discoveryUdpPort]) {
-    if (_socket == null) return;
+  void probeManualIp(
+    String ip, [
+    int port = AppConstants.discoveryUdpPort,
+  ]) async {
+    final message = _createDiscoveryMessage();
+    final data = utf8.encode(jsonEncode(message.toJson()));
+    final parsedPort = parseNetworkPort(port, AppConstants.discoveryUdpPort);
+
     try {
-      final message = _createDiscoveryMessage();
-      final data = utf8.encode(jsonEncode(message.toJson()));
-      _socket?.send(
-        data,
-        InternetAddress(ip),
-        parseNetworkPort(port, AppConstants.discoveryUdpPort),
-      );
+      final targetAddr = InternetAddress(ip);
+      final matchingIp =
+          await NetworkInterfaceHelper.findMatchingLocalPhysicalAddress(
+            targetAddr,
+          );
+      if (matchingIp != null) {
+        RawDatagramSocket? boundSocket;
+        try {
+          boundSocket = await RawDatagramSocket.bind(matchingIp, 0);
+          boundSocket.send(data, targetAddr, parsedPort);
+        } catch (_) {
+        } finally {
+          boundSocket?.close();
+        }
+      }
     } catch (_) {}
+
+    _socket?.send(data, InternetAddress(ip), parsedPort);
   }
 
   /// Asks the peer to open the TCP session in the opposite direction.
@@ -351,25 +392,45 @@ class DiscoveryService {
     String ip, [
     int port = AppConstants.discoveryUdpPort,
     bool automaticReconnect = false,
-  ]) {
-    if (_socket == null) return;
+  ]) async {
+    final message = _createDiscoveryMessage(
+      connectionRequested: true,
+      automaticReconnect: automaticReconnect,
+    );
+    final data = utf8.encode(jsonEncode(message.toJson()));
+    final parsedPort = parseNetworkPort(port, AppConstants.discoveryUdpPort);
+
     try {
-      final message = _createDiscoveryMessage(
-        connectionRequested: true,
-        automaticReconnect: automaticReconnect,
-      );
-      final data = utf8.encode(jsonEncode(message.toJson()));
-      _socket?.send(
-        data,
-        InternetAddress(ip),
-        parseNetworkPort(port, AppConstants.discoveryUdpPort),
-      );
-    } catch (_) {}
+      final targetAddr = InternetAddress(ip);
+      final matchingIp =
+          await NetworkInterfaceHelper.findMatchingLocalPhysicalAddress(
+            targetAddr,
+          );
+      for (int burst = 0; burst < 3; burst++) {
+        if (burst > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+        }
+        if (matchingIp != null) {
+          RawDatagramSocket? boundSocket;
+          try {
+            boundSocket = await RawDatagramSocket.bind(matchingIp, 0);
+            boundSocket.send(data, targetAddr, parsedPort);
+          } catch (_) {
+          } finally {
+            boundSocket?.close();
+          }
+        }
+        _socket?.send(data, targetAddr, parsedPort);
+      }
+    } catch (_) {
+      _socket?.send(data, InternetAddress(ip), parsedPort);
+    }
   }
 
   DiscoveryMessage _createDiscoveryMessage({
     bool connectionRequested = false,
     bool automaticReconnect = false,
+    List<String>? addresses,
   }) {
     return DiscoveryMessage(
       version: AppConstants.appVersion,
@@ -390,6 +451,7 @@ class DiscoveryService {
       timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       connectionRequested: connectionRequested,
       automaticReconnect: automaticReconnect,
+      addresses: addresses ?? _cachedPhysicalAddresses,
     );
   }
 

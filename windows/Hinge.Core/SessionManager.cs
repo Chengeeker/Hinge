@@ -440,6 +440,23 @@ public class SessionManager : IDisposable
 
     public async Task<SessionConnection> ConnectToPeerAsync(IPAddress remoteIp, int port = Constants.SessionTcpPort)
     {
+        var matchingIp = NetworkInterfaceHelper.FindMatchingLocalPhysicalAddress(remoteIp);
+        if (matchingIp != null)
+        {
+            var boundClient = new TcpClient(AddressFamily.InterNetwork) { NoDelay = true };
+            try
+            {
+                boundClient.Client.Bind(new IPEndPoint(matchingIp, 0));
+                await boundClient.ConnectAsync(remoteIp, port).WaitAsync(TimeSpan.FromSeconds(3));
+                return RegisterConnection(boundClient, isOutbound: true);
+            }
+            catch
+            {
+                boundClient.Dispose();
+                // Fall back to unbound connection below
+            }
+        }
+
         var client = new TcpClient(AddressFamily.InterNetwork) { NoDelay = true };
         try
         {

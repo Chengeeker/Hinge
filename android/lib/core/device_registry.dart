@@ -29,12 +29,18 @@ class DeviceRegistry {
 
       final dev = record.device;
       final addressIndex = dev.networkAddresses.indexOf(remoteAddress);
-      if (addressIndex < 0) {
+      if (addressIndex < 0 && remoteAddress.isNotEmpty) {
         // Keep address order stable. Phones with Wi-Fi, hotspot, or VPN
         // interfaces can announce from more than one address; moving the
         // latest packet to index 0 caused the UI to rebuild on every packet.
         dev.networkAddresses.add(remoteAddress);
         changed = true;
+      }
+      for (final addr in message.addresses) {
+        if (addr.isNotEmpty && !dev.networkAddresses.contains(addr)) {
+          dev.networkAddresses.add(addr);
+          changed = true;
+        }
       }
       if (dev.connectionState == DeviceConnectionState.disconnected) {
         // Device re-appeared
@@ -83,6 +89,13 @@ class DeviceRegistry {
         changed = true;
       }
     } else {
+      final initialAddresses = <String>[];
+      if (remoteAddress.isNotEmpty) initialAddresses.add(remoteAddress);
+      for (final addr in message.addresses) {
+        if (addr.isNotEmpty && !initialAddresses.contains(addr)) {
+          initialAddresses.add(addr);
+        }
+      }
       final newDevice = Device(
         deviceId: message.deviceId,
         name: message.name,
@@ -94,7 +107,7 @@ class DeviceRegistry {
         sessionPort: message.port,
         discoveryPort: message.discoveryPort,
         capabilities: message.capabilities,
-        networkAddresses: [remoteAddress],
+        networkAddresses: initialAddresses,
         connectionState: DeviceConnectionState.discovered,
         trustState: DeviceTrustState.untrusted,
       );

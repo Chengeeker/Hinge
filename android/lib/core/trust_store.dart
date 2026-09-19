@@ -79,6 +79,13 @@ class TrustStore {
     return File('${dir.path}/trust_store.json');
   }
 
+  File? _getLegacyStorageFile() {
+    if (!Platform.isAndroid || _customPath == null) return null;
+    final home = Platform.environment['HOME'];
+    if (home == null || home.trim().isEmpty) return null;
+    return File('$home/.hinge/trust_store.json');
+  }
+
   bool isTrusted(String deviceId) {
     final dev = _trustedDevices[deviceId];
     return dev != null && dev.trustState == DeviceTrustState.trusted;
@@ -103,16 +110,28 @@ class TrustStore {
 
   void _load() {
     final file = _getStorageFile();
-    if (!file.existsSync()) return;
-    try {
-      final content = file.readAsStringSync();
-      final list = jsonDecode(content) as List;
-      _trustedDevices.clear();
-      for (final item in list) {
-        final dev = TrustedDevice.fromJson(item as Map<String, dynamic>);
-        _trustedDevices[dev.deviceId] = dev;
+    final legacy = _getLegacyStorageFile();
+    final candidates = <File>[
+      file,
+      if (legacy != null && legacy.path != file.path)
+        legacy,
+    ];
+    for (final candidate in candidates) {
+      if (!candidate.existsSync()) continue;
+      try {
+        final content = candidate.readAsStringSync();
+        final list = jsonDecode(content) as List;
+        _trustedDevices.clear();
+        for (final item in list) {
+          final dev = TrustedDevice.fromJson(item as Map<String, dynamic>);
+          _trustedDevices[dev.deviceId] = dev;
+        }
+        if (candidate.path != file.path) _save();
+        return;
+      } catch (_) {
+        // Try the next location before leaving the store empty.
       }
-    } catch (_) {}
+    }
   }
 
   void _save() {

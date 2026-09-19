@@ -17,6 +17,18 @@ internal static class Program
     private const string UninstallRegistryPath =
         "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hinge";
 
+    private readonly struct InstallProgress
+    {
+        public int Percent { get; }
+        public string Status { get; }
+
+        public InstallProgress(int percent, string status)
+        {
+            Percent = percent;
+            Status = status;
+        }
+    }
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -25,7 +37,7 @@ internal static class Program
         {
             try
             {
-                Install(NormalizeInstallPath(args[1]));
+                Install(NormalizeInstallPath(args[1]), progress: null);
                 Environment.ExitCode = 0;
             }
             catch
@@ -127,7 +139,10 @@ internal static class Program
                 Location = new Point(30, 216),
                 Width = 580,
                 Height = 18,
-                Style = ProgressBarStyle.Marquee,
+                Style = ProgressBarStyle.Continuous,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0,
                 Visible = false
             };
             _installButton = new Button
@@ -192,8 +207,14 @@ internal static class Program
                     if (answer != DialogResult.Yes) return;
                 }
 
-                SetBusy(true, "正在安装，请稍候…");
-                await Task.Run(() => Install(installPath));
+                SetBusy(true, "准备开始安装…");
+                _progressBar.Value = 0;
+                var progress = new Progress<InstallProgress>(p =>
+                {
+                    _progressBar.Value = Math.Clamp(p.Percent, 0, 100);
+                    _statusLabel.Text = p.Status;
+                });
+                await Task.Run(() => Install(installPath, progress));
                 SetBusy(false, "安装完成");
                 ShowCompletionDialog(installPath);
                 Close();
@@ -213,6 +234,7 @@ internal static class Program
             _browseButton.Enabled = !busy;
             _installButton.Enabled = !busy;
         }
+
 
         private void ShowCompletionDialog(string installPath)
         {
@@ -302,34 +324,132 @@ internal static class Program
     {
         var candidates = new List<string>();
 
-        foreach (var registryView in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        // 1. Check running Hinge process
+        try
         {
-            try
+            foreach (var process in Process.GetProcessesByName("Hinge"))
             {
-                using var key = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, registryView)
-                    .OpenSubKey(UninstallRegistryPath);
-                AddCandidate(candidates, key?.GetValue("InstallLocation") as string);
+                try
+                {
+                    var mainModulePath = process.MainModule?.FileName;
+                    if (!string.IsNullOrWhiteSpace(mainModulePath))
+                    {
+                        AddCandidate(candidates, Path.GetDirectoryName(mainModulePath));
+                    }
+                }
+                catch { }
+                finally { process.Dispose(); }
             }
-            catch
+        }
+        catch { }
+
+        // 2. Check machine-wide install-location.txt
+        try
+        {
+            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            if (!string.IsNullOrWhiteSpace(programData))
             {
-                // A registry view may not exist on every Windows installation.
+                var locFile = Path.Combine(programData, "Hinge", "install-location.txt");
+                if (File.Exists(locFile))
+                {
+                    var text = File.ReadAllText(locFile, Encoding.UTF8).Trim();
+                    AddCandidate(candidates, text);
+                }
+            }
+        }
+        catch { }
+
+        // 3. Check HKCU and HKLM in both 64-bit and 32-bit views
+        foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+        {
+            foreach (var registryView in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, registryView);
+
+                    // 3a. Software\Hinge
+                    using var hingeKey = baseKey.OpenSubKey("Software\\Hinge");
+                    AddCandidate(candidates, hingeKey?.GetValue("InstallPath") as string);
+                    AddCandidate(candidates, hingeKey?.GetValue("InstallLocation") as string);
+                    var exePath = hingeKey?.GetValue("ExecutablePath") as string;
+                    if (!string.IsNullOrWhiteSpace(exePath))
+                    {
+                        AddCandidate(candidates, Path.GetDirectoryName(exePath));
+                    }
+
+                    // 3b. Uninstall key
+                    using var uninstKey = baseKey.OpenSubKey(UninstallRegistryPath);
+                    AddCandidate(candidates, uninstKey?.GetValue("InstallLocation") as string);
+
+                    // 3c. ExplorerSend key
+                    using var expKey = baseKey.OpenSubKey(ExplorerSnapshotPath);
+                    var expExe = expKey?.GetValue("ExecutablePath") as string;
+                    if (!string.IsNullOrWhiteSpace(expExe))
+                    {
+                        AddCandidate(candidates, Path.GetDirectoryName(expExe));
+                    }
+                }
+                catch { }
             }
         }
 
-        foreach (var registryView in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        // 4. Check all loaded user profiles in HKEY_USERS (when elevated via UAC)
+        try
         {
-            try
+            foreach (var subKeyName in Registry.Users.GetSubKeyNames())
             {
-                using var key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, registryView)
-                    .OpenSubKey(UninstallRegistryPath);
-                AddCandidate(candidates, key?.GetValue("InstallLocation") as string);
+                if (subKeyName.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    using var userKey = Registry.Users.OpenSubKey(subKeyName);
+                    if (userKey == null) continue;
+
+                    using var hingeKey = userKey.OpenSubKey("Software\\Hinge");
+                    AddCandidate(candidates, hingeKey?.GetValue("InstallPath") as string);
+                    AddCandidate(candidates, hingeKey?.GetValue("InstallLocation") as string);
+                    var exe = hingeKey?.GetValue("ExecutablePath") as string;
+                    if (!string.IsNullOrWhiteSpace(exe)) AddCandidate(candidates, Path.GetDirectoryName(exe));
+
+                    using var uninstKey = userKey.OpenSubKey(UninstallRegistryPath);
+                    AddCandidate(candidates, uninstKey?.GetValue("InstallLocation") as string);
+
+                    using var expKey = userKey.OpenSubKey(ExplorerSnapshotPath);
+                    var expExe = expKey?.GetValue("ExecutablePath") as string;
+                    if (!string.IsNullOrWhiteSpace(expExe)) AddCandidate(candidates, Path.GetDirectoryName(expExe));
+                }
+                catch { }
             }
-            catch
+        }
+        catch { }
+
+        // 5. Check desktop and start menu shortcuts
+        var shortcutDirs = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Windows", "Start Menu", "Programs"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Microsoft", "Windows", "Start Menu", "Programs")
+        };
+        foreach (var dir in shortcutDirs)
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) continue;
+            var lnkPath = Path.Combine(dir, "Hinge.lnk");
+            var target = ResolveShortcutTarget(lnkPath);
+            if (!string.IsNullOrWhiteSpace(target))
             {
-                // Reading HKLM is best effort; the installer itself uses HKCU.
+                if (File.Exists(target))
+                {
+                    AddCandidate(candidates, Path.GetDirectoryName(target));
+                }
+                else if (Directory.Exists(target))
+                {
+                    AddCandidate(candidates, target);
+                }
             }
         }
 
+        // 6. Conventional default locations
         AddCandidate(
             candidates,
             Path.Combine(
@@ -351,6 +471,26 @@ internal static class Program
             File.Exists(Path.Combine(path, "Hinge.exe")));
     }
 
+    private static string? ResolveShortcutTarget(string shortcutPath)
+    {
+        if (!File.Exists(shortcutPath)) return null;
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType == null) return null;
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            dynamic shortcut = shell.CreateShortcut(shortcutPath);
+            string target = (string)shortcut.TargetPath;
+            try { Marshal.FinalReleaseComObject(shortcut); } catch { }
+            try { Marshal.FinalReleaseComObject(shell); } catch { }
+            return string.IsNullOrWhiteSpace(target) ? null : target;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static void AddCandidate(ICollection<string> candidates, string? candidate)
     {
         if (string.IsNullOrWhiteSpace(candidate)) return;
@@ -368,31 +508,52 @@ internal static class Program
         }
     }
 
-    private static string? Install(string installPath)
+    private static string? Install(string installPath, IProgress<InstallProgress>? progress = null)
     {
+        progress?.Report(new InstallProgress(5, "正在检查并停止已运行的实例…"));
         StopRunningApp();
+
         Directory.CreateDirectory(installPath);
 
-        var temporaryZip = Path.Combine(Path.GetTempPath(), $"Hinge-{Guid.NewGuid():N}.zip");
+        progress?.Report(new InstallProgress(10, "正在解压应用核心组件…"));
+        ExtractPayloadDirect(installPath, progress);
+
+        var executablePath = Path.Combine(installPath, "Hinge.exe");
+        if (!File.Exists(executablePath))
+        {
+            throw new FileNotFoundException("安装文件不完整，未找到 Hinge.exe。", executablePath);
+        }
+
+        progress?.Report(new InstallProgress(75, "正在创建桌面与开始菜单快捷方式…"));
+        CreateShortcuts(installPath, executablePath, AppUserModelId);
+
+        progress?.Report(new InstallProgress(82, "正在注册卸载程序信息…"));
+        RegisterUninstaller(installPath, executablePath);
+
+        progress?.Report(new InstallProgress(88, "正在配置 Windows 11 右键菜单集成…"));
+        RegisterModernExplorerMenu(installPath);
+
+        progress?.Report(new InstallProgress(95, "正在配置局域网防火墙规则…"));
+        var firewallResult = ConfigureFirewall(installPath);
+
+        progress?.Report(new InstallProgress(100, "安装完成"));
+        return firewallResult;
+    }
+
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
+    private static void NotifyShellAssociationChanged()
+    {
         try
         {
-            ExtractEmbeddedPayload(temporaryZip);
-            ZipFile.ExtractToDirectory(temporaryZip, installPath, overwriteFiles: true);
-
-            var executablePath = Path.Combine(installPath, "Hinge.exe");
-            if (!File.Exists(executablePath))
-            {
-                throw new FileNotFoundException("安装文件不完整，未找到 Hinge.exe。", executablePath);
-            }
-
-            CreateShortcuts(installPath, executablePath, AppUserModelId);
-            RegisterUninstaller(installPath, executablePath);
-            RegisterModernExplorerMenu(installPath);
-            return ConfigureFirewall(installPath);
+            const int SHCNE_ASSOCCHANGED = 0x08000000;
+            const uint SHCNF_IDLIST = 0x0000;
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
         }
-        finally
+        catch
         {
-            try { File.Delete(temporaryZip); } catch { }
+            // Best effort notification to refresh shell icon/menu cache
         }
     }
 
@@ -401,7 +562,6 @@ internal static class Program
         var packagePath = Path.Combine(installPath, "Hinge.Identity.msix");
         var certificatePath = Path.Combine(installPath, "Hinge.Identity.cer");
         var logPath = Path.Combine(installPath, "shell-integration-error.log");
-        var explorerWasStopped = false;
         try
         {
             if (!File.Exists(packagePath) || !File.Exists(certificatePath))
@@ -412,18 +572,13 @@ internal static class Program
             var certificate = new X509Certificate2(certificatePath);
             EnsureMachineCertificateTrusted(certificatePath, certificate.Thumbprint);
 
-            // Explorer can keep the previous packaged COM surrogate alive
-            // after an update. Removing the sparse package while that DLL is
-            // still in use is a race: Add-AppxPackage may then fail, while
-            // the rest of the installation continues and leaves the shell
-            // extension intermittently missing. Release Explorer before
-            // replacing the package and start it again in finally below.
-            explorerWasStopped = StopExplorerShell();
             RegisterSparseIdentity(packagePath, installPath);
             CreateShortcuts(
                 installPath,
                 Path.Combine(installPath, "Hinge.exe"),
                 SparsePackageAppUserModelId);
+
+            NotifyShellAssociationChanged();
 
             using var snapshot = Registry.CurrentUser.CreateSubKey(ExplorerSnapshotPath, writable: true);
             snapshot?.SetValue("ModernMenuRegistered", 1, RegistryValueKind.DWord);
@@ -443,25 +598,17 @@ internal static class Program
                 // Installation itself remains usable through the legacy menu.
             }
         }
-        finally
-        {
-            if (explorerWasStopped)
-            {
-                StartExplorerShell();
-            }
-        }
     }
 
     private static void RegisterSparseIdentity(string packagePath, string installPath)
     {
-        var package = QuotePowerShellLiteral(packagePath);
-        var externalLocation = QuotePowerShellLiteral(installPath);
+        var package = QuotePowerShellLiteral(Path.GetFullPath(packagePath));
+        var externalLocation = QuotePowerShellLiteral(Path.GetFullPath(installPath));
         var command =
             "$ErrorActionPreference='Stop'; " +
             $"$existing = @(Get-AppxPackage -Name '{SparsePackageName}' -ErrorAction SilentlyContinue); " +
             "if ($existing.Count -gt 0) { " +
-            "  $existing | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction Stop }; " +
-            "  Start-Sleep -Milliseconds 400; " +
+            "  $existing | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue }; " +
             "}; " +
             $"Add-AppxPackage -Path {package} -ExternalLocation {externalLocation} " +
             "-ForceApplicationShutdown -ForceUpdateFromAnyVersion; " +
@@ -472,72 +619,14 @@ internal static class Program
         RunPowerShell(command);
     }
 
-    private static bool StopExplorerShell()
-    {
-        var currentSession = Process.GetCurrentProcess().SessionId;
-        var foundExplorer = false;
-        foreach (var explorer in Process.GetProcessesByName("explorer"))
-        {
-            try
-            {
-                if (explorer.SessionId != currentSession || explorer.HasExited) continue;
-                foundExplorer = true;
-                explorer.Kill(entireProcessTree: false);
-                explorer.WaitForExit(5000);
-            }
-            catch
-            {
-                // A process race is handled by StartExplorerShell checking
-                // whether a usable shell process is already present.
-            }
-            finally
-            {
-                explorer.Dispose();
-            }
-        }
-
-        return foundExplorer;
-    }
-
-    private static void StartExplorerShell()
-    {
-        var currentSession = Process.GetCurrentProcess().SessionId;
-        foreach (var explorer in Process.GetProcessesByName("explorer"))
-        {
-            try
-            {
-                if (explorer.SessionId == currentSession && !explorer.HasExited) return;
-            }
-            catch
-            {
-                // Continue checking the remaining Explorer processes.
-            }
-            finally
-            {
-                explorer.Dispose();
-            }
-        }
-
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"),
-                UseShellExecute = true,
-                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-            });
-        }
-        catch
-        {
-            // Explorer will be restarted by Windows or the user can sign out;
-            // the package registration itself has already succeeded.
-        }
-    }
-
     private static void EnsureMachineCertificateTrusted(string certificatePath, string thumbprint)
     {
         if (IsMachineCertificateTrusted(thumbprint)) return;
 
+        // Current installer is already elevated (requireAdministrator). Trust directly in-process:
+        if (TrustCertificateForMachine(certificatePath, thumbprint)) return;
+
+        // Fallback to runas if for any reason in-process trust failed
         var installerPath = Environment.ProcessPath
             ?? throw new InvalidOperationException("无法定位安装程序以注册 Windows 集成证书。");
         var startInfo = new ProcessStartInfo
@@ -558,6 +647,7 @@ internal static class Program
             throw new InvalidOperationException("Windows 11 右键菜单证书未获得本机信任。");
         }
     }
+
 
     private static bool IsMachineCertificateTrusted(string thumbprint)
     {
@@ -638,11 +728,71 @@ internal static class Program
         }
     }
 
-    private static void ExtractEmbeddedPayload(string outputPath)
+    private sealed class BoundedStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly long _startOffset;
+        private readonly long _length;
+        private long _position;
+
+        public BoundedStream(Stream inner, long startOffset, long length)
+        {
+            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+            _startOffset = startOffset;
+            _length = length;
+            _position = 0;
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => _inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => _length;
+
+        public override long Position
+        {
+            get => _position;
+            set => Seek(value, SeekOrigin.Begin);
+        }
+
+        public override void Flush() { }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_position >= _length) return 0;
+            int toRead = (int)Math.Min(count, _length - _position);
+            _inner.Seek(_startOffset + _position, SeekOrigin.Begin);
+            int read = _inner.Read(buffer, offset, toRead);
+            _position += read;
+            return read;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            long target = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => _position + offset,
+                SeekOrigin.End => _length + offset,
+                _ => throw new ArgumentOutOfRangeException(nameof(origin))
+            };
+            if (target < 0 || target > _length)
+            {
+                throw new IOException($"Seek out of bounds: {target} (length: {_length})");
+            }
+            _position = target;
+            return _position;
+        }
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private static void ExtractPayloadDirect(string installPath, IProgress<InstallProgress>? progress)
     {
         var executablePath = Environment.ProcessPath
             ?? throw new InvalidOperationException("无法定位安装程序。");
-        var marker = System.Text.Encoding.ASCII.GetBytes(PayloadMarker);
+        var marker = Encoding.ASCII.GetBytes(PayloadMarker);
+
         using var source = new FileStream(executablePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         source.Seek(-sizeof(long), SeekOrigin.End);
         Span<byte> lengthBytes = stackalloc byte[sizeof(long)];
@@ -650,6 +800,7 @@ internal static class Program
         var payloadLength = BitConverter.ToInt64(lengthBytes);
         var markerOffset = source.Length - sizeof(long) - marker.Length;
         var payloadOffset = markerOffset - payloadLength;
+
         if (payloadLength <= 0 || markerOffset < 0 || payloadOffset < 0)
         {
             throw new InvalidDataException("安装程序中没有找到有效的应用文件。");
@@ -663,18 +814,57 @@ internal static class Program
             throw new InvalidDataException("安装程序文件已损坏。");
         }
 
-        source.Seek(payloadOffset, SeekOrigin.Begin);
-        using var destination = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        var buffer = new byte[1024 * 1024];
-        var remaining = payloadLength;
-        while (remaining > 0)
+        using var boundedStream = new BoundedStream(source, payloadOffset, payloadLength);
+        using var archive = new ZipArchive(boundedStream, ZipArchiveMode.Read);
+
+        int totalEntries = archive.Entries.Count;
+        int processedEntries = 0;
+
+        foreach (var entry in archive.Entries)
         {
-            var read = source.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-            if (read == 0) throw new EndOfStreamException("安装程序中的应用文件不完整。");
-            destination.Write(buffer, 0, read);
-            remaining -= read;
+            processedEntries++;
+            if (string.IsNullOrEmpty(entry.Name)) continue; // Directory entry
+
+            var destinationPath = Path.Combine(installPath, entry.FullName);
+            var destinationDir = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
+            {
+                Directory.CreateDirectory(destinationDir);
+            }
+
+            // Smart incremental extraction: skip rewriting if file already exists with same size & timestamp
+            if (File.Exists(destinationPath))
+            {
+                try
+                {
+                    var fileInfo = new FileInfo(destinationPath);
+                    if (fileInfo.Length == entry.Length &&
+                        Math.Abs((fileInfo.LastWriteTimeUtc - entry.LastWriteTime.UtcDateTime).TotalSeconds) < 2)
+                    {
+                        if (processedEntries % 25 == 0 || processedEntries == totalEntries)
+                        {
+                            int percent = 10 + (int)(processedEntries * 60.0 / totalEntries);
+                            progress?.Report(new InstallProgress(percent, $"正在检查组件 ({processedEntries}/{totalEntries})…"));
+                        }
+                        continue;
+                    }
+                }
+                catch
+                {
+                    // If checking fails, proceed to extract
+                }
+            }
+
+            entry.ExtractToFile(destinationPath, overwrite: true);
+
+            if (processedEntries % 20 == 0 || processedEntries == totalEntries)
+            {
+                int percent = 10 + (int)(processedEntries * 60.0 / totalEntries);
+                progress?.Report(new InstallProgress(percent, $"正在释放组件 ({processedEntries}/{totalEntries})…"));
+            }
         }
     }
+
 
     private static bool IsHingeRunning()
     {
@@ -870,44 +1060,115 @@ internal static class Program
 
     private static void RegisterUninstaller(string installPath, string executablePath)
     {
+        PersistInstallLocation(installPath, executablePath);
+    }
+
+    private static void PersistInstallLocation(string installPath, string executablePath)
+    {
+        // 1. Machine-wide install location in %ProgramData%\Hinge\install-location.txt
+        try
+        {
+            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            if (!string.IsNullOrWhiteSpace(programData))
+            {
+                var dir = Path.Combine(programData, "Hinge");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "install-location.txt"), installPath, Encoding.UTF8);
+            }
+        }
+        catch
+        {
+            // Best effort
+        }
+
+        // 2. Persist in HKCU and HKLM Software\Hinge
+        foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+        {
+            foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using var key = baseKey.CreateSubKey("Software\\Hinge");
+                    key?.SetValue("InstallPath", installPath);
+                    key?.SetValue("InstallLocation", installPath);
+                    key?.SetValue("ExecutablePath", executablePath);
+                }
+                catch
+                {
+                    // Best effort
+                }
+            }
+        }
+
+        // 3. Persist uninstall entry in HKCU and HKLM
         var uninstallerPath = Path.Combine(installPath, "Uninstall-Hinge.ps1");
-        if (!File.Exists(uninstallerPath)) return;
-        using var key = Registry.CurrentUser.CreateSubKey(
-            UninstallRegistryPath);
-        key?.SetValue("DisplayName", "Hinge");
-        key?.SetValue("DisplayPublisher", "Hinge");
-        key?.SetValue("InstallLocation", installPath);
-        key?.SetValue("DisplayIcon", $"{executablePath},0");
-        key?.SetValue("UninstallString", $"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{uninstallerPath}\"");
+        foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+        {
+            foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using var key = baseKey.CreateSubKey(UninstallRegistryPath);
+                    if (key != null)
+                    {
+                        key.SetValue("DisplayName", "Hinge");
+                        key.SetValue("DisplayPublisher", "Hinge");
+                        key.SetValue("InstallLocation", installPath);
+                        key.SetValue("DisplayIcon", $"{executablePath},0");
+                        if (File.Exists(uninstallerPath))
+                        {
+                            key.SetValue("UninstallString", $"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{uninstallerPath}\"");
+                        }
+                    }
+                }
+                catch
+                {
+                    // Best effort
+                }
+            }
+        }
     }
 
     private static string? ConfigureFirewall(string installPath)
     {
-        var firewallScript = Path.Combine(installPath, "allow_hinge_firewall.ps1");
-        if (!File.Exists(firewallScript))
+        var executablePath = Path.Combine(installPath, "Hinge.exe");
+        if (!File.Exists(executablePath))
         {
-            return $"未找到防火墙配置脚本：{firewallScript}";
+            return $"未找到主执行文件：{executablePath}";
         }
 
         try
         {
-            using var process = Process.Start(new ProcessStartInfo
+            // Delete legacy and current rules directly via netsh without launching powershell.exe
+            var rulesToDelete = new[]
             {
-                FileName = "powershell.exe",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                RedirectStandardError = true,
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{firewallScript}\""
-            }) ?? throw new InvalidOperationException("无法启动 Windows 防火墙配置程序。");
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            if (process.ExitCode == 0) return null;
+                "Office Suite LAN - Discovery UDP",
+                "Office Suite LAN - Session TCP",
+                "Hinge LAN - Discovery UDP",
+                "Hinge LAN - Session TCP",
+                "Hinge LAN - Session TCP Dynamic"
+            };
 
-            var detail = string.IsNullOrWhiteSpace(error) ? $"退出代码 {process.ExitCode}" : error.Trim();
-            var logPath = Path.Combine(installPath, "firewall-error.log");
-            File.WriteAllText(logPath, detail);
-            return $"{logPath}\n{detail}";
+            foreach (var name in rulesToDelete)
+            {
+                RunNetsh($"advfirewall firewall delete rule \"name={name}\"");
+            }
+
+            var rulesToAdd = new[]
+            {
+                $"advfirewall firewall add rule name=\"Hinge LAN - Discovery UDP\" dir=in action=allow program=\"{executablePath}\" protocol=UDP localport=52830 remoteip=localsubnet profile=any enable=yes",
+                $"advfirewall firewall add rule name=\"Hinge LAN - Session TCP\" dir=in action=allow program=\"{executablePath}\" protocol=TCP localport=52831 remoteip=localsubnet profile=any enable=yes",
+                $"advfirewall firewall add rule name=\"Hinge LAN - Session TCP Dynamic\" dir=in action=allow program=\"{executablePath}\" protocol=TCP localport=any remoteip=localsubnet profile=any enable=yes"
+            };
+
+            foreach (var rule in rulesToAdd)
+            {
+                RunNetsh(rule);
+            }
+
+            return null;
         }
         catch (Exception exception)
         {
@@ -916,4 +1177,25 @@ internal static class Program
             return $"{logPath}\n{exception.Message}";
         }
     }
+
+    private static void RunNetsh(string arguments)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "netsh.exe",
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+            process?.WaitForExit(3000);
+        }
+        catch
+        {
+            // Best effort rule configuration
+        }
+    }
 }
+

@@ -4,19 +4,21 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
+        <StackPanel Style="{StaticResource HingePageStackStyle}">
             <Button
                 x:Name="BackToSettingsButton"
                 Width="32"
                 Height="32"
                 Padding="0"
                 HorizontalAlignment="Left"
-                ToolTipService.ToolTip="返回设置">
+                ToolTipService.ToolTip="返回设置"
+                AutomationProperties.Name="返回设置">
                 <SymbolIcon Symbol="Back" />
             </Button>
-            <TextBlock Text="调整窗口的显示方式，设置会立即保存。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Text="个性化" Style="{StaticResource HingePageTitleStyle}" />
+            <TextBlock Text="调整窗口的显示方式，设置会立即保存。" Style="{StaticResource HingePageDescriptionStyle}" />
 
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
                     <TextBlock Text="窗口主题" FontSize="20" FontWeight="SemiBold" />
                     <TextBlock Text="选择应用窗口使用的浅色或深色外观。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
@@ -28,7 +30,7 @@
                 </StackPanel>
             </Border>
 
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
                     <TextBlock Text="窗口材质" FontSize="20" FontWeight="SemiBold" />
                     <TextBlock Text="使用 Windows App SDK 提供的系统背景材质，窗口会根据系统能力自动回退。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
@@ -41,7 +43,7 @@
                 </StackPanel>
             </Border>
 
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
                     <TextBlock Text="主界面背景图片" FontSize="20" FontWeight="SemiBold" />
                     <TextBlock Text="导入一张本机图片作为窗口背景。图片仅保存在当前电脑，删除文件后会自动回退到纯材质背景。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />

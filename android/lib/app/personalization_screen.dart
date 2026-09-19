@@ -257,7 +257,7 @@ class PersonalizationScreen extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             secondary: const Icon(Symbols.view_carousel_rounded),
             title: const Text('悬浮胶囊底栏'),
-            subtitle: const Text('使用悬浮的 Material 3 Expressive 胶囊导航'),
+            subtitle: const Text('开启使用居中悬浮胶囊底栏，关闭则使用标准全宽导航栏'),
             value: state.floatingCapsuleNavigation,
             onChanged: state.setFloatingCapsuleNavigation,
           ),
@@ -350,7 +350,7 @@ class PersonalizationScreen extends StatelessWidget {
       case 1:
         return '轻盈精炼视觉，适合大字号阅读';
       case 0:
-        return '官方标准字重，最佳均衡排版';
+        return '默认略粗，兼顾清晰度与排版';
       case 2:
         return '适度加深笔触，更清晰明朗';
       case 3:

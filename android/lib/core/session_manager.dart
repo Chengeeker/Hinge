@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'constants.dart';
 import 'device_identity_manager.dart';
+import 'network_interface_helper.dart';
 import 'protocol_compression.dart';
 import 'protocol_frame.dart';
 import 'trust_store.dart';
@@ -411,6 +412,22 @@ class SessionManager {
     InternetAddress address, [
     int port = AppConstants.sessionTcpPort,
   ]) async {
+    final matchingLocalIp =
+        await NetworkInterfaceHelper.findMatchingLocalPhysicalAddress(address);
+    if (matchingLocalIp != null) {
+      try {
+        final boundSocket = await Socket.connect(
+          address,
+          port,
+          sourceAddress: matchingLocalIp.address,
+          timeout: const Duration(seconds: 3),
+        );
+        return _registerConnection(boundSocket, isOutbound: true);
+      } catch (_) {
+        // Fall back to unbound connection below
+      }
+    }
+
     final socket = await Socket.connect(
       address,
       port,

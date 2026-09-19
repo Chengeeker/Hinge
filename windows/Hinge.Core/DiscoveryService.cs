@@ -108,8 +108,48 @@ public class DiscoveryService : IDisposable
     {
         var message = CreateDiscoveryMessage();
         byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
-        using var sender = new UdpClient();
-        await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+        bool sent = false;
+
+        var matchingIp = NetworkInterfaceHelper.FindMatchingLocalPhysicalAddress(targetIp);
+        if (matchingIp != null)
+        {
+            try
+            {
+                using var sender = new UdpClient(new IPEndPoint(matchingIp, 0));
+                await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+                sent = true;
+            }
+            catch
+            {
+                // Fallback to other physical adapters or unbound sender below.
+            }
+        }
+
+        if (!sent)
+        {
+            var endpoints = NetworkInterfaceHelper.GetPhysicalLanEndpoints();
+            foreach (var ep in endpoints)
+            {
+                try
+                {
+                    using var sender = new UdpClient(new IPEndPoint(ep.Address, 0));
+                    await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+                    sent = true;
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        try
+        {
+            using var fallback = new UdpClient();
+            await fallback.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+        }
+        catch
+        {
+        }
     }
 
     public async Task RequestReverseConnectionAsync(
@@ -121,42 +161,89 @@ public class DiscoveryService : IDisposable
             connectionRequested: true,
             automaticReconnect: automaticReconnect);
         byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
-        using var sender = new UdpClient();
-        await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+
+        var matchingEp = NetworkInterfaceHelper.FindMatchingPhysicalLanEndpoint(targetIp);
+        var endpoints = NetworkInterfaceHelper.GetPhysicalLanEndpoints();
+
+        // Send 3 bursts spaced 120ms apart to overcome Wi-Fi power-save sleep or packet drop under VPN
+        for (int burst = 0; burst < 3; burst++)
+        {
+            if (burst > 0)
+            {
+                await Task.Delay(120);
+            }
+
+            bool sent = false;
+            if (matchingEp != null)
+            {
+                try
+                {
+                    using var sender = new UdpClient(new IPEndPoint(matchingEp.Address, 0)) { EnableBroadcast = true };
+                    await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+                    if (matchingEp.Broadcast != null && !IPAddress.IsLoopback(targetIp))
+                    {
+                        try
+                        {
+                            await sender.SendAsync(data, data.Length, new IPEndPoint(matchingEp.Broadcast, port));
+                        }
+                        catch { }
+                    }
+                    sent = true;
+                }
+                catch
+                {
+                }
+            }
+
+            if (!sent)
+            {
+                foreach (var ep in endpoints)
+                {
+                    try
+                    {
+                        using var sender = new UdpClient(new IPEndPoint(ep.Address, 0)) { EnableBroadcast = true };
+                        await sender.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+                        sent = true;
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            try
+            {
+                using var fallback = new UdpClient();
+                await fallback.SendAsync(data, data.Length, new IPEndPoint(targetIp, port));
+            }
+            catch
+            {
+            }
+        }
     }
 
     public async Task ProbeLocalSubnetsAsync()
     {
         var message = CreateDiscoveryMessage();
         byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
-        using var sender = new UdpClient();
-        foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+
+        var endpoints = NetworkInterfaceHelper.GetPhysicalLanEndpoints();
+        foreach (var endpoint in endpoints)
         {
-            if (networkInterface.OperationalStatus != OperationalStatus.Up ||
-                networkInterface.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel)
+            byte[] local = endpoint.Address.GetAddressBytes();
+            int interfaceBudget = 0;
+
+            try
             {
-                continue;
-            }
-
-            IPInterfaceProperties properties;
-            try { properties = networkInterface.GetIPProperties(); }
-            catch { continue; }
-
-            foreach (var unicast in properties.UnicastAddresses)
-            {
-                if (unicast.Address.AddressFamily != AddressFamily.InterNetwork) continue;
-                byte[] local = unicast.Address.GetAddressBytes();
-                int interfaceBudget = 0;
-
-                // Home and enterprise Wi-Fi normally use /24 or smaller host ranges.
-                // Limiting the fallback to this /24 avoids broad network scans.
+                using var boundSender = new UdpClient(new IPEndPoint(endpoint.Address, 0));
+                // Probing /24 hosts strictly from the physical LAN adapter to bypass VPN tunnels
                 for (int host = 1; host < 255 && interfaceBudget < 512; host++)
                 {
                     if (host == local[3]) continue;
                     var target = new IPAddress(new byte[] { local[0], local[1], local[2], (byte)host });
                     try
                     {
-                        await sender.SendAsync(data, data.Length, new IPEndPoint(target, _listenPort));
+                        await boundSender.SendAsync(data, data.Length, new IPEndPoint(target, _listenPort));
                         interfaceBudget++;
                     }
                     catch
@@ -165,6 +252,10 @@ public class DiscoveryService : IDisposable
                     }
                 }
             }
+            catch
+            {
+                // Move on to next physical interface if any
+            }
         }
     }
 
@@ -172,25 +263,66 @@ public class DiscoveryService : IDisposable
     {
         var message = CreateDiscoveryMessage();
         byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
-        using var sender = new UdpClient { EnableBroadcast = true };
-
-        // The limited broadcast is not forwarded by some Wi-Fi access points.
-        // Also send to each active adapter's directed broadcast address so a
-        // phone and a PC on the same subnet can still discover one another.
-        var targets = GetBroadcastAddresses();
-        Exception? lastError = null;
         bool sent = false;
-        foreach (var target in targets)
+        Exception? lastError = null;
+
+        // 1. Explicitly bind and broadcast out of EVERY physical LAN/Wi-Fi interface.
+        // This guarantees broadcast packets egress physical interfaces even if a VPN
+        // route table has hijacked the default gateway (0.0.0.0/0).
+        var physicalEndpoints = NetworkInterfaceHelper.GetPhysicalLanEndpoints();
+        foreach (var ep in physicalEndpoints)
         {
             try
             {
-                await sender.SendAsync(data, data.Length, new IPEndPoint(target, _listenPort));
-                sent = true;
+                using var boundSender = new UdpClient(new IPEndPoint(ep.Address, 0)) { EnableBroadcast = true };
+                try
+                {
+                    await boundSender.SendAsync(data, data.Length, new IPEndPoint(IPAddress.Broadcast, _listenPort));
+                    sent = true;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
+
+                try
+                {
+                    await boundSender.SendAsync(data, data.Length, new IPEndPoint(ep.Broadcast, _listenPort));
+                    sent = true;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
             }
-            catch (Exception exception)
+            catch (Exception ex)
             {
-                lastError = exception;
+                lastError = ex;
             }
+        }
+
+        // 2. Fallback: also send through an unbound UdpClient for environments with
+        // non-standard multi-homed or bridged networking.
+        try
+        {
+            using var unboundSender = new UdpClient { EnableBroadcast = true };
+            var targets = GetBroadcastAddresses();
+            foreach (var target in targets)
+            {
+                try
+                {
+                    await unboundSender.SendAsync(data, data.Length, new IPEndPoint(target, _listenPort));
+                    sent = true;
+                }
+                catch (Exception exception)
+                {
+                    lastError ??= exception;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            lastError ??= ex;
         }
 
         if (!sent && lastError != null)
@@ -206,7 +338,7 @@ public class DiscoveryService : IDisposable
         foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (networkInterface.OperationalStatus != OperationalStatus.Up ||
-                networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                NetworkInterfaceHelper.IsVirtualOrVpnInterface(networkInterface))
             {
                 continue;
             }
@@ -224,20 +356,13 @@ public class DiscoveryService : IDisposable
             foreach (var unicast in properties.UnicastAddresses)
             {
                 if (unicast.Address.AddressFamily != AddressFamily.InterNetwork ||
+                    NetworkInterfaceHelper.IsReservedOrVirtualIp(unicast.Address) ||
                     unicast.IPv4Mask == null)
                 {
                     continue;
                 }
 
-                byte[] address = unicast.Address.GetAddressBytes();
-                byte[] mask = unicast.IPv4Mask.GetAddressBytes();
-                var broadcast = new byte[4];
-                for (int index = 0; index < broadcast.Length; index++)
-                {
-                    broadcast[index] = (byte)(address[index] | (byte)~mask[index]);
-                }
-
-                var target = new IPAddress(broadcast);
+                var target = NetworkInterfaceHelper.CalculateBroadcastAddress(unicast.Address, unicast.IPv4Mask);
                 if (!targets.Any(existing => existing.Equals(target)))
                 {
                     targets.Add(target);
@@ -264,7 +389,8 @@ public class DiscoveryService : IDisposable
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             ConnectionRequested = connectionRequested,
             AutomaticReconnect = automaticReconnect,
-            DiscoveryPort = GetDiscoveryPort()
+            DiscoveryPort = GetDiscoveryPort(),
+            Addresses = NetworkInterfaceHelper.GetPhysicalCandidateAddresses()
         };
     }
 

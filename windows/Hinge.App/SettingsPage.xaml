@@ -4,10 +4,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Margin="24,0,24,32" Spacing="16" HorizontalAlignment="Stretch">
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="24">
+        <StackPanel Style="{StaticResource HingePageStackStyle}">
+            <TextBlock Text="设置" Style="{StaticResource HingePageTitleStyle}" />
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="应用设置" FontSize="18" FontWeight="SemiBold" />
                     <Button x:Name="PersonalizationButton" Content="个性化" HorizontalAlignment="Left" />
                     <StackPanel Spacing="8">
                     <TextBlock Text="自定义存储位置" FontSize="15" FontWeight="SemiBold" />

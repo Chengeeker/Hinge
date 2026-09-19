@@ -200,15 +200,21 @@ internal static class ExplorerSendMenu
 
             try
             {
+                // The packaged shell extension reads the device snapshot when
+                // Explorer expands the submenu. Keep the broad association
+                // notification only for registering the menu root itself;
+                // changing connected devices must not invalidate Explorer's
+                // global file-association and desktop-icon caches.
+                var shellWasRegistered = IsLegacyMenuRegistered(executable);
                 WriteSnapshot(executable, deviceList);
                 using var parent = Registry.CurrentUser.CreateSubKey(ShellParentPath, writable: true);
                 if (parent == null) return;
 
-                if (executable == null || deviceList.Length == 0)
+                if (executable == null)
                 {
                     parent.DeleteSubKeyTree(MenuKeyName, throwOnMissingSubKey: false);
                     _lastSignature = signature;
-                    NotifyShell();
+                    if (shellWasRegistered) NotifyShell();
                     return;
                 }
 
@@ -271,7 +277,10 @@ internal static class ExplorerSendMenu
                 }
 
                 _lastSignature = signature;
-                NotifyShell();
+                if (!shellWasRegistered)
+                {
+                    NotifyShell();
+                }
             }
             catch
             {
@@ -290,7 +299,7 @@ internal static class ExplorerSendMenu
         {
             using var parent = Registry.CurrentUser.OpenSubKey(ShellParentPath, writable: false);
             using var menu = parent?.OpenSubKey(MenuKeyName, writable: false);
-            if (executablePath == null || devices.Count == 0)
+            if (executablePath == null)
             {
                 return menu == null;
             }
@@ -319,6 +328,33 @@ internal static class ExplorerSendMenu
         }
     }
 
+    private static bool IsLegacyMenuRegistered(string? executablePath)
+    {
+        if (executablePath == null) return false;
+
+        try
+        {
+            using var parent = Registry.CurrentUser.OpenSubKey(ShellParentPath, writable: false);
+            using var menu = parent?.OpenSubKey(MenuKeyName, writable: false);
+            if (menu == null ||
+                !string.Equals(menu.GetValue("MUIVerb") as string, MenuTitle, StringComparison.Ordinal) ||
+                !string.Equals(
+                    menu.GetValue("Icon") as string,
+                    $"{executablePath},0",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            using var shell = menu.OpenSubKey("ExtendedSubCommandsKey\\Shell", writable: false);
+            return shell != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static void Clear()
     {
         lock (Sync)
@@ -334,7 +370,7 @@ internal static class ExplorerSendMenu
                 using var parent = Registry.CurrentUser.OpenSubKey(ShellParentPath, writable: true);
                 parent?.DeleteSubKeyTree(MenuKeyName, throwOnMissingSubKey: false);
                 _lastSignature = null;
-                NotifyShell();
+                if (parent != null) NotifyShell();
             }
             catch
             {

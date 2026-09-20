@@ -1,7 +1,10 @@
 package com.hinge.office
 
 import android.content.Context
+import android.net.Network
 import android.os.Environment
+import android.os.PowerManager
+import android.os.SystemClock
 import io.flutter.plugin.common.EventChannel
 import org.json.JSONArray
 import org.json.JSONObject
@@ -108,6 +111,11 @@ private val VIDEO_EXTENSIONS = setOf(
     ".mp4", ".mov", ".mkv", ".avi", ".webm", ".3gp", ".m4v",
 )
 
+private const val FOREGROUND_HEARTBEAT_INTERVAL_MS = 5_000L
+private const val BACKGROUND_HEARTBEAT_INTERVAL_MS = 20_000L
+private const val FOREGROUND_CONNECTION_TIMEOUT_MS = 45_000L
+private const val BACKGROUND_CONNECTION_TIMEOUT_MS = 180_000L
+
 private data class NativeProtocolFrame(
     val version: Int,
     val type: Int,
@@ -208,6 +216,12 @@ class HingeNativeConnectionBroker(private val context: Context) {
     private var localPairingCode = ""
     @Volatile
     private var listenPort = 52831
+    @Volatile
+    private var physicalNetwork: Network? = null
+    @Volatile
+    private var physicalNetworkStateKnown = false
+    @Volatile
+    private var physicalNetworkAvailable = true
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -273,6 +287,76 @@ class HingeNativeConnectionBroker(private val context: Context) {
             "pairing_configuration_changed",
             mapOf("configured" to localPairingCode.isNotEmpty()),
         )
+    }
+
+    /**
+     * The service reports the active physical LAN instead of binding the
+     * entire Android process. New outbound sockets are explicitly bound to
+     * this Network and existing sessions are rebuilt when the Network object
+     * changes, which handles Wi-Fi roam and DHCP renewal without reviving a
+     * stale socket.
+     */
+    fun onPhysicalNetworkAvailable(network: Network) {
+        val previous = physicalNetwork
+        physicalNetworkStateKnown = true
+        physicalNetworkAvailable = true
+        physicalNetwork = network
+        if (previous == null || previous != network) {
+            diagnostics.log("lan_network_changed")
+            // The listener may have been created before Android's process
+            // network policy changed (for example while a VPN was starting).
+            // Recreate it after the service has selected the physical LAN so
+            // reverse TCP connections do not keep replying through the old
+            // default route.
+            restartListener()
+            connections.values.toList().forEach {
+                it.close(false, "network_changed", reconnect = true)
+            }
+        }
+        HingeNativeConnectionEvents.emit(
+            mapOf("event" to "network_policy_changed", "reason" to "physical_network_available"),
+        )
+        scheduleHistoricalReconnects(500L)
+        dispatchPendingTasks()
+    }
+
+    fun onPhysicalNetworkLost(network: Network?) {
+        if (network != null && physicalNetwork != null && physicalNetwork != network) return
+        physicalNetwork = null
+        physicalNetworkStateKnown = true
+        physicalNetworkAvailable = false
+        diagnostics.log("lan_network_lost")
+        restartListener()
+        HingeNativeConnectionEvents.emit(
+            mapOf("event" to "network_policy_changed", "reason" to "physical_network_lost"),
+        )
+        reconnectFutures.values.forEach { it.cancel(false) }
+        reconnectFutures.clear()
+        connections.values.toList().forEach {
+            it.close(false, "network_lost", reconnect = true)
+        }
+    }
+
+    /**
+     * A VPN was enabled or disabled while the underlying physical LAN stayed
+     * available. Rebuild existing sessions so the next socket uses the new
+     * local routing policy instead of waiting for a long heartbeat timeout.
+     */
+    fun onPhysicalNetworkPolicyChanged() {
+        if (!physicalNetworkAvailable) return
+        diagnostics.log("lan_network_policy_changed")
+        // bindProcessToNetwork only affects sockets created afterwards. The
+        // native listener was usually created before VPN detection, so it
+        // must be recreated on the newly selected route as well.
+        restartListener()
+        HingeNativeConnectionEvents.emit(
+            mapOf("event" to "network_policy_changed", "reason" to "vpn_transition"),
+        )
+        connections.values.toList().forEach {
+            it.close(false, "network_policy_changed", reconnect = true)
+        }
+        scheduleHistoricalReconnects(500L)
+        dispatchPendingTasks()
     }
 
     fun connect(
@@ -480,6 +564,15 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
     }
 
+    private fun restartListener() {
+        synchronized(listenerLock) {
+            val previous = listener
+            listener = null
+            runCatching { previous?.close() }
+        }
+        ensureListener()
+    }
+
     private fun registerConnection(connection: NativeConnection) {
         connections[connection.connectionId] = connection
         HingeNativeConnectionEvents.emit(
@@ -582,16 +675,17 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
     }
 
-    private fun scheduleHistoricalReconnects() {
+    private fun scheduleHistoricalReconnects(delayMs: Long = 1500L) {
         peerConfigs.values
             .filter { it.deviceId.isNotEmpty() }
             .distinctBy { reconnectKey(it) }
-            .forEach { scheduleReconnect(it, 1500L) }
+            .forEach { scheduleReconnect(it, delayMs) }
     }
 
     private fun scheduleReconnect(config: NativePeerConfig, delayMs: Long = 2500L) {
         if (!started.get() ||
-            (config.deviceId.isNotEmpty() && manualDisconnects.contains(config.deviceId))
+            (config.deviceId.isNotEmpty() && manualDisconnects.contains(config.deviceId)) ||
+            (physicalNetworkStateKnown && !physicalNetworkAvailable)
         ) {
             return
         }
@@ -607,7 +701,10 @@ class HingeNativeConnectionBroker(private val context: Context) {
         )
         val future = scheduler.schedule({
             reconnectFutures.remove(key)
-            if (!started.get() || hasMatchingConnection(config)) return@schedule
+            if (!started.get() ||
+                hasMatchingConnection(config) ||
+                (physicalNetworkStateKnown && !physicalNetworkAvailable)
+            ) return@schedule
             val id = "native-${UUID.randomUUID()}"
             peerConfigs["pending:$id"] = config
             val connection = NativeConnection(
@@ -1096,7 +1193,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
         var reconnectSuppressed = false
             private set
         @Volatile
-        private var missedHeartbeats = 0
+        private var lastInboundAt = SystemClock.elapsedRealtime()
         private val writeLock = Any()
         private val queuedFrames = ArrayDeque<ByteArray>()
         private var socket: Socket? = acceptedSocket
@@ -1113,10 +1210,41 @@ class HingeNativeConnectionBroker(private val context: Context) {
 
         fun runOutbound() {
             try {
-                val client = Socket()
+                if (physicalNetworkStateKnown && !physicalNetworkAvailable) {
+                    close(false, "network_unavailable")
+                    return
+                }
+                val network = physicalNetwork
+                val client = if (network != null) {
+                    runCatching {
+                        // Android recommends sockets created by the selected
+                        // Network's SocketFactory. This is more reliable than
+                        // creating a default socket first when a VPN owns the
+                        // process default route.
+                        network.socketFactory.createSocket().also {
+                            diagnostics.log("tcp_socket_factory_bound_to_lan")
+                        }
+                    }.getOrElse { error ->
+                        diagnostics.log(
+                            "tcp_socket_factory_create_failed",
+                            mapOf("reason" to error.javaClass.simpleName),
+                        )
+                        Socket().also {
+                            runCatching { network.bindSocket(it) }
+                                .onFailure { bindError ->
+                                    diagnostics.log(
+                                        "tcp_socket_network_bind_failed",
+                                        mapOf("reason" to bindError.javaClass.simpleName),
+                                    )
+                                }
+                        }
+                    }
+                } else {
+                    Socket()
+                }
                 client.tcpNoDelay = true
                 client.keepAlive = true
-                client.connect(InetSocketAddress(address, port), 3000)
+                client.connect(InetSocketAddress(address, port), 5000)
                 socket = client
                 runSession(client)
             } catch (error: Exception) {
@@ -1148,8 +1276,13 @@ class HingeNativeConnectionBroker(private val context: Context) {
             client.tcpNoDelay = true
             output = client.getOutputStream()
             updateState("authenticating")
+            lastInboundAt = SystemClock.elapsedRealtime()
             sendJson(HingeProtocol.sessionInit, identityPayload())
-            heartbeatFuture = scheduler.scheduleAtFixedRate({ heartbeat() }, 5L, 5L, TimeUnit.SECONDS)
+            heartbeatFuture = scheduler.schedule(
+                { heartbeat() },
+                FOREGROUND_HEARTBEAT_INTERVAL_MS,
+                TimeUnit.MILLISECONDS,
+            )
             authFuture = scheduler.schedule({
                 if (!isReady && !closed) {
                     pairingError = pairingError.ifEmpty { "identity_timeout" }
@@ -1180,6 +1313,11 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 }
                 val payload = ByteArray(payloadLength)
                 if (!readFully(input, payload)) break
+                // Any valid protocol frame proves that the transport is
+                // alive. Do not require a PONG specifically: file traffic,
+                // session acknowledgements and control frames are equally
+                // useful liveness signals.
+                lastInboundAt = SystemClock.elapsedRealtime()
                 handleFrame(
                     NativeProtocolFrame(
                         version = version,
@@ -1273,7 +1411,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     tryCompleteAuthentication()
                 }
                 HingeProtocol.heartbeatPing -> sendFrame(HingeProtocol.heartbeatPong, ByteArray(0))
-                HingeProtocol.heartbeatPong -> missedHeartbeats = 0
+                HingeProtocol.heartbeatPong -> Unit
                 else -> onFrame(this, frame)
             }
         }
@@ -1333,14 +1471,37 @@ class HingeNativeConnectionBroker(private val context: Context) {
 
         private fun heartbeat() {
             if (closed || !isReady) return
-            missedHeartbeats++
-            if (missedHeartbeats > 6) {
-                diagnostics.log("heartbeat_timeout", mapOf("missed" to missedHeartbeats))
+            val now = SystemClock.elapsedRealtime()
+            val background = !isScreenInteractive()
+            val timeout = if (background) {
+                BACKGROUND_CONNECTION_TIMEOUT_MS
+            } else {
+                FOREGROUND_CONNECTION_TIMEOUT_MS
+            }
+            val elapsed = now - lastInboundAt
+            if (elapsed > timeout) {
+                diagnostics.log(
+                    "heartbeat_timeout",
+                    mapOf("elapsedMs" to elapsed, "background" to background),
+                )
                 updateState("reconnecting")
                 close(false, "heartbeat_timeout")
                 return
             }
             sendFrame(HingeProtocol.heartbeatPing, ByteArray(0))
+            if (!closed) {
+                heartbeatFuture = scheduler.schedule(
+                    { heartbeat() },
+                    if (background) BACKGROUND_HEARTBEAT_INTERVAL_MS
+                    else FOREGROUND_HEARTBEAT_INTERVAL_MS,
+                    TimeUnit.MILLISECONDS,
+                )
+            }
+        }
+
+        private fun isScreenInteractive(): Boolean {
+            val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            return powerManager?.isInteractive ?: true
         }
 
         private fun identityPayload(ack: Boolean = false): JSONObject {

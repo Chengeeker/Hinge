@@ -80,6 +80,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   late final SessionManager _sessionManager;
   late final WorkspaceDataService _dataService;
   late final WorkspaceCommandRouter _commandRouter;
+  StreamSubscription<void>? _networkPolicySubscription;
   bool _ownsDiscovery = false;
   bool _ownsTransfer = false;
   bool _ownsClipboard = false;
@@ -141,6 +142,11 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     _sessionManager.localPairingCode = _workspaceState.localPairingCode;
     _discoveryService.pairingRequired =
         _workspaceState.localPairingCode.isNotEmpty;
+    if (Platform.isAndroid) {
+      _networkPolicySubscription = _sessionManager.onNetworkPolicyChanged.listen(
+        (_) => unawaited(_discoveryService.refreshNetwork()),
+      );
+    }
     _dataService = WorkspaceDataService();
     WidgetsBinding.instance.pointerRouter.addGlobalRoute(_handleGlobalPointer);
     _loadGlobalHapticFeedbackSetting();
@@ -170,8 +176,9 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   }
 
   Future<void> _startNetworkServices() async {
-    // Android may have cellular and Wi-Fi networks active together. Bind the
-    // process before creating either listener so LAN sockets use Wi-Fi.
+    // Android may have cellular and Wi-Fi networks active together. The
+    // foreground service owns the scoped native LAN sockets; this call only
+    // lets the discovery layer refresh its interface list before binding.
     if (Platform.isAndroid) await _discoveryService.prepareNetwork();
     try {
       await _sessionManager.startListener();
@@ -197,6 +204,8 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
       _handleGlobalPointer,
     );
     _commandRouter.dispose();
+    _networkPolicySubscription?.cancel();
+    _networkPolicySubscription = null;
     if (_ownsSession) _sessionManager.dispose();
     if (_ownsDiscovery) _discoveryService.dispose();
     if (_ownsTransfer) _transferManager.dispose();

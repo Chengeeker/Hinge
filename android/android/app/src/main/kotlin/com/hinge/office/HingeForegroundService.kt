@@ -39,11 +39,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 class HingeForegroundService : Service() {
     private lateinit var nativeConnectionBroker: HingeNativeConnectionBroker
     private var multicastLock: WifiManager.MulticastLock? = null
-    private var wifiLock: WifiManager.WifiLock? = null
+    private var wifiHighPerformanceLock: WifiManager.WifiLock? = null
+    private var wifiLowLatencyLock: WifiManager.WifiLock? = null
     private var smsContentObserver: SmsContentObserver? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var vpnNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile
     private var boundNetwork: Network? = null
+    @Volatile
+    private var processBoundNetwork: Network? = null
+    @Volatile
+    private var vpnCompatibilityPresent = false
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private val discoveryHandler = Handler(Looper.getMainLooper())
     private val discoveryExecutor = Executors.newSingleThreadExecutor()
@@ -217,30 +224,51 @@ class HingeForegroundService : Service() {
     }
 
     private fun acquireWifiLock() {
-        try {
-            val wifiManager = applicationContext
-                .getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-            } else {
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF
-            }
-            wifiLock = wifiManager.createWifiLock(mode, "HingeConnection").apply {
-                setReferenceCounted(false)
-                acquire()
-            }
+        val wifiManager = try {
+            applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         } catch (_: Exception) {
-            wifiLock = null
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching {
+                wifiManager.createWifiLock(
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
+                    "HingeConnectionLowLatency",
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }.onSuccess { wifiLowLatencyLock = it }
+                .onFailure { wifiLowLatencyLock = null }
+        }
+        // LOW_LATENCY is only effective while the screen is on and the
+        // app is foreground. On Android 10-13 keep HIGH_PERF as the
+        // screen-off/background companion lock. Android 14 deprecated
+        // HIGH_PERF and maps it back to LOW_LATENCY, so do not request it
+        // there.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            runCatching {
+                wifiManager.createWifiLock(
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    "HingeConnectionHighPerformance",
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }.onSuccess { wifiHighPerformanceLock = it }
+                .onFailure { wifiHighPerformanceLock = null }
         }
     }
 
     private fun releaseWifiLock() {
         try {
-            if (wifiLock?.isHeld == true) wifiLock?.release()
+            if (wifiLowLatencyLock?.isHeld == true) wifiLowLatencyLock?.release()
+            if (wifiHighPerformanceLock?.isHeld == true) wifiHighPerformanceLock?.release()
         } catch (_: Exception) {
             // Wi-Fi may be disabled while the service is being torn down.
         } finally {
-            wifiLock = null
+            wifiLowLatencyLock = null
+            wifiHighPerformanceLock = null
         }
     }
 
@@ -277,12 +305,17 @@ class HingeForegroundService : Service() {
     }
 
     /**
-     * Keep the process bound to the current physical LAN while the Activity is
-     * paused. MainActivity performs the same binding before creating Dart
-     * sockets, but that callback only runs when the UI is alive. A Wi-Fi roam,
-     * DHCP renewal or access-point change can otherwise leave an already
-     * running foreground service attached to a stale Network object until the
-     * user opens Hinge again.
+     * Track the current physical LAN without binding the whole Android
+     * process in the normal case. The native broker binds each new outbound
+     * TCP socket to this Network, so unrelated app traffic and Flutter sockets
+     * are not trapped on a stale Wi-Fi handle after a roam or DHCP renewal.
+     *
+     * A third-party full-device VPN is the deliberate compatibility exception:
+     * Dart's RawDatagramSocket has no Android Network.bindSocket bridge, so its
+     * discovery listener cannot be forced onto Wi-Fi by the scoped-socket path.
+     * While a VPN transport is present, temporarily binding this process to the
+     * physical LAN keeps Hinge's local discovery/reconnect traffic on Wi-Fi.
+     * The binding is released as soon as the VPN disappears or the LAN is lost.
      */
     private fun registerPhysicalNetworkCallback() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
@@ -312,6 +345,8 @@ class HingeForegroundService : Service() {
             override fun onLost(network: Network) {
                 if (boundNetwork != network) return
                 boundNetwork = null
+                releaseVpnCompatibilityBinding(manager)
+                nativeConnectionBroker.onPhysicalNetworkLost(network)
                 val replacement = manager.allNetworks.firstOrNull { candidate ->
                     val capabilities = manager.getNetworkCapabilities(candidate)
                     capabilities != null && isPhysicalLan(capabilities)
@@ -320,49 +355,77 @@ class HingeForegroundService : Service() {
                     bindToPhysicalNetwork(manager, replacement)
                     broadcastDiscoveryBeacon()
                 } else {
-                    try {
-                        manager.bindProcessToNetwork(null)
-                    } catch (_: Exception) {
-                        // The process may already be shutting down.
-                    }
+                    schedulePhysicalNetworkRefresh(manager, "physical_network_lost")
                 }
+            }
+        }
+        val vpnRequest = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+            .build()
+        val vpnCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                refreshPhysicalNetworkAfterVpnChange(manager, "vpn_available")
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                capabilities: NetworkCapabilities,
+            ) {
+                refreshPhysicalNetworkAfterVpnChange(manager, "vpn_capabilities_changed")
+            }
+
+            override fun onLost(network: Network) {
+                refreshPhysicalNetworkAfterVpnChange(manager, "vpn_lost")
             }
         }
 
         try {
             manager.registerNetworkCallback(request, callback)
+            try {
+                manager.registerNetworkCallback(vpnRequest, vpnCallback)
+            } catch (error: Exception) {
+                runCatching { manager.unregisterNetworkCallback(callback) }
+                throw error
+            }
             connectivityManager = manager
             networkCallback = callback
-            manager.allNetworks
-                .asSequence()
-                .mapNotNull { network ->
-                    manager.getNetworkCapabilities(network)?.let { network to it }
-                }
-                .firstOrNull { (_, capabilities) -> isPhysicalLan(capabilities) }
-                ?.first
-                ?.let { bindToPhysicalNetwork(manager, it) }
-        } catch (_: Exception) {
+            vpnNetworkCallback = vpnCallback
+            findPhysicalNetwork(manager)?.let { bindToPhysicalNetwork(manager, it) }
+                ?: schedulePhysicalNetworkRefresh(manager, "service_network_unavailable")
+        } catch (error: Exception) {
+            releaseVpnCompatibilityBinding(manager)
             connectivityManager = null
             networkCallback = null
+            vpnNetworkCallback = null
+            HingeDiagnostics.from(this).log(
+                "network_callback_register_failed",
+                mapOf("reason" to error.javaClass.simpleName),
+            )
         }
     }
 
     private fun unregisterPhysicalNetworkCallback() {
         val manager = connectivityManager
         val callback = networkCallback
+        val vpnCallback = vpnNetworkCallback
         try {
             if (manager != null && callback != null) {
                 manager.unregisterNetworkCallback(callback)
             }
-            if (manager != null && boundNetwork != null) {
-                manager.bindProcessToNetwork(null)
+            if (manager != null && vpnCallback != null) {
+                manager.unregisterNetworkCallback(vpnCallback)
             }
+            if (manager != null) releaseVpnCompatibilityBinding(manager)
+            nativeConnectionBroker.onPhysicalNetworkLost(boundNetwork)
         } catch (_: Exception) {
             // The network service may already be unavailable during teardown.
         } finally {
             connectivityManager = null
             networkCallback = null
+            vpnNetworkCallback = null
             boundNetwork = null
+            processBoundNetwork = null
+            vpnCompatibilityPresent = false
         }
     }
 
@@ -375,14 +438,145 @@ class HingeForegroundService : Service() {
         } catch (_: Exception) {
             null
         } ?: return
-        if (!isPhysicalLan(capabilities) || boundNetwork == network) return
-        try {
-            if (manager.bindProcessToNetwork(network)) {
-                boundNetwork = network
-            }
-        } catch (_: Exception) {
-            // MainActivity/Dart will retry the binding on its next refresh.
+        if (!isPhysicalLan(capabilities)) return
+        val networkChanged = boundNetwork != network
+        val routingPolicyChanged = updateVpnCompatibilityBinding(manager, network)
+        if (networkChanged) {
+            boundNetwork = network
+            nativeConnectionBroker.onPhysicalNetworkAvailable(network)
+        } else if (routingPolicyChanged) {
+            nativeConnectionBroker.onPhysicalNetworkPolicyChanged()
         }
+    }
+
+    private fun refreshPhysicalNetworkAfterVpnChange(
+        manager: ConnectivityManager,
+        reason: String,
+    ) {
+        val network = findPhysicalNetwork(manager)
+        if (network == null) {
+            releaseVpnCompatibilityBinding(manager)
+            val previous = boundNetwork
+            boundNetwork = null
+            if (previous != null) {
+                nativeConnectionBroker.onPhysicalNetworkLost(previous)
+            }
+            HingeDiagnostics.from(this).log(
+                "vpn_network_transition_waiting_for_lan",
+                mapOf("reason" to reason),
+            )
+            schedulePhysicalNetworkRefresh(manager, reason)
+            return
+        }
+        bindToPhysicalNetwork(manager, network)
+        broadcastDiscoveryBeacon()
+    }
+
+    private fun schedulePhysicalNetworkRefresh(
+        manager: ConnectivityManager,
+        reason: String,
+    ) {
+        HingeDiagnostics.from(this).log(
+            "physical_network_refresh_scheduled",
+            mapOf("reason" to reason),
+        )
+        listOf(250L, 1_000L, 3_000L).forEach { delayMs ->
+            discoveryHandler.postDelayed({
+                if (current === this) {
+                    findPhysicalNetwork(manager)?.let {
+                        bindToPhysicalNetwork(manager, it)
+                        broadcastDiscoveryBeacon()
+                    }
+                }
+            }, delayMs)
+        }
+    }
+
+    private fun findPhysicalNetwork(manager: ConnectivityManager): Network? =
+        manager.allNetworks.firstOrNull { candidate ->
+            val capabilities = runCatching {
+                manager.getNetworkCapabilities(candidate)
+            }.getOrNull()
+            capabilities != null && isPhysicalLan(capabilities)
+        }
+
+    private fun hasActiveVpn(manager: ConnectivityManager): Boolean =
+        manager.allNetworks.any { candidate ->
+            runCatching { manager.getNetworkCapabilities(candidate) }
+                .getOrNull()
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }
+
+    /**
+     * Returns true when the local routing policy changed and existing Hinge
+     * sessions should be rebuilt. The process binding is only owned by this
+     * service, so teardown cannot accidentally clear another component's
+     * network selection.
+     */
+    private fun updateVpnCompatibilityBinding(
+        manager: ConnectivityManager,
+        network: Network,
+    ): Boolean {
+        val vpnPresent = hasActiveVpn(manager)
+        val vpnStateChanged = vpnPresent != vpnCompatibilityPresent
+        vpnCompatibilityPresent = vpnPresent
+        var processBindingChanged = false
+
+        if (vpnPresent) {
+            if (processBoundNetwork != network) {
+                if (processBoundNetwork != null) {
+                    runCatching { manager.bindProcessToNetwork(null) }
+                    processBoundNetwork = null
+                    processBindingChanged = true
+                }
+                try {
+                    if (manager.bindProcessToNetwork(network)) {
+                        processBoundNetwork = network
+                        processBindingChanged = true
+                        HingeDiagnostics.from(this).log(
+                            "vpn_compat_process_network_bound",
+                            mapOf("network" to network.toString()),
+                        )
+                    } else {
+                        HingeDiagnostics.from(this).log(
+                            "vpn_compat_process_network_bind_failed",
+                        )
+                    }
+                } catch (error: Exception) {
+                    HingeDiagnostics.from(this).log(
+                        "vpn_compat_process_network_bind_failed",
+                        mapOf("reason" to error.javaClass.simpleName),
+                    )
+                }
+            }
+        } else if (processBoundNetwork != null) {
+            runCatching { manager.bindProcessToNetwork(null) }
+                .onFailure {
+                    HingeDiagnostics.from(this).log(
+                        "vpn_compat_process_network_unbind_failed",
+                        mapOf("reason" to it.javaClass.simpleName),
+                    )
+                }
+            processBoundNetwork = null
+            processBindingChanged = true
+            HingeDiagnostics.from(this).log("vpn_compat_process_network_unbound")
+        }
+        return vpnStateChanged || processBindingChanged
+    }
+
+    private fun releaseVpnCompatibilityBinding(manager: ConnectivityManager) {
+        if (processBoundNetwork != null) {
+            runCatching { manager.bindProcessToNetwork(null) }
+                .onFailure {
+                    HingeDiagnostics.from(this).log(
+                        "vpn_compat_process_network_unbind_failed",
+                        mapOf("reason" to it.javaClass.simpleName),
+                    )
+                }
+            processBoundNetwork = null
+            HingeDiagnostics.from(this).log("vpn_compat_process_network_unbound")
+        }
+        vpnCompatibilityPresent = false
     }
 
     private fun isPhysicalLan(capabilities: NetworkCapabilities): Boolean =
@@ -424,6 +618,7 @@ class HingeForegroundService : Service() {
                             socket.reuseAddress = true
                             socket.broadcast = true
                             socket.bind(InetSocketAddress(address, 0))
+                            bindDatagramToPhysicalNetwork(socket)
                             sendDiscoveryPacket(socket, bytes, InetAddress.getByName("255.255.255.255"))
                             if (broadcast != null && broadcast != InetAddress.getByName("255.255.255.255")) {
                                 sendDiscoveryPacket(socket, bytes, broadcast)
@@ -439,6 +634,7 @@ class HingeForegroundService : Service() {
                     try {
                         DatagramSocket().use { socket ->
                             socket.broadcast = true
+                            bindDatagramToPhysicalNetwork(socket)
                             sendDiscoveryPacket(
                                 socket,
                                 bytes,
@@ -453,6 +649,18 @@ class HingeForegroundService : Service() {
                 discoveryBeaconInFlight.set(false)
             }
         }
+    }
+
+    private fun bindDatagramToPhysicalNetwork(socket: DatagramSocket) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val network = boundNetwork ?: return
+        runCatching { network.bindSocket(socket) }
+            .onFailure {
+                HingeDiagnostics.from(this).log(
+                    "discovery_socket_network_bind_failed",
+                    mapOf("reason" to it.javaClass.simpleName),
+                )
+            }
     }
 
     private fun sendDiscoveryPacket(

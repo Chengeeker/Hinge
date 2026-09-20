@@ -839,6 +839,8 @@ class SessionManager {
   // photos, calendar data, notes and tasks on that same session.
   final StreamController<SessionConnection> _connectionCreatedController =
       StreamController<SessionConnection>.broadcast();
+  final StreamController<void> _networkPolicyController =
+      StreamController<void>.broadcast();
   bool _isListening = false;
   String? _lastError;
 
@@ -846,6 +848,7 @@ class SessionManager {
       _connectionController.stream;
   Stream<SessionConnection> get onConnectionCreated =>
       _connectionCreatedController.stream;
+  Stream<void> get onNetworkPolicyChanged => _networkPolicyController.stream;
   bool get isListening => _isListening;
   String? get lastError => _lastError;
   int get listeningPort => _serverSocket?.port ?? _listenPort;
@@ -1072,8 +1075,14 @@ class SessionManager {
 
   void _handleNativeEvent(Map<String, dynamic> event) {
     final connectionId = '${event['connectionId'] ?? ''}'.trim();
-    if (connectionId.isEmpty) return;
     final eventType = '${event['event'] ?? ''}';
+    if (connectionId.isEmpty) {
+      if (eventType == 'network_policy_changed' &&
+          !_networkPolicyController.isClosed) {
+        _networkPolicyController.add(null);
+      }
+      return;
+    }
     var connection = _nativeConnections[connectionId];
     if (eventType == 'connection_created' && connection == null) {
       final nativeBridge = _nativeBridge;
@@ -1178,5 +1187,6 @@ class SessionManager {
     stopListener();
     _connectionController.close();
     _connectionCreatedController.close();
+    _networkPolicyController.close();
   }
 }

@@ -38,6 +38,7 @@ class DiscoveryService {
   List<String> _cachedPhysicalAddresses = const [];
   final Map<String, DateTime> _lastPeerReplies = {};
   final Map<String, DateTime> _lastConnectionRequests = {};
+  Future<void>? _networkRefreshInFlight;
   final StreamController<DiscoveryConnectionRequest>
   _connectionRequestController =
       StreamController<DiscoveryConnectionRequest>.broadcast();
@@ -56,15 +57,19 @@ class DiscoveryService {
     this.sessionPortProvider,
   });
 
-  /// Android can keep cellular data and Wi-Fi active at the same time. Bind
-  /// the process before Dart creates its LAN sockets so discovery uses Wi-Fi.
+  /// Android can keep cellular data and Wi-Fi active at the same time. The
+  /// native foreground service scopes its long-lived LAN sockets to the
+  /// physical Network; Dart keeps binding discovery probes to concrete local
+  /// interfaces and no longer changes the process-wide route here.
   Future<bool> prepareNetwork() async {
     if (!Platform.isAndroid) return false;
     try {
       final result = await _platform.invokeMethod<dynamic>(
         'bindDiscoveryToWifi',
       );
-      if (result is Map) return result['bound'] == true;
+      if (result is Map) {
+        return result['bound'] == true || result['scopedSockets'] == true;
+      }
       return result == true;
     } catch (_) {
       // The Dart socket still has its normal route as a fallback.
@@ -140,9 +145,24 @@ class DiscoveryService {
   }
 
   /// Rebinds only the UDP discovery socket after Android returns from the
-  /// background or moves to another Wi-Fi network. Active TCP sessions stay
-  /// untouched.
+  /// background. Native TCP sessions are rebuilt by the foreground service
+  /// when Android reports that the physical Network changed.
   Future<void> refreshNetwork() async {
+    final activeRefresh = _networkRefreshInFlight;
+    if (activeRefresh != null) return activeRefresh;
+
+    final refresh = _refreshNetworkInternal();
+    _networkRefreshInFlight = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (identical(_networkRefreshInFlight, refresh)) {
+        _networkRefreshInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _refreshNetworkInternal() async {
     await prepareNetwork();
     if (!_isRunning) return;
 

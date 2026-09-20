@@ -15,8 +15,6 @@ import android.content.res.Configuration
 import android.content.ContentUris
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.bluetooth.BluetoothAdapter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -59,7 +57,6 @@ import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.ArrayDeque
 import java.util.UUID
-import java.net.Inet4Address
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -93,7 +90,6 @@ class MainActivity : FlutterActivity() {
     private var encodingFrame = false
     private var screenEventSink: EventChannel.EventSink? = null
     private var discoveryMulticastLock: WifiManager.MulticastLock? = null
-    private var discoveryNetworkBound = false
     private var calendarPermissionResult: MethodChannel.Result? = null
     private var photosPermissionResult: MethodChannel.Result? = null
     private var notificationPermissionResult: MethodChannel.Result? = null
@@ -879,50 +875,20 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Android can keep cellular data and Wi-Fi active at the same time. Bind
-     * the process before Dart creates its LAN sockets so discovery uses Wi-Fi.
-     * Validated internet access is intentionally not required: a local-only
-     * Wi-Fi network is still a valid Hinge network.
+     * The long-lived service scopes LAN sockets to the active physical Network
+     * individually. Do not bind the whole process here during ordinary network
+     * use: process-wide binding makes Flutter and unrelated HTTP traffic inherit
+     * a stale Wi-Fi handle after a roam/DHCP change. When a third-party VPN is
+     * active, HingeForegroundService owns a temporary process-level physical
+     * LAN compatibility binding because Dart cannot call Network.bindSocket on
+     * its RawDatagramSocket; this method remains a compatibility status query.
      */
     private fun bindDiscoveryToWifi(): Map<String, Any> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return mapOf("bound" to false, "wifi" to false)
-        }
-        return try {
-            val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE)
-                as ConnectivityManager
-            val wifi = connectivity.allNetworks.firstOrNull { network ->
-                val capabilities = connectivity.getNetworkCapabilities(network)
-                val properties = connectivity.getLinkProperties(network)
-                val isPhysicalLan = capabilities != null &&
-                    (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                     capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) &&
-                    !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-                isPhysicalLan &&
-                    properties?.linkAddresses?.any { linkAddress ->
-                        val address = linkAddress.address
-                        address is Inet4Address &&
-                            !address.isLoopbackAddress &&
-                            !address.isLinkLocalAddress
-                    } == true
-            }
-
-            if (wifi == null) {
-                if (discoveryNetworkBound) connectivity.bindProcessToNetwork(null)
-                discoveryNetworkBound = false
-                return mapOf("bound" to false, "wifi" to false)
-            }
-
-            val bound = connectivity.bindProcessToNetwork(wifi)
-            if (bound) discoveryNetworkBound = true
-            mapOf("bound" to bound, "wifi" to true)
-        } catch (error: Exception) {
-            mapOf(
-                "bound" to false,
-                "wifi" to false,
-                "error" to (error.javaClass.simpleName ?: "unknown"),
-            )
-        }
+        return mapOf(
+            "bound" to false,
+            "wifi" to true,
+            "scopedSockets" to true,
+        )
     }
 
     private fun releaseDiscoveryMulticastLock(): Boolean {

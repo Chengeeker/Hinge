@@ -1096,12 +1096,14 @@ public sealed partial class PhotosPage : Page
 
     private void BackButton_Click(object sender, RoutedEventArgs e) => _ = LoadAlbumsAsync();
 
-    private void RefreshButton_Click(object sender, RoutedEventArgs e)
+    public void RefreshCurrentView()
     {
         if (_currentAlbum is { } album) _ = LoadAlbumAsync(album);
         else if (_timelineMode) _ = LoadTimelineAsync();
         else _ = LoadAlbumsAsync();
     }
+
+    private void RefreshButton_Click(object sender, RoutedEventArgs e) => RefreshCurrentView();
 
     private (Grid Tile, Image Image) BuildAlbumTile(RemotePhotoAlbum album)
     {

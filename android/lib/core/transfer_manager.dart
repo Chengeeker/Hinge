@@ -514,8 +514,7 @@ class TransferManager {
     final normalized = path
         .replaceAll('\\', '/')
         .replaceFirst(RegExp(r'/+$'), '');
-    return normalized == '/storage/emulated/0/Download' ||
-        normalized == '/storage/emulated/0/Download/Hinge';
+    return normalized == '/storage/emulated/0/Download/Hinge';
   }
 
   static String _hingeCategoryDirectory(FileOfferMessage offer) {

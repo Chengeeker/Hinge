@@ -2163,7 +2163,20 @@ public sealed partial class MainWindow : Window
         }
         else if (ContentFrame.Content is FileManagementPage files)
         {
-            files.ShowExternalDragPreview();
+            var scale = files.XamlRoot?.RasterizationScale ?? 1;
+            var windowPoint = new Point(point.X / scale, point.Y / scale);
+            try
+            {
+                var pagePoint = PageRoot.TransformToVisual(files).TransformPoint(windowPoint);
+                if (!files.UpdateExternalDragPreview(pagePoint))
+                {
+                    files.ClearExternalDragPreview();
+                }
+            }
+            catch
+            {
+                files.ClearExternalDragPreview();
+            }
         }
     }
 
@@ -2238,8 +2251,18 @@ public sealed partial class MainWindow : Window
         }
         else if (ContentFrame.Content is FileManagementPage files)
         {
-            destination = "Download/Hinge";
-            files.ShowExternalDropFeedback();
+            var scale = files.XamlRoot?.RasterizationScale ?? 1;
+            var windowPoint = new Point(point.X / scale, point.Y / scale);
+            try
+            {
+                var pagePoint = PageRoot.TransformToVisual(files).TransformPoint(windowPoint);
+                destination = files.ResolveExternalDropDestination(pagePoint);
+            }
+            catch
+            {
+                destination = "Download/Hinge";
+            }
+            files.ShowExternalDropFeedback(destination);
         }
 
         // This is the Win32 shell-drop fallback for desktop/Explorer drags.
@@ -4224,6 +4247,8 @@ public sealed partial class MainWindow : Window
         var filePage = _filePage;
         if (filePage == null) return;
 
+        filePage.SetLocation(category, path);
+
         // Update the visible status before any control-state mutation. This
         // also makes lifecycle failures observable instead of silently leaving
         // the original "等待连接" placeholder forever.
@@ -4683,7 +4708,11 @@ public sealed partial class MainWindow : Window
     private void ConfigureRemoteFileItem(FrameworkElement item, RemoteFileEntry entry)
     {
         item.DoubleTapped += RemoteFileItem_DoubleTapped;
-        if (!entry.IsDirectory && IsImageEntry(entry))
+        if (entry.IsDirectory && _fileCategory == "storage")
+        {
+            _filePage?.ConfigureFolderDrop(item, entry);
+        }
+        else if (!entry.IsDirectory && IsImageEntry(entry))
         {
             // The item provides a real StorageFile to Explorer instead of a
             // custom text payload, so it can be dropped on the desktop or any
@@ -5808,12 +5837,24 @@ public sealed partial class MainWindow : Window
         }
 
         var destination = args.DestinationPath.Trim('/');
-        await SendFilesToConnectionAsync(
+        var result = await SendFilesToConnectionAsync(
             connection,
             args.FilePaths,
             destination,
             cancellationToken,
             showFailureDialog: true);
+
+        if (result != null && result.Completed > 0)
+        {
+            if (ContentFrame.Content is FileManagementPage)
+            {
+                _ = RefreshRemoteFilesAsync(_fileCategory, _filePath, forceRefresh: true);
+            }
+            else if (ContentFrame.Content is PhotosPage photos)
+            {
+                photos.RefreshCurrentView();
+            }
+        }
     }
 
     private async Task SendShellFilesAsync(ShellSendRequest request)

@@ -1,8 +1,10 @@
+using Hinge.Core;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 using Windows.Storage;
 
 namespace Hinge.App;
@@ -13,6 +15,17 @@ public sealed partial class FileManagementPage : Page
     private bool _nearEndSignaled;
     private bool _nearEndCheckQueued;
     private bool _dropFeedbackVisible;
+    private FrameworkElement? _dropTargetFolderItem;
+
+    public string CurrentCategory { get; private set; } = "recent";
+    public string CurrentRelativePath { get; private set; } = string.Empty;
+
+    public void SetLocation(string category, string relativePath)
+    {
+        CurrentCategory = category;
+        CurrentRelativePath = relativePath;
+        ClearFolderDropTarget();
+    }
 
     public event EventHandler? NearEndReached;
     public event EventHandler? SelectionStateChanged;
@@ -47,19 +60,40 @@ public sealed partial class FileManagementPage : Page
     public void HandleExternalDrop(DragEventArgs e) =>
         DropRootGrid_Drop(this, e);
 
-    public void ShowExternalDropFeedback()
+    public void ShowExternalDropFeedback(string destination)
     {
-        ShowDropFeedback(
-            "正在发送到手机",
-            "自动分类保存到 /Download/Hinge/视频、图片或文件");
+        var label = string.Equals(destination, "Download/Hinge", StringComparison.OrdinalIgnoreCase)
+            ? "自动分类保存到 /Download/Hinge/视频、图片或文件"
+            : $"文件夹：/{NormalizeFolderPath(destination)}";
+        ShowDropFeedback("已识别投放位置，正在发送", label);
         _ = HideDropFeedbackLaterAsync();
     }
 
-    public void ShowExternalDragPreview() => ShowDropFeedback(
-        "释放以发送到手机",
-        "自动分类保存到 /Download/Hinge/视频、图片或文件");
+    public void ShowExternalDropFeedback() =>
+        ShowExternalDropFeedback("Download/Hinge");
 
-    public void ClearExternalDragPreview() => HideDropFeedback();
+    public void ShowExternalDragPreview()
+    {
+        if (string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(CurrentRelativePath))
+        {
+            ShowDropFeedback(
+                "释放以发送到当前文件夹",
+                $"/storage/emulated/0/{CurrentRelativePath.Trim('/')}");
+        }
+        else
+        {
+            ShowDropFeedback(
+                "释放以发送到手机",
+                "自动分类保存到 /Download/Hinge/视频、图片或文件");
+        }
+    }
+
+    public void ClearExternalDragPreview()
+    {
+        ClearFolderDropTarget();
+        HideDropFeedback();
+    }
 
     public IReadOnlyList<RemoteFileEntry> GetSelectedEntries()
     {
@@ -207,11 +241,84 @@ public sealed partial class FileManagementPage : Page
         return null;
     }
 
+    public void ConfigureFolderDrop(FrameworkElement item, RemoteFileEntry entry)
+    {
+        if (!entry.IsDirectory) return;
+        item.AllowDrop = true;
+        item.DragOver += (sender, args) =>
+        {
+            if (!args.DataView.Contains(StandardDataFormats.StorageItems))
+            {
+                args.AcceptedOperation = DataPackageOperation.None;
+                return;
+            }
+
+            if (HingeDragMetadata.IsInternalRemoteFileDrag(args.DataView))
+            {
+                args.AcceptedOperation = DataPackageOperation.Copy;
+                args.DragUIOverride.Caption = "松开以取消发送";
+                args.DragUIOverride.IsGlyphVisible = true;
+                args.Handled = true;
+                return;
+            }
+
+            SetFolderDropTarget(item, entry);
+            args.AcceptedOperation = DataPackageOperation.Copy;
+            args.DragUIOverride.Caption = $"发送到文件夹：{entry.Name}";
+            args.DragUIOverride.IsGlyphVisible = true;
+            args.Handled = true;
+        };
+        item.DragLeave += (_, _) => ClearFolderDropTarget(item);
+        item.Drop += async (sender, args) =>
+        {
+            ClearFolderDropTarget(item);
+            if (!args.DataView.Contains(StandardDataFormats.StorageItems)) return;
+
+            if (HingeDragMetadata.IsInternalRemoteFileDrag(args.DataView))
+            {
+                args.AcceptedOperation = DataPackageOperation.Copy;
+                args.Handled = true;
+                return;
+            }
+
+            var paths = await GetDroppedFilePathsAsync(args.DataView);
+            if (paths.Count == 0) return;
+
+            var destination = NormalizeFolderPath(entry.RelativePath);
+            FilesDropped?.Invoke(
+                this,
+                new ComputerFilesDroppedEventArgs(paths, destination));
+            args.AcceptedOperation = DataPackageOperation.Copy;
+            args.Handled = true;
+        };
+    }
+
+    private void SetFolderDropTarget(FrameworkElement item, RemoteFileEntry entry)
+    {
+        if (_dropTargetFolderItem != item)
+        {
+            if (_dropTargetFolderItem != null) _dropTargetFolderItem.Opacity = 1.0;
+            _dropTargetFolderItem = item;
+        }
+
+        item.Opacity = 0.72;
+        var destination = NormalizeFolderPath(entry.RelativePath);
+        ShowDropFeedback("释放以发送到文件夹", $"{entry.Name} · /{destination}");
+    }
+
+    private void ClearFolderDropTarget(FrameworkElement? item = null)
+    {
+        if (item != null && _dropTargetFolderItem != item) return;
+        if (_dropTargetFolderItem != null) _dropTargetFolderItem.Opacity = 1.0;
+        _dropTargetFolderItem = null;
+    }
+
     private void DropRootGrid_DragOver(object sender, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = DataPackageOperation.None;
+            ClearFolderDropTarget();
             return;
         }
 
@@ -224,22 +331,44 @@ public sealed partial class FileManagementPage : Page
             return;
         }
 
+        if (_dropTargetFolderItem != null)
+        {
+            e.AcceptedOperation = DataPackageOperation.Copy;
+            e.Handled = true;
+            return;
+        }
+
         e.AcceptedOperation = DataPackageOperation.Copy;
-        e.DragUIOverride.Caption = "发送到手机 Hinge 文件夹";
         e.DragUIOverride.IsGlyphVisible = true;
-        ShowDropFeedback(
-            "释放以发送到手机",
-            "将自动分类保存到 /Download/Hinge/视频、图片或文件");
+
+        if (string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(CurrentRelativePath))
+        {
+            var folderName = GetDisplayFolderName(CurrentRelativePath);
+            e.DragUIOverride.Caption = $"发送到当前文件夹：{folderName}";
+            ShowDropFeedback(
+                "释放以发送到当前文件夹",
+                $"/storage/emulated/0/{CurrentRelativePath.Trim('/')}");
+        }
+        else
+        {
+            e.DragUIOverride.Caption = "发送到手机 Hinge 文件夹";
+            ShowDropFeedback(
+                "释放以发送到手机",
+                "将自动分类保存到 /Download/Hinge/视频、图片或文件");
+        }
         e.Handled = true;
     }
 
     private void DropRootGrid_DragLeave(object sender, DragEventArgs e)
     {
+        ClearFolderDropTarget();
         HideDropFeedback();
     }
 
     private async void DropRootGrid_Drop(object sender, DragEventArgs e)
     {
+        ClearFolderDropTarget();
         HideDropFeedback();
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
 
@@ -252,12 +381,146 @@ public sealed partial class FileManagementPage : Page
 
         var paths = await GetDroppedFilePathsAsync(e.DataView);
         if (paths.Count == 0) return;
+
+        var destination = string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(CurrentRelativePath)
+            ? NormalizeFolderPath(CurrentRelativePath)
+            : "Download/Hinge";
+
         FilesDropped?.Invoke(
             this,
-            new ComputerFilesDroppedEventArgs(paths, "Download/Hinge"));
+            new ComputerFilesDroppedEventArgs(paths, destination));
         e.AcceptedOperation = DataPackageOperation.Copy;
         e.Handled = true;
     }
+
+    private Windows.Foundation.Point TransformToRootPoint(Windows.Foundation.Point pagePoint) =>
+        TransformToVisual(DropRootGrid).TransformPoint(pagePoint);
+
+    private (FrameworkElement Item, RemoteFileEntry Entry)? FindFolderAtRootPoint(
+        Windows.Foundation.Point rootPoint)
+    {
+        var isGrid = IsGridMode;
+        var itemsControl = isGrid ? (ItemsControl)FileGridView : FileListView;
+        if (itemsControl.Visibility != Visibility.Visible) return null;
+
+        for (var index = 0; index < itemsControl.Items.Count; index++)
+        {
+            if (itemsControl.ContainerFromIndex(index) is not FrameworkElement item ||
+                item.Tag is not RemoteFileEntry { IsDirectory: true } entry ||
+                item.ActualWidth <= 0 || item.ActualHeight <= 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                var topLeft = item.TransformToVisual(DropRootGrid).TransformPoint(
+                    new Windows.Foundation.Point(0, 0));
+                var bounds = new Windows.Foundation.Rect(
+                    topLeft,
+                    new Windows.Foundation.Size(item.ActualWidth, item.ActualHeight));
+                if (bounds.Contains(rootPoint)) return (item, entry);
+            }
+            catch
+            {
+                // Container being recycled during layout.
+            }
+        }
+
+        foreach (var element in VisualTreeHelper.FindElementsInHostCoordinates(rootPoint, DropRootGrid))
+        {
+            DependencyObject? current = element;
+            while (current != null && current != DropRootGrid)
+            {
+                if (current is FrameworkElement { Tag: RemoteFileEntry { IsDirectory: true } entry } item)
+                {
+                    return (item, entry);
+                }
+                current = VisualTreeHelper.GetParent(current);
+            }
+        }
+
+        return null;
+    }
+
+    public bool UpdateExternalDragPreview(Windows.Foundation.Point pagePoint)
+    {
+        if (string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var target = FindFolderAtRootPoint(TransformToRootPoint(pagePoint));
+                if (target != null)
+                {
+                    SetFolderDropTarget(target.Value.Item, target.Value.Entry);
+                    return true;
+                }
+            }
+            catch
+            {
+                // Coordinate transformation during layout/navigation.
+            }
+
+            ClearFolderDropTarget();
+            if (!string.IsNullOrWhiteSpace(CurrentRelativePath))
+            {
+                ShowDropFeedback(
+                    "释放以发送到当前文件夹",
+                    $"/storage/emulated/0/{CurrentRelativePath.Trim('/')}");
+                return true;
+            }
+
+            ShowDropFeedback(
+                "释放以发送到手机",
+                "将自动分类保存到 /Download/Hinge/视频、图片或文件");
+            return true;
+        }
+
+        ClearFolderDropTarget();
+        ShowDropFeedback(
+            "释放以发送到手机",
+            "将自动分类保存到 /Download/Hinge/视频、图片或文件");
+        return true;
+    }
+
+    public string ResolveExternalDropDestination(Windows.Foundation.Point pagePoint)
+    {
+        if (string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase))
+        {
+            var rootPoints = new List<Windows.Foundation.Point> { pagePoint };
+            try
+            {
+                rootPoints.Add(TransformToRootPoint(pagePoint));
+            }
+            catch
+            {
+                // Transformation fallback
+            }
+
+            foreach (var rootPoint in rootPoints)
+            {
+                var target = FindFolderAtRootPoint(rootPoint);
+                if (target != null)
+                {
+                    return NormalizeFolderPath(target.Value.Entry.RelativePath);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(CurrentRelativePath))
+            {
+                return NormalizeFolderPath(CurrentRelativePath);
+            }
+        }
+
+        return "Download/Hinge";
+    }
+
+    public static string NormalizeFolderPath(string? path) =>
+        StoragePathHelper.NormalizeFolderPath(path);
+
+    public static string GetDisplayFolderName(string path) =>
+        StoragePathHelper.GetDisplayFolderName(path);
 
     private static async Task<IReadOnlyList<string>> GetDroppedFilePathsAsync(DataPackageView dataView)
     {

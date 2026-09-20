@@ -105,6 +105,75 @@ public class PairingAndSessionTests
     }
 
     [Fact]
+    public void PairingManager_LocalCode_UsesChallengeBoundProof()
+    {
+        const string code = "654321";
+        const string challenge = "00112233445566778899aabbccddeeff";
+
+        Assert.True(PairingManager.IsValidPairingCode(code));
+        Assert.False(PairingManager.IsValidPairingCode("65432"));
+        Assert.False(PairingManager.IsValidPairingCode("65432a"));
+
+        string proof = PairingManager.CreateProof(code, challenge);
+        Assert.True(PairingManager.VerifyProof(code, challenge, proof));
+        Assert.False(PairingManager.VerifyProof("654320", challenge, proof));
+        Assert.False(PairingManager.VerifyProof(code, "changed", proof));
+    }
+
+    [Fact]
+    public async Task SessionManager_LocalPairingCode_AllowsCorrectRemoteCode()
+    {
+        int port;
+        using (var probe = new TcpListener(IPAddress.Loopback, 0))
+        {
+            probe.Start();
+            port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        }
+
+        string storePath = Path.Combine(Path.GetTempPath(), $"pairing_{Guid.NewGuid()}.json");
+        try
+        {
+            var serverId = new DeviceIdentity { DeviceId = "pairing-server", Name = "Pairing Server" };
+            using var server = new SessionManager(
+                serverId,
+                new TrustStore(storePath),
+                port,
+                localPairingCode: "654321");
+            server.StartListener();
+
+            SessionConnection? incoming = null;
+            server.ClientConnected += (_, connection) => incoming = connection;
+
+            var clientId = new DeviceIdentity { DeviceId = "pairing-client", Name = "Pairing Client" };
+            using var client = new SessionManager(
+                clientId,
+                new TrustStore(Path.Combine(Path.GetTempPath(), $"pairing_client_{Guid.NewGuid()}.json")),
+                port + 1);
+            using var outgoing = await client.ConnectToPeerAsync(
+                IPAddress.Loopback,
+                port,
+                remotePairingCode: "654321");
+
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (DateTime.UtcNow < deadline &&
+                   (outgoing.State != SessionState.Connected ||
+                    incoming?.State != SessionState.Connected))
+            {
+                await Task.Delay(20);
+            }
+
+            Assert.Equal(SessionState.Connected, outgoing.State);
+            Assert.Equal(SessionState.Connected, incoming?.State);
+            Assert.True(outgoing.IsPairingAuthenticated);
+            Assert.True(incoming?.IsPairingAuthenticated);
+        }
+        finally
+        {
+            if (File.Exists(storePath)) File.Delete(storePath);
+        }
+    }
+
+    [Fact]
     public async Task SessionManager_Loopback_Connection_Transfers_Frame()
     {
         int port = 52860;

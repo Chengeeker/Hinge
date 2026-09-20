@@ -12,7 +12,6 @@ internal static class Program
     private const string PayloadMarker = "HINGE_PAYLOAD_V1";
     private const string AppUserModelId = "Hinge.Office";
     private const string SparsePackageName = "Hinge.Office.Identity";
-    private const string SparsePackageAppUserModelId = "Hinge.Office.Identity_29ecp0hep5z68!Hinge";
     private const string ExplorerSnapshotPath = "Software\\Hinge\\ExplorerSend";
     private const string UninstallRegistryPath =
         "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Hinge";
@@ -573,10 +572,6 @@ internal static class Program
             EnsureMachineCertificateTrusted(certificatePath, certificate.Thumbprint);
 
             RegisterSparseIdentity(packagePath, installPath);
-            CreateShortcuts(
-                installPath,
-                Path.Combine(installPath, "Hinge.exe"),
-                SparsePackageAppUserModelId);
 
             NotifyShellAssociationChanged();
 
@@ -1198,4 +1193,3 @@ internal static class Program
         }
     }
 }
-

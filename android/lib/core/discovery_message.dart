@@ -14,6 +14,7 @@ class DiscoveryMessage {
   final int timestamp;
   final bool connectionRequested;
   final bool automaticReconnect;
+  final bool pairingRequired;
   final List<String> addresses;
 
   const DiscoveryMessage({
@@ -35,6 +36,7 @@ class DiscoveryMessage {
     required this.timestamp,
     this.connectionRequested = false,
     this.automaticReconnect = false,
+    this.pairingRequired = false,
     this.addresses = const [],
   });
 
@@ -52,6 +54,7 @@ class DiscoveryMessage {
     'timestamp': timestamp,
     'connectionRequested': connectionRequested,
     'automaticReconnect': automaticReconnect,
+    'pairingRequired': pairingRequired,
     'addresses': addresses,
   };
 
@@ -74,6 +77,7 @@ class DiscoveryMessage {
       timestamp: json['timestamp'] as int? ?? 0,
       connectionRequested: json['connectionRequested'] as bool? ?? false,
       automaticReconnect: json['automaticReconnect'] as bool? ?? false,
+      pairingRequired: json['pairingRequired'] as bool? ?? false,
       addresses: List<String>.from(json['addresses'] as List? ?? []),
     );
   }

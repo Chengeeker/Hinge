@@ -82,6 +82,7 @@ public partial class App : Application
         else
         {
             _window.Activate();
+            LogLifecycle("main-window-activated");
         }
     }
 

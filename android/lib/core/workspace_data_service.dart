@@ -40,6 +40,29 @@ class StorageInfo {
   }
 }
 
+class SharedFile {
+  final String path;
+  final String name;
+  final String mimeType;
+  final int sizeBytes;
+
+  const SharedFile({
+    required this.path,
+    required this.name,
+    required this.mimeType,
+    this.sizeBytes = 0,
+  });
+
+  factory SharedFile.fromJson(Map<dynamic, dynamic> json) {
+    return SharedFile(
+      path: '${json['path'] ?? ''}',
+      name: '${json['name'] ?? '分享文件'}',
+      mimeType: '${json['mimeType'] ?? 'application/octet-stream'}',
+      sizeBytes: (json['sizeBytes'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 class CalendarEvent {
   final String id;
   final String title;
@@ -395,6 +418,9 @@ class WorkspaceTask {
 
 class WorkspaceDataService {
   static const MethodChannel _channel = MethodChannel('hinge/platform');
+  static const EventChannel _sharedFileEvents = EventChannel(
+    'hinge/share/events',
+  );
 
   Future<dynamic> _invoke(String method, [dynamic arguments]) async {
     try {
@@ -403,6 +429,17 @@ class WorkspaceDataService {
       return null;
     }
   }
+
+  Stream<List<SharedFile>> get sharedFilesStream =>
+      _sharedFileEvents.receiveBroadcastStream().map((event) {
+        final raw = event is Map ? event['files'] : event;
+        if (raw is! List) return const <SharedFile>[];
+        return raw
+            .whereType<Map>()
+            .map(SharedFile.fromJson)
+            .where((file) => file.path.trim().isNotEmpty)
+            .toList(growable: false);
+      });
 
   Future<StorageInfo?> readStorage() async {
     final raw = await _invoke('storageInfo');
@@ -556,6 +593,15 @@ class WorkspaceDataService {
     final raw = await _invoke('keepAliveStatus');
     if (raw is! Map) return const {};
     return raw.map((key, value) => MapEntry('$key', value));
+  }
+
+  Future<String> readConnectionDiagnostics() async {
+    final raw = await _invoke('readConnectionDiagnostics');
+    return raw is String ? raw : '';
+  }
+
+  Future<void> clearConnectionDiagnostics() async {
+    await _invoke('clearConnectionDiagnostics');
   }
 
   Future<bool> openNotificationSettings() async {
@@ -1191,13 +1237,13 @@ class WorkspaceCommandRouter {
                   'content': item.content,
                   'timestamp': item.timestamp,
                   'category': item.category,
-                   'ongoing': item.ongoing,
-                   'notificationKey': item.notificationKey,
-                   'iconBase64': item.iconBase64,
-                   'isVerificationCode': item.isVerificationCode,
-                   'verificationCode': item.verificationCode,
-                 },
-               )
+                  'ongoing': item.ongoing,
+                  'notificationKey': item.notificationKey,
+                  'iconBase64': item.iconBase64,
+                  'isVerificationCode': item.isVerificationCode,
+                  'verificationCode': item.verificationCode,
+                },
+              )
               .toList(),
           'total': page.total,
           'applications': page.applications
@@ -1337,7 +1383,7 @@ class WorkspaceRemoteClient {
         );
       } catch (error) {
         lastError = error;
-        connection?.dispose();
+        connection?.dispose(manual: false);
       }
     }
     throw StateError(lastError == null ? '没有可用的设备地址' : '$lastError');
@@ -1394,7 +1440,7 @@ class WorkspaceRemoteClient {
       return result['payload'];
     } finally {
       await subscription.cancel();
-      if (disposeConnection) connection.dispose();
+      if (disposeConnection) connection.dispose(manual: false);
     }
   }
 }

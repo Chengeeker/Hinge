@@ -34,6 +34,7 @@ class DiscoveryService {
   bool _isRunning = false;
   bool _isListening = false;
   String? _lastError;
+  bool pairingRequired = false;
   List<String> _cachedPhysicalAddresses = const [];
   final Map<String, DateTime> _lastPeerReplies = {};
   final Map<String, DateTime> _lastConnectionRequests = {};
@@ -396,6 +397,7 @@ class DiscoveryService {
     final message = _createDiscoveryMessage(
       connectionRequested: true,
       automaticReconnect: automaticReconnect,
+      pairingRequired: pairingRequired,
     );
     final data = utf8.encode(jsonEncode(message.toJson()));
     final parsedPort = parseNetworkPort(port, AppConstants.discoveryUdpPort);
@@ -430,6 +432,7 @@ class DiscoveryService {
   DiscoveryMessage _createDiscoveryMessage({
     bool connectionRequested = false,
     bool automaticReconnect = false,
+    bool? pairingRequired,
     List<String>? addresses,
   }) {
     return DiscoveryMessage(
@@ -451,6 +454,7 @@ class DiscoveryService {
       timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       connectionRequested: connectionRequested,
       automaticReconnect: automaticReconnect,
+      pairingRequired: pairingRequired ?? this.pairingRequired,
       addresses: addresses ?? _cachedPhysicalAddresses,
     );
   }

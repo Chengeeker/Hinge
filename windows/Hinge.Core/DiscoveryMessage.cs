@@ -46,6 +46,9 @@ public class DiscoveryMessage
     [JsonPropertyName("automaticReconnect")]
     public bool AutomaticReconnect { get; set; }
 
+    [JsonPropertyName("pairingRequired")]
+    public bool PairingRequired { get; set; }
+
     [JsonPropertyName("addresses")]
     public List<string> Addresses { get; set; } = new();
 }

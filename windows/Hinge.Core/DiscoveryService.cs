@@ -34,6 +34,8 @@ public class DiscoveryService : IDisposable
     private readonly ConcurrentDictionary<string, DateTime> _lastPeerReplies = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastConnectionRequests = new();
 
+    public bool PairingRequired { get; set; }
+
     public DeviceRegistry Registry => _registry;
     public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
     public bool IsListening { get; private set; }
@@ -389,6 +391,7 @@ public class DiscoveryService : IDisposable
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             ConnectionRequested = connectionRequested,
             AutomaticReconnect = automaticReconnect,
+            PairingRequired = this.PairingRequired,
             DiscoveryPort = GetDiscoveryPort(),
             Addresses = NetworkInterfaceHelper.GetPhysicalCandidateAddresses()
         };

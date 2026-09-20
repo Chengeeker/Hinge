@@ -8,7 +8,27 @@
             <TextBlock Text="设置" Style="{StaticResource HingePageTitleStyle}" />
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
-                    <Button x:Name="PersonalizationButton" Content="个性化" HorizontalAlignment="Left" />
+                    <Button
+                        x:Name="PersonalizationButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="0"
+                        ToolTipService.ToolTip="打开个性化设置"
+                        AutomationProperties.Name="个性化设置">
+                        <Grid Padding="14,12" ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <SymbolIcon Grid.Column="0" Symbol="Edit" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="个性化" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock Text="主题、窗口材质与背景图片" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
+                        </Grid>
+                    </Button>
                     <StackPanel Spacing="8">
                     <TextBlock Text="自定义存储位置" FontSize="15" FontWeight="SemiBold" />
                         <Grid ColumnSpacing="8">
@@ -61,6 +81,26 @@
                             FontSize="14"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="连接安全" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Text="设置后，其他设备连接到本机时需要输入这个 6 位数字；留空表示不启用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="PairingCodeTextBox"
+                                Grid.Column="0"
+                                MaxLength="6"
+                                PlaceholderText="输入 6 位数字"
+                                HorizontalAlignment="Stretch" />
+                            <Button x:Name="SavePairingCodeButton" Grid.Column="1" Content="保存" MinWidth="72" />
+                            <Button x:Name="ClearPairingCodeButton" Grid.Column="2" Content="清除" MinWidth="72" />
+                        </Grid>
+                        <TextBlock x:Name="PairingCodeStatusText" Text="未启用本机配对码" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                     </StackPanel>
                     <Button x:Name="AboutButton" Content="关于应用" HorizontalAlignment="Left" />
                     <ToggleSwitch x:Name="MinimizeToTrayToggle" Header="关闭窗口时最小化到托盘" OnContent="开启" OffContent="关闭" />

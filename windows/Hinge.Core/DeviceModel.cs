@@ -73,4 +73,7 @@ public class Device
 
     [JsonPropertyName("trustState")]
     public TrustState TrustState { get; set; } = TrustState.Untrusted;
+
+    [JsonPropertyName("pairingRequired")]
+    public bool PairingRequired { get; set; }
 }

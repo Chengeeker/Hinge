@@ -325,15 +325,27 @@ class SmsNotificationListenerService : NotificationListenerService() {
             }
 
             if (packageName.isBlank()) return false
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
-                ?: return false
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            return try {
-                context.startActivity(launchIntent)
-                true
-            } catch (_: Exception) {
-                false
+            val candidates = listOfNotNull(
+                context.packageManager.getLaunchIntentForPackage(packageName),
+                context.packageManager.getLeanbackLaunchIntentForPackage(packageName),
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    setPackage(packageName)
+                },
+            )
+            for (launchIntent in candidates) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    // Starting a package-scoped activity is permitted even
+                    // when an OEM's package visibility implementation makes
+                    // PackageManager's convenience lookup return null.
+                    context.startActivity(launchIntent)
+                    return true
+                } catch (_: Exception) {
+                    // Try the next standards-based launch shape.
+                }
             }
+            return false
         }
 
         fun captureActiveNotifications() {

@@ -88,6 +88,7 @@ public class DeviceRegistry
                         ProtocolVersion = message.ProtocolVersion,
                         SessionPort = message.Port > 0 ? message.Port : Constants.SessionTcpPort,
                         DiscoveryPort = ValidDiscoveryPort(message.DiscoveryPort),
+                        PairingRequired = message.PairingRequired,
                         Capabilities = message.Capabilities,
                         NetworkAddresses = MergeAddresses(
                             replacedRecord?.Device.NetworkAddresses,
@@ -137,6 +138,11 @@ public class DeviceRegistry
                         dev.Model = message.Model;
                         dev.SessionPort = message.Port > 0 ? message.Port : Constants.SessionTcpPort;
                         dev.DiscoveryPort = ValidDiscoveryPort(message.DiscoveryPort);
+                        isNewOrChanged = true;
+                    }
+                    if (dev.PairingRequired != message.PairingRequired)
+                    {
+                        dev.PairingRequired = message.PairingRequired;
                         isNewOrChanged = true;
                     }
                     return existing;
@@ -299,6 +305,7 @@ public class DeviceRegistry
             target.Device.SessionPort = source.Device.SessionPort;
             target.Device.DiscoveryPort = source.Device.DiscoveryPort;
             target.Device.Capabilities = source.Device.Capabilities;
+            target.Device.PairingRequired = source.Device.PairingRequired;
         }
     }
 

@@ -5,18 +5,24 @@
     NavigationCacheMode="Required">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
         <StackPanel Style="{StaticResource HingePageStackStyle}">
-            <Button
-                x:Name="BackToSettingsButton"
-                Width="32"
-                Height="32"
-                Padding="0"
-                HorizontalAlignment="Left"
-                ToolTipService.ToolTip="返回设置"
-                AutomationProperties.Name="返回设置">
-                <SymbolIcon Symbol="Back" />
-            </Button>
-            <TextBlock Text="个性化" Style="{StaticResource HingePageTitleStyle}" />
-            <TextBlock Text="调整窗口的显示方式，设置会立即保存。" Style="{StaticResource HingePageDescriptionStyle}" />
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button
+                    x:Name="BackToSettingsButton"
+                    Grid.Column="0"
+                    Style="{StaticResource HingeIconButtonStyle}"
+                    ToolTipService.ToolTip="返回设置"
+                    AutomationProperties.Name="返回设置">
+                    <SymbolIcon Symbol="Back" />
+                </Button>
+                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="个性化" Style="{StaticResource HingePageTitleStyle}" />
+                    <TextBlock Text="调整窗口的显示方式，设置会立即保存。" Style="{StaticResource HingePageDescriptionStyle}" />
+                </StackPanel>
+            </Grid>
 
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">

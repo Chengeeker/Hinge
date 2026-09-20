@@ -7,7 +7,11 @@ public sealed partial class SettingsPage : Page
 {
     public Button Personalization => PersonalizationButton;
     public Button Storage => StorageButton;
+    public Button SavePairingCode => SavePairingCodeButton;
+    public Button ClearPairingCode => ClearPairingCodeButton;
     public TextBox StoragePath => StoragePathTextBox;
+    public TextBox PairingCode => PairingCodeTextBox;
+    public TextBlock PairingCodeStatus => PairingCodeStatusText;
     public TextBlock NotificationStatus => NotificationStatusText;
     public Button OpenNotificationSettings => OpenNotificationSettingsButton;
     public Button About => AboutButton;

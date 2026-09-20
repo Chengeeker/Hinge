@@ -57,6 +57,7 @@ public sealed partial class MainWindow : Window
     private const string StartupRegistryValueName = "Hinge";
     private const string UserSettingsRegistryPath = @"Software\Hinge";
     private const string ReceiveDirectorySettingName = "ReceiveDirectory";
+    private const string PairingCodeSettingName = "PairingCode";
     private const string ShowTrayBackgroundNoticeSettingName = "ShowTrayBackgroundNotice";
     private const string StartupArgument = "--startup";
 
@@ -114,6 +115,9 @@ public sealed partial class MainWindow : Window
     private bool _minimizeToTray;
     private bool _showTrayBackgroundNotice;
     private string _receiveDirectory;
+    private string _localPairingCode;
+    private readonly Dictionary<string, string> _remotePairingCodes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _contentDialogGate = new(1, 1);
     private readonly SemaphoreSlim _remoteMediaReceiveGate = new(1, 1);
     private TaskCompletionSource<string>? _pendingRemoteMedia;
     private string? _pendingRemoteMediaName;
@@ -339,7 +343,9 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
+        App.LogLifecycle("main-window-constructor-enter");
         InitializeComponent();
+        App.LogLifecycle("main-window-initialize-component-complete");
         PageRoot.AddHandler(
             UIElement.PointerPressedEvent,
             new PointerEventHandler(PageRoot_PointerPressed),
@@ -351,18 +357,22 @@ public sealed partial class MainWindow : Window
         _minimizeToTray = LoadMinimizeToTray();
         _showTrayBackgroundNotice = LoadShowTrayBackgroundNotice();
         _receiveDirectory = LoadReceiveDirectory();
+        _localPairingCode = LoadPairingCode();
         AppNavigation.OpenPaneLength = 200;
         var initialWindowTheme = LoadWindowTheme();
         ApplyWindowTheme(initialWindowTheme);
         ApplyWindowMaterial(LoadWindowMaterial());
         ApplyBackgroundImage(LoadWindowBackgroundPath());
+        App.LogLifecycle("configure-app-window-begin");
         ConfigureAppWindow();
+        App.LogLifecycle("configure-app-window-complete");
         ApplyAppWindowTitleBarTheme(initialWindowTheme);
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         ContentFrame.Navigated += ContentFrame_Navigated;
         ContentFrame.Navigate(typeof(HomePage));
         AppNavigation.SelectedItem = AppNavigation.MenuItems[0];
+        App.LogLifecycle("main-window-navigation-complete");
 
         var identityManager = new DeviceIdentityManager();
         _localIdentity = identityManager.GetOrCreateIdentity();
@@ -376,15 +386,22 @@ public sealed partial class MainWindow : Window
         _notificationPresenter = new Win32NotificationPresenter(
             text => _ = _clipboardAdapter.SetTextAsync(text));
         _notificationManager = new NotificationManager(_notificationPresenter, _trustStore);
-        _sessionManager = new SessionManager(_localIdentity, _trustStore);
+        _sessionManager = new SessionManager(
+            _localIdentity,
+            _trustStore,
+            localPairingCode: _localPairingCode);
         _registry = new DeviceRegistry();
         _discoveryService = new DiscoveryService(
             _localIdentity,
             _registry,
-            sessionPortProvider: () => _sessionManager.ListeningPort);
+            sessionPortProvider: () => _sessionManager.ListeningPort)
+        {
+            PairingRequired = _localPairingCode.Length > 0
+        };
         _trayManager = new Win32TrayManager();
         _workspaceRemoteClient = new WorkspaceRemoteClient();
         _previewCache = new PreviewCache();
+        App.LogLifecycle("main-window-services-created");
 
         SetHeroDevice(null);
         LocalDeviceInfo.Text = $"本机：{_localIdentity.Name}\nID：{ShortId(_localIdentity.DeviceId)}";
@@ -423,8 +440,11 @@ public sealed partial class MainWindow : Window
         }
 
         _clipboardAdapter.StartMonitoring();
+        App.LogLifecycle("clipboard-monitor-started");
         _sessionManager.StartListener();
+        App.LogLifecycle($"session-listener-started listening={_sessionManager.IsListening}");
         _discoveryService.Start();
+        App.LogLifecycle($"discovery-started listening={_discoveryService.IsListening}");
         if (!_sessionManager.IsListening)
         {
             DiscoveryInfoBar.Severity = InfoBarSeverity.Error;
@@ -443,10 +463,12 @@ public sealed partial class MainWindow : Window
         Home.ApplyThemePalette();
         RefreshDeviceList(_registry.GetAllDevices());
         RefreshExplorerSendMenu();
+        App.LogLifecycle("explorer-menu-refreshed");
         _shellSendPipeServer = new ShellSendPipeServer(arguments =>
         {
             HandleActivationArguments(arguments);
         });
+        App.LogLifecycle("main-window-constructor-complete");
     }
 
     public bool HandleActivationArguments(string? arguments)
@@ -815,7 +837,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = ((FrameworkElement)Content).XamlRoot
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
 
         var connection = GetConnectedConnection();
         if (connection == null)
@@ -846,6 +868,12 @@ public sealed partial class MainWindow : Window
         page.Personalization.Click += BtnPersonalization_Click;
         page.Storage.Click += BtnStorage_Click;
         page.StoragePath.Text = _receiveDirectory;
+        page.PairingCode.Text = _localPairingCode;
+        page.PairingCodeStatus.Text = _localPairingCode.Length > 0
+            ? "已启用本机配对码；其他设备连接到本机时需要验证。"
+            : "未启用本机配对码";
+        page.SavePairingCode.Click += SavePairingCode_Click;
+        page.ClearPairingCode.Click += ClearPairingCode_Click;
         page.NotificationStatus.Text = _notificationPresenter.SystemNotificationStatus;
         page.OpenNotificationSettings.Click += OpenNotificationSettings_Click;
         page.About.Click += BtnAbout_Click;
@@ -2382,6 +2410,56 @@ public sealed partial class MainWindow : Window
         WriteUserSetting(ReceiveDirectorySettingName, directory);
     }
 
+    private static string LoadPairingCode()
+    {
+        try
+        {
+            if (ReadUserSetting(PairingCodeSettingName) is string registryCode)
+            {
+                var normalized = PairingManager.NormalizePairingCode(registryCode);
+                if (normalized.Length > 0) return normalized;
+            }
+
+            if (ApplicationData.Current.LocalSettings.Values[PairingCodeSettingName] is string localCode)
+            {
+                var normalized = PairingManager.NormalizePairingCode(localCode);
+                if (normalized.Length > 0)
+                {
+                    WriteUserSetting(PairingCodeSettingName, normalized);
+                    return normalized;
+                }
+            }
+        }
+        catch
+        {
+            // Keep pairing optional if the settings store is unavailable.
+        }
+        return string.Empty;
+    }
+
+    private static void SavePairingCode(string? code)
+    {
+        var normalized = PairingManager.NormalizePairingCode(code);
+        try
+        {
+            if (normalized.Length == 0)
+            {
+                ApplicationData.Current.LocalSettings.Values.Remove(PairingCodeSettingName);
+            }
+            else
+            {
+                ApplicationData.Current.LocalSettings.Values[PairingCodeSettingName] = normalized;
+            }
+        }
+        catch
+        {
+            // The registry fallback below keeps the setting available in the
+            // unpackaged desktop build when LocalSettings is unavailable.
+        }
+
+        WriteUserSetting(PairingCodeSettingName, normalized.Length == 0 ? null : normalized);
+    }
+
     private static string LoadWindowTheme()
     {
         try
@@ -3206,19 +3284,40 @@ public sealed partial class MainWindow : Window
 
         if (device.NetworkAddresses.Count == 0)
         {
-            if (!automatic) ShowStatus("无法连接", $"未找到 {device.Name} 的局域网地址。");
+            if (!automatic) await ShowStatusAsync("无法连接", $"未找到 {device.Name} 的局域网地址。");
             return;
+        }
+
+        string? remotePairingCode = null;
+        if (device.PairingRequired)
+        {
+            _remotePairingCodes.TryGetValue(device.DeviceId, out remotePairingCode);
+            if (string.IsNullOrWhiteSpace(remotePairingCode))
+            {
+                if (automatic)
+                {
+                    StatusText.Text = $"{device.Name} 需要配对码，请手动连接并输入后再恢复历史连接。";
+                    return;
+                }
+
+                remotePairingCode = await PromptPairingCodeAsync(device.Name);
+                if (string.IsNullOrWhiteSpace(remotePairingCode)) return;
+                _remotePairingCodes[device.DeviceId] = remotePairingCode;
+            }
         }
 
         if (_connectingDeviceId != null)
         {
-            if (!automatic) ShowStatus("正在连接", "正在尝试连接另一台设备，请稍候。");
+            if (!automatic) await ShowStatusAsync("正在连接", "正在尝试连接另一台设备，请稍候。");
             return;
         }
 
         _connectingDeviceId = device.DeviceId;
         var attemptGeneration = ++_connectionAttemptGeneration;
         SessionConnection? connection = null;
+        var cts = new CancellationTokenSource();
+        Task reverseConnectionWatcher = Task.CompletedTask;
+        Task directConnectionAttempt = Task.CompletedTask;
         try
         {
             StatusText.Text = automatic
@@ -3230,55 +3329,60 @@ public sealed partial class MainWindow : Window
 
             // Request the reverse path immediately in the background with multi-burst
             // instead of waiting for a blocked inbound TCP attempt to time out.
-            _ = Task.Run(async () =>
+            if (!device.PairingRequired)
             {
-                foreach (var address in addresses)
+                _ = Task.Run(async () =>
                 {
-                    try
+                    foreach (var address in addresses)
                     {
-                        await _discoveryService.RequestReverseConnectionAsync(
-                            address,
-                            device.DiscoveryPort,
-                            automaticReconnect: automatic);
+                        try
+                        {
+                            await _discoveryService.RequestReverseConnectionAsync(
+                                address,
+                                device.DiscoveryPort,
+                                automaticReconnect: automatic);
+                        }
+                        catch { }
                     }
-                    catch { }
-                }
-            });
+                });
+            }
 
             // Parallel race between inbound reverse connection and direct outbound TCP.
             // On standalone mobile VPNs, direct inbound TCP SYN is dropped by Android's kernel,
             // but the reverse connection from Android to PC arrives in ~50-150ms.
-            using var cts = new CancellationTokenSource();
             var tcs = new TaskCompletionSource<SessionConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             // Path 1: High-sensitivity reverse connection watcher
-            _ = Task.Run(async () =>
+            if (!device.PairingRequired)
             {
-                DateTime deadline = DateTime.UtcNow.AddSeconds(6);
-                while (DateTime.UtcNow < deadline && !cts.Token.IsCancellationRequested)
+                reverseConnectionWatcher = Task.Run(async () =>
                 {
-                    var rev = _sessionManager.ConnectionForDevice(device.DeviceId);
-                    if (rev is { State: SessionState.Connected })
+                    DateTime deadline = DateTime.UtcNow.AddSeconds(6);
+                    while (DateTime.UtcNow < deadline && !cts.Token.IsCancellationRequested)
                     {
-                        if (tcs.TrySetResult(rev))
+                        var rev = _sessionManager.ConnectionForDevice(device.DeviceId);
+                        if (rev is { State: SessionState.Connected })
                         {
-                            cts.Cancel();
-                            return;
+                            if (tcs.TrySetResult(rev))
+                            {
+                                cts.Cancel();
+                                return;
+                            }
+                        }
+                        try
+                        {
+                            await Task.Delay(50, cts.Token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
                         }
                     }
-                    try
-                    {
-                        await Task.Delay(50, cts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                }
-            });
+                });
+            }
 
             // Path 2: Direct outbound TCP connection attempts
-            _ = Task.Run(async () =>
+            directConnectionAttempt = Task.Run(async () =>
             {
                 foreach (var address in addresses)
                 {
@@ -3288,7 +3392,11 @@ public sealed partial class MainWindow : Window
                         if (cts.Token.IsCancellationRequested) break;
                         try
                         {
-                            var direct = await _sessionManager.ConnectToPeerAsync(address, port);
+                            var direct = await _sessionManager.ConnectToPeerAsync(
+                                address,
+                                port,
+                                remotePairingCode,
+                                cts.Token);
                             if (tcs.TrySetResult(direct))
                             {
                                 cts.Cancel();
@@ -3357,6 +3465,10 @@ public sealed partial class MainWindow : Window
             {
                 connection.Dispose();
             }
+            if (!string.IsNullOrWhiteSpace(connection?.PairingError))
+            {
+                _remotePairingCodes.Remove(device.DeviceId);
+            }
             HeaderStatusText.Text = "局域网就绪";
             if (automatic)
             {
@@ -3364,16 +3476,94 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                ShowStatus("连接失败", $"无法连接到 {device.Name}：{exception.Message}");
+                await ShowStatusAsync(
+                    "连接失败",
+                    $"无法连接到 {device.Name}：{connection?.PairingError ?? exception.Message}");
             }
         }
         finally
         {
+            // Both connection paths are fire-and-forget workers within this
+            // attempt. Cancel and observe them before the CTS is disposed;
+            // otherwise a late token read becomes an unobserved
+            // ObjectDisposedException and can destabilize the resident app.
+            cts.Cancel();
+            try
+            {
+                await Task.WhenAll(reverseConnectionWatcher, directConnectionAttempt);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the winning path cancels the race.
+            }
+            catch
+            {
+                // The connection result has already been handled above; the
+                // workers must still be observed so they cannot escape as
+                // unobserved task exceptions.
+            }
+
+            cts.Dispose();
+
             if (string.Equals(_connectingDeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase))
             {
                 _connectingDeviceId = null;
             }
         }
+    }
+
+    private async Task<string?> PromptPairingCodeAsync(string deviceName)
+    {
+        var input = new TextBox
+        {
+            MaxLength = 6,
+            PlaceholderText = "输入 6 位数字",
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        input.InputScope = new Microsoft.UI.Xaml.Input.InputScope
+        {
+            Names =
+            {
+                new Microsoft.UI.Xaml.Input.InputScopeName
+                {
+                    NameValue = Microsoft.UI.Xaml.Input.InputScopeNameValue.Number
+                }
+            }
+        };
+        var error = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Colors.Red),
+            TextWrapping = TextWrapping.Wrap
+        };
+        var dialog = new ContentDialog
+        {
+            Title = $"连接 {deviceName}",
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = "该设备已启用本机配对码，请输入后继续连接。" },
+                    input,
+                    error
+                }
+            },
+            PrimaryButtonText = "连接",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = ((FrameworkElement)Content).XamlRoot
+        };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            if (!PairingManager.IsValidPairingCode(input.Text))
+            {
+                error.Text = "请输入完整的 6 位数字配对码。";
+                args.Cancel = true;
+            }
+        };
+
+        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary) return null;
+        return PairingManager.NormalizePairingCode(input.Text);
     }
 
     private async Task<SessionConnection?> WaitForReverseConnectionAsync(
@@ -3403,7 +3593,14 @@ public sealed partial class MainWindow : Window
         try
         {
             if (connection.PeerInfo is { } raced) return raced;
-            return await completion.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(4));
+            try
+            {
+                return await completion.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(4));
+            }
+            catch (TimeoutException) when (!string.IsNullOrWhiteSpace(connection.PairingError))
+            {
+                throw new TimeoutException(connection.PairingError);
+            }
         }
         finally
         {
@@ -3428,7 +3625,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            ShowStatus("设备尚未连接", $"请先点击“连接”建立 {device.Name} 的会话。");
+            _ = ShowStatusAsync("设备尚未连接", $"请先点击“连接”建立 {device.Name} 的会话。");
         }
     }
 
@@ -3518,7 +3715,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await _discoveryService.BroadcastOnceAsync();
-            ShowStatus("设备发现", "已发送局域网发现广播。");
+            _ = ShowStatusAsync("设备发现", "已发送局域网发现广播。");
         }
         catch (Exception exception)
         {
@@ -3571,7 +3768,7 @@ public sealed partial class MainWindow : Window
             XamlRoot = ((FrameworkElement)Content).XamlRoot
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -3695,7 +3892,8 @@ public sealed partial class MainWindow : Window
                 Platform = peer.Platform,
                 Version = Constants.AppVersion,
                 ProtocolVersion = Constants.ProtocolVersion,
-                Port = Constants.SessionTcpPort
+                Port = Constants.SessionTcpPort,
+                PairingRequired = peer.PairingRequired
             }, remoteAddress);
         }
 
@@ -3718,10 +3916,12 @@ public sealed partial class MainWindow : Window
                         ? new List<string>()
                         : new List<string> { remoteAddress },
                     ConnectionState = ConnectionState.Connected,
-                    TrustState = TrustState.Trusted
+                    TrustState = TrustState.Trusted,
+                    PairingRequired = peer.PairingRequired
                 };
             }
             device.TrustState = TrustState.Trusted;
+            device.PairingRequired = peer.PairingRequired;
 
             _activeConnection = connection;
             SetActiveDevice(device);
@@ -3766,7 +3966,8 @@ public sealed partial class MainWindow : Window
                 Platform = "android",
                 Version = Constants.AppVersion,
                 ProtocolVersion = Constants.ProtocolVersion,
-                Port = Constants.SessionTcpPort
+                Port = Constants.SessionTcpPort,
+                PairingRequired = connection.PeerInfo?.PairingRequired ?? false
             }, remoteAddress);
 
             DispatcherQueue.TryEnqueue(() =>
@@ -5323,6 +5524,41 @@ public sealed partial class MainWindow : Window
         StatusText.Text = "主界面背景图片已清除";
     }
 
+    private void SavePairingCode_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsPage == null) return;
+
+        var code = PairingManager.NormalizePairingCode(_settingsPage.PairingCode.Text);
+        if (code.Length == 0)
+        {
+            _settingsPage.PairingCodeStatus.Text = "请输入完整的 6 位数字；不启用时请点击“清除”。";
+            SettingsStatusText.Text = "本机配对码未更新。";
+            return;
+        }
+
+        _localPairingCode = code;
+        SavePairingCode(code);
+        _sessionManager.LocalPairingCode = code;
+        _discoveryService.PairingRequired = true;
+        _settingsPage.PairingCode.Text = code;
+        _settingsPage.PairingCodeStatus.Text = "已启用本机配对码；其他设备连接到本机时需要验证。";
+        SettingsStatusText.Text = "本机配对码已保存；新连接会要求输入配对码。";
+    }
+
+    private void ClearPairingCode_Click(object sender, RoutedEventArgs e)
+    {
+        _localPairingCode = string.Empty;
+        SavePairingCode(null);
+        _sessionManager.LocalPairingCode = string.Empty;
+        _discoveryService.PairingRequired = false;
+        if (_settingsPage != null)
+        {
+            _settingsPage.PairingCode.Text = string.Empty;
+            _settingsPage.PairingCodeStatus.Text = "未启用本机配对码";
+        }
+        SettingsStatusText.Text = "本机配对码已关闭。";
+    }
+
     private void MinimizeToTray_Toggled(object sender, RoutedEventArgs e)
     {
         _minimizeToTray = sender is ToggleSwitch { IsOn: true };
@@ -5461,7 +5697,7 @@ public sealed partial class MainWindow : Window
             CloseButtonText = "关闭",
             XamlRoot = ((FrameworkElement)Content).XamlRoot
         };
-        await dialog.ShowAsync();
+        await ShowContentDialogAsync(dialog);
     }
 
     private async Task ShowQuickTransferAsync()
@@ -5489,7 +5725,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = ((FrameworkElement)Content).XamlRoot
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(input.Text))
+        if (await ShowContentDialogAsync(dialog) == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(input.Text))
         {
             try
             {
@@ -5887,6 +6123,19 @@ public sealed partial class MainWindow : Window
         return connection;
     }
 
+    private async Task<ContentDialogResult> ShowContentDialogAsync(ContentDialog dialog)
+    {
+        await _contentDialogGate.WaitAsync();
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            _contentDialogGate.Release();
+        }
+    }
+
     private async Task ShowDialogAsync(string title, string message, bool primary)
     {
         var dialog = new ContentDialog
@@ -5896,20 +6145,26 @@ public sealed partial class MainWindow : Window
             CloseButtonText = primary ? "关闭" : "知道了",
             XamlRoot = ((FrameworkElement)Content).XamlRoot
         };
-        await dialog.ShowAsync();
+        await ShowContentDialogAsync(dialog);
     }
 
-    private async void ShowStatus(string title, string message)
+    private Task ShowStatusAsync(string title, string message)
     {
         StatusText.Text = message;
-        var dialog = new ContentDialog
+        return ShowStatusDialogSafelyAsync(title, message);
+    }
+
+    private async Task ShowStatusDialogSafelyAsync(string title, string message)
+    {
+        try
         {
-            Title = title,
-            Content = message,
-            CloseButtonText = "知道了",
-            XamlRoot = ((FrameworkElement)Content).XamlRoot
-        };
-        await dialog.ShowAsync();
+            await ShowDialogAsync(title, message, primary: false);
+        }
+        catch
+        {
+            // A status dialog is best effort. It must never turn a background
+            // connection notification into an unobserved UI task exception.
+        }
     }
 
     private void OnClosed(object sender, WindowEventArgs args)

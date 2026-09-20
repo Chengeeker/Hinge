@@ -13,37 +13,82 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
 import android.content.pm.ServiceInfo
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Keeps the LAN listener and the Dart process alive while the app is not in
- * the foreground. The notification is intentional: Android requires a
- * user-visible foreground service for a connection that continues in the
- * background.
+ * Keeps the native LAN listener, TCP sessions and background maintenance alive
+ * while the app is not in the foreground. The notification is intentional:
+ * Android requires a user-visible foreground service for a connection that
+ * continues in the background.
  */
 class HingeForegroundService : Service() {
+    private lateinit var nativeConnectionBroker: HingeNativeConnectionBroker
     private var multicastLock: WifiManager.MulticastLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var smsContentObserver: SmsContentObserver? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var boundNetwork: Network? = null
+    private var cpuWakeLock: PowerManager.WakeLock? = null
+    private val discoveryHandler = Handler(Looper.getMainLooper())
+    private val discoveryExecutor = Executors.newSingleThreadExecutor()
+    private val discoveryBeaconInFlight = AtomicBoolean(false)
+    private var discoveryBeaconRunnable: Runnable? = null
 
     override fun onCreate() {
         super.onCreate()
+        current = this
+        HingeDiagnostics.from(this).log("service_on_create")
+        nativeConnectionBroker = HingeNativeConnectionBroker(this)
+        if (ENABLE_NATIVE_CONNECTION_BROKER) {
+            nativeConnectionBroker.start()
+        } else {
+            HingeDiagnostics.from(this).log("native_broker_disabled_using_dart_transport")
+        }
         createNotificationChannel()
+        acquireCpuWakeLock()
         registerPhysicalNetworkCallback()
         acquireMulticastLock()
         acquireWifiLock()
         smsContentObserver = SmsContentObserver(this)
+        startDiscoveryBeaconLoop()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            HingeDiagnostics.from(this).log("service_stop_requested")
+            nativeConnectionBroker.stop()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        if (ENABLE_NATIVE_CONNECTION_BROKER && intent?.action == ACTION_CONFIGURE) {
+            nativeConnectionBroker.configure(
+                mapOf(
+                    "deviceId" to intent.getStringExtra("deviceId"),
+                    "name" to intent.getStringExtra("name"),
+                    "manufacturer" to intent.getStringExtra("manufacturer"),
+                    "model" to intent.getStringExtra("model"),
+                    "localPairingCode" to intent.getStringExtra("localPairingCode"),
+                    "listenPort" to intent.getIntExtra("listenPort", SESSION_PORT),
+                ),
+            )
         }
 
         refreshSmsContentObserver()
@@ -56,7 +101,7 @@ class HingeForegroundService : Service() {
         val notification = notificationBuilder
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("Hinge 正在保持设备连接")
-            .setContentText("局域网发现与设备会话在后台运行")
+            .setContentText("局域网发现与连接保活在后台运行")
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(persistentNotificationEnabled())
             .setAutoCancel(!persistentNotificationEnabled())
@@ -72,6 +117,11 @@ class HingeForegroundService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        // The native beacon is deliberately independent from the Flutter
+        // isolate. If an OEM suspends or reclaims Dart while the foreground
+        // notification remains visible, a Windows client that starts later
+        // must still be able to discover this phone.
+        broadcastDiscoveryBeacon()
         return START_STICKY
     }
 
@@ -96,6 +146,13 @@ class HingeForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        HingeDiagnostics.from(this).log("service_on_destroy")
+        if (::nativeConnectionBroker.isInitialized) nativeConnectionBroker.stop()
+        if (current === this) current = null
+        discoveryBeaconRunnable?.let(discoveryHandler::removeCallbacks)
+        discoveryBeaconRunnable = null
+        discoveryExecutor.shutdownNow()
+        releaseCpuWakeLock()
         smsContentObserver?.close()
         smsContentObserver = null
         unregisterPhysicalNetworkCallback()
@@ -105,6 +162,8 @@ class HingeForegroundService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    fun connectionBroker(): HingeNativeConnectionBroker = nativeConnectionBroker
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -186,6 +245,38 @@ class HingeForegroundService : Service() {
     }
 
     /**
+     * A foreground service keeps the process important, but it does not keep
+     * the CPU executing while the screen is off. The native TCP broker and its
+     * heartbeat timer otherwise stop making progress even though this service
+     * notification remains visible. This lock is held only for the lifetime
+     * of the user-visible connection service and is released during teardown.
+     */
+    private fun acquireCpuWakeLock() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            cpuWakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "Hinge::Connection",
+            ).apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (_: Exception) {
+            cpuWakeLock = null
+        }
+    }
+
+    private fun releaseCpuWakeLock() {
+        try {
+            if (cpuWakeLock?.isHeld == true) cpuWakeLock?.release()
+        } catch (_: Exception) {
+            // The power service may already be unavailable during teardown.
+        } finally {
+            cpuWakeLock = null
+        }
+    }
+
+    /**
      * Keep the process bound to the current physical LAN while the Activity is
      * paused. MainActivity performs the same binding before creating Dart
      * sockets, but that callback only runs when the UI is alive. A Wi-Fi roam,
@@ -205,6 +296,7 @@ class HingeForegroundService : Service() {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 bindToPhysicalNetwork(manager, network)
+                broadcastDiscoveryBeacon()
             }
 
             override fun onCapabilitiesChanged(
@@ -213,6 +305,7 @@ class HingeForegroundService : Service() {
             ) {
                 if (isPhysicalLan(capabilities)) {
                     bindToPhysicalNetwork(manager, network)
+                    broadcastDiscoveryBeacon()
                 }
             }
 
@@ -225,6 +318,7 @@ class HingeForegroundService : Service() {
                 }
                 if (replacement != null) {
                     bindToPhysicalNetwork(manager, replacement)
+                    broadcastDiscoveryBeacon()
                 } else {
                     try {
                         manager.bindProcessToNetwork(null)
@@ -296,6 +390,163 @@ class HingeForegroundService : Service() {
             (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
 
+    private fun startDiscoveryBeaconLoop() {
+        if (discoveryBeaconRunnable != null) return
+        val runnable = object : Runnable {
+            override fun run() {
+                broadcastDiscoveryBeacon()
+                discoveryHandler.postDelayed(this, DISCOVERY_BEACON_INTERVAL_MS)
+            }
+        }
+        discoveryBeaconRunnable = runnable
+        discoveryHandler.post(runnable)
+    }
+
+    /**
+     * Sends a small discovery announcement from the foreground service itself.
+     * Flutter's DiscoveryService still consumes the same discovery payload,
+     * while this fallback keeps device discovery alive when Android pauses the
+     * Flutter isolate or its UDP socket while the foreground notification is
+     * present.
+     */
+    private fun broadcastDiscoveryBeacon() {
+        if (!discoveryBeaconInFlight.compareAndSet(false, true)) return
+        discoveryExecutor.execute {
+            try {
+                val payload = discoveryPayload() ?: return@execute
+                val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+                val endpoints = physicalDiscoveryEndpoints()
+                var sent = false
+
+                for ((address, broadcast) in endpoints) {
+                    try {
+                        DatagramSocket(null).use { socket ->
+                            socket.reuseAddress = true
+                            socket.broadcast = true
+                            socket.bind(InetSocketAddress(address, 0))
+                            sendDiscoveryPacket(socket, bytes, InetAddress.getByName("255.255.255.255"))
+                            if (broadcast != null && broadcast != InetAddress.getByName("255.255.255.255")) {
+                                sendDiscoveryPacket(socket, bytes, broadcast)
+                            }
+                            sent = true
+                        }
+                    } catch (_: Exception) {
+                        // Continue with another physical interface or fallback.
+                    }
+                }
+
+                if (!sent) {
+                    try {
+                        DatagramSocket().use { socket ->
+                            socket.broadcast = true
+                            sendDiscoveryPacket(
+                                socket,
+                                bytes,
+                                InetAddress.getByName("255.255.255.255"),
+                            )
+                        }
+                    } catch (_: Exception) {
+                        // Flutter's discovery loop remains an additional path.
+                    }
+                }
+            } finally {
+                discoveryBeaconInFlight.set(false)
+            }
+        }
+    }
+
+    private fun sendDiscoveryPacket(
+        socket: DatagramSocket,
+        bytes: ByteArray,
+        target: InetAddress,
+    ) {
+        socket.send(DatagramPacket(bytes, bytes.size, target, DISCOVERY_PORT))
+    }
+
+    private fun discoveryPayload(): JSONObject? {
+        val identityFile = File(filesDir, "identity.json")
+        val identity = try {
+            if (!identityFile.isFile) return null
+            JSONObject(identityFile.readText())
+        } catch (_: Exception) {
+            return null
+        }
+
+        val deviceId = identity.optString("deviceId").trim()
+        if (deviceId.isEmpty()) return null
+
+        val capabilities = JSONArray().apply {
+            put("file_transfer")
+            put("clipboard")
+            put("remote_control")
+            put("backup")
+        }
+        val addresses = JSONArray().apply {
+            physicalDiscoveryEndpoints().forEach { (address, _) ->
+                put(address.hostAddress)
+            }
+        }
+        val appVersion = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+                ?.takeIf { it.isNotBlank() }
+                ?: "unknown"
+        } catch (_: Exception) {
+            "unknown"
+        }
+        return JSONObject().apply {
+            put("version", appVersion)
+            put("deviceId", deviceId)
+            put("name", identity.optString("name", "Android 设备"))
+            put("manufacturer", identity.optString("manufacturer"))
+            put("model", identity.optString("model"))
+            put("platform", "android")
+            put("port", SESSION_PORT)
+            put("discoveryPort", DISCOVERY_PORT)
+            put("capabilities", capabilities)
+            put("protocolVersion", PROTOCOL_VERSION)
+            put("timestamp", System.currentTimeMillis() / 1000L)
+            put("connectionRequested", false)
+            put("automaticReconnect", false)
+            put("addresses", addresses)
+        }
+    }
+
+    private fun physicalDiscoveryEndpoints(): List<Pair<Inet4Address, Inet4Address?>> {
+        val endpoints = mutableListOf<Pair<Inet4Address, Inet4Address?>>()
+        val interfaces = try {
+            NetworkInterface.getNetworkInterfaces()
+        } catch (_: Exception) {
+            null
+        } ?: return endpoints
+
+        while (interfaces.hasMoreElements()) {
+            val networkInterface = interfaces.nextElement()
+            val name = networkInterface.name.lowercase()
+            if (!runCatching { networkInterface.isUp }.getOrDefault(false) ||
+                networkInterface.isLoopback ||
+                networkInterface.isPointToPoint ||
+                name.contains("tun") ||
+                name.contains("tap") ||
+                name.contains("vpn") ||
+                name.contains("rmnet") ||
+                name.contains("dummy")) {
+                continue
+            }
+
+            for (interfaceAddress in networkInterface.interfaceAddresses) {
+                val address = interfaceAddress.address
+                if (address !is Inet4Address ||
+                    address.isLoopbackAddress ||
+                    address.isLinkLocalAddress) {
+                    continue
+                }
+                val broadcast = interfaceAddress.broadcast as? Inet4Address
+                if (broadcast != null) endpoints += address to broadcast
+            }
+        }
+        return endpoints.distinctBy { "${it.first.hostAddress}/${it.second?.hostAddress}" }
+    }
+
     private fun persistentNotificationEnabled(): Boolean =
         getSharedPreferences("app_settings", MODE_PRIVATE)
             .getBoolean("persistent_notification_enabled", true)
@@ -309,9 +560,20 @@ class HingeForegroundService : Service() {
     }
 
     companion object {
+        // The native broker owns TCP while the foreground service is alive;
+        // Flutter observes and controls the session but does not own its life.
+        const val ENABLE_NATIVE_CONNECTION_BROKER = true
+        @Volatile
+        var current: HingeForegroundService? = null
+
         const val ACTION_START = "com.hinge.office.START_CONNECTION_SERVICE"
         const val ACTION_STOP = "com.hinge.office.STOP_CONNECTION_SERVICE"
+        const val ACTION_CONFIGURE = "com.hinge.office.CONFIGURE_CONNECTION_SERVICE"
         private const val CHANNEL_ID = "hinge_connection"
         private const val NOTIFICATION_ID = 52831
+        private const val DISCOVERY_PORT = 52830
+        private const val SESSION_PORT = 52831
+        private const val PROTOCOL_VERSION = "0.1"
+        private const val DISCOVERY_BEACON_INTERVAL_MS = 5_000L
     }
 }

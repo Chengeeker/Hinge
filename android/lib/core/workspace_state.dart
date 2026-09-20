@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'pairing_manager.dart';
+
 enum AppThemePreference { system, light, dark }
 
 enum AppNavigationStyle { adaptive, sidebar, bottom }
@@ -31,6 +33,7 @@ class WorkspaceState extends ChangeNotifier {
   String _imageStoragePath = '';
   String _videoStoragePath = '';
   String _fileStoragePath = '';
+  String _localPairingCode = '';
   bool _loaded = false;
   bool _disposed = false;
 
@@ -50,6 +53,7 @@ class WorkspaceState extends ChangeNotifier {
   String get imageStoragePath => _imageStoragePath;
   String get videoStoragePath => _videoStoragePath;
   String get fileStoragePath => _fileStoragePath;
+  String get localPairingCode => _localPairingCode;
   bool get loaded => _loaded;
 
   int get fontWeightDelta =>
@@ -167,6 +171,13 @@ class WorkspaceState extends ChangeNotifier {
     _changed();
   }
 
+  void setLocalPairingCode(String value) {
+    final next = PairingManager.normalizePairingCode(value);
+    if (_localPairingCode == next) return;
+    _localPairingCode = next;
+    _changed();
+  }
+
   void cycleThemePreference() {
     switch (_themePreference) {
       case AppThemePreference.system:
@@ -198,6 +209,7 @@ class WorkspaceState extends ChangeNotifier {
     'imageStoragePath': _imageStoragePath,
     'videoStoragePath': _videoStoragePath,
     'fileStoragePath': _fileStoragePath,
+    'localPairingCode': _localPairingCode,
   };
 
   void _apply(Map<String, dynamic> values) {
@@ -226,6 +238,9 @@ class WorkspaceState extends ChangeNotifier {
     _imageStoragePath = '${values['imageStoragePath'] ?? ''}'.trim();
     _videoStoragePath = '${values['videoStoragePath'] ?? ''}'.trim();
     _fileStoragePath = '${values['fileStoragePath'] ?? ''}'.trim();
+    _localPairingCode = PairingManager.normalizePairingCode(
+      '${values['localPairingCode'] ?? ''}',
+    );
   }
 
   Future<void> _persist() async {

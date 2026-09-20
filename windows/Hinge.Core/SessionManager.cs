@@ -20,7 +20,8 @@ public sealed record SessionPeerInfo(
     string Platform,
     string Manufacturer = "",
     string Model = "",
-    IReadOnlyList<string>? Capabilities = null);
+    IReadOnlyList<string>? Capabilities = null,
+    bool PairingRequired = false);
 
 public class SessionMessageEventArgs : EventArgs
 {
@@ -36,33 +37,52 @@ public class SessionMessageEventArgs : EventArgs
 
 public class SessionConnection : IDisposable
 {
+    private const int MaxMissedHeartbeats = 6;
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly DeviceIdentity _localIdentity;
+    private readonly string _localPairingCode;
+    private readonly string _remotePairingCode;
+    private readonly string _localPairingChallenge = PairingManager.CreateChallenge();
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private int _missedHeartbeats;
     private bool _disposed;
     private bool _started;
+    private bool _peerPairingRequired;
+    private bool _peerPairingVerified;
+    private bool _pairingProofSent;
+    private bool _peerIdentifiedRaised;
+    private string _peerPairingChallenge = string.Empty;
 
     public Guid SessionId { get; } = Guid.NewGuid();
     public SessionState State { get; private set; } = SessionState.Connecting;
-    public bool IsSessionReady => State == SessionState.Connected ||
-        (State != SessionState.Disconnected && PeerInfo != null);
+    public bool IsSessionReady => State == SessionState.Connected;
     public bool IsOutbound { get; }
     public SessionPeerInfo? PeerInfo { get; private set; }
     public string? RemoteDeviceId => PeerInfo?.DeviceId;
     public IPAddress? RemoteAddress => (_client.Client.RemoteEndPoint as IPEndPoint)?.Address;
+    public bool PeerRequiresPairing => _peerPairingRequired;
+    public bool IsPairingAuthenticated => _peerPairingVerified &&
+        (!_peerPairingRequired || _pairingProofSent);
+    public string? PairingError { get; private set; }
 
     public event EventHandler<ProtocolFrame>? FrameReceived;
     public event EventHandler<SessionState>? StateChanged;
     public event EventHandler<SessionPeerInfo>? PeerIdentified;
 
-    public SessionConnection(TcpClient client, DeviceIdentity localIdentity, bool isOutbound = false)
+    public SessionConnection(
+        TcpClient client,
+        DeviceIdentity localIdentity,
+        bool isOutbound = false,
+        string? localPairingCode = null,
+        string? remotePairingCode = null)
     {
         _client = client;
         _localIdentity = localIdentity;
         IsOutbound = isOutbound;
+        _localPairingCode = PairingManager.NormalizePairingCode(localPairingCode);
+        _remotePairingCode = PairingManager.NormalizePairingCode(remotePairingCode);
         try
         {
             _client.NoDelay = true;
@@ -86,6 +106,7 @@ public class SessionConnection : IDisposable
         _ = Task.Run(() => ReadLoopAsync(_cts.Token));
         _ = Task.Run(() => HeartbeatLoopAsync(_cts.Token));
         _ = CompleteBackgroundSendAsync(SendSessionIdentityAsync(MessageType.SessionInit));
+        _ = AuthenticationTimeoutAsync(_cts.Token);
     }
 
     public async Task SendFrameAsync(MessageType type, byte[] payload)
@@ -135,8 +156,31 @@ public class SessionConnection : IDisposable
         manufacturer = string.Empty,
         model = string.Empty,
         platform = "windows",
-        capabilities = new[] { ProtocolCompression.Capability }
+        capabilities = new[] { ProtocolCompression.Capability },
+        pairingRequired = _localPairingCode.Length > 0,
+        pairingChallenge = _localPairingChallenge,
+        pairingProof = string.Empty
     });
+
+    private async Task SendSessionAckAsync()
+    {
+        string proof = PairingManager.CreateProof(_remotePairingCode, _peerPairingChallenge);
+        if (_peerPairingRequired && proof.Length > 0) _pairingProofSent = true;
+
+        await SendJsonAsync(MessageType.SessionAck, new
+        {
+            deviceId = _localIdentity.DeviceId,
+            name = _localIdentity.Name,
+            manufacturer = string.Empty,
+            model = string.Empty,
+            platform = "windows",
+            capabilities = new[] { ProtocolCompression.Capability },
+            pairingRequired = _localPairingCode.Length > 0,
+            pairingChallenge = _localPairingChallenge,
+            pairingProof = proof
+        });
+        TryCompleteAuthentication();
+    }
 
     private async Task ReadLoopAsync(CancellationToken token)
     {
@@ -197,7 +241,7 @@ public class SessionConnection : IDisposable
             AcceptPeerIdentity(frame.Payload);
             if (frame.Type == MessageType.SessionInit)
             {
-                _ = CompleteBackgroundSendAsync(SendSessionIdentityAsync(MessageType.SessionAck));
+                _ = CompleteBackgroundSendAsync(SendSessionAckAsync());
             }
             return;
         }
@@ -249,13 +293,39 @@ public class SessionConnection : IDisposable
             string deviceId = root.TryGetProperty("deviceId", out var idValue) ? idValue.GetString() ?? string.Empty : string.Empty;
             if (string.IsNullOrWhiteSpace(deviceId) || deviceId == _localIdentity.DeviceId) return;
 
+            bool pairingRequired = root.TryGetProperty("pairingRequired", out var requiredValue) &&
+                requiredValue.ValueKind == JsonValueKind.True;
+            string pairingChallenge = root.TryGetProperty("pairingChallenge", out var challengeValue)
+                ? challengeValue.GetString() ?? string.Empty
+                : string.Empty;
+            string pairingProof = root.TryGetProperty("pairingProof", out var proofValue)
+                ? proofValue.GetString() ?? string.Empty
+                : string.Empty;
+
             var peer = new SessionPeerInfo(
                 deviceId,
                 root.TryGetProperty("name", out var nameValue) ? nameValue.GetString() ?? "未命名设备" : "未命名设备",
                 root.TryGetProperty("platform", out var platformValue) ? platformValue.GetString() ?? "unknown" : "unknown",
                 root.TryGetProperty("manufacturer", out var manufacturerValue) ? manufacturerValue.GetString() ?? string.Empty : string.Empty,
                 root.TryGetProperty("model", out var modelValue) ? modelValue.GetString() ?? string.Empty : string.Empty,
-                ReadCapabilities(root));
+                ReadCapabilities(root),
+                pairingRequired);
+
+            _peerPairingRequired = pairingRequired;
+            if (!string.IsNullOrWhiteSpace(pairingChallenge))
+            {
+                _peerPairingChallenge = pairingChallenge.Trim().ToLowerInvariant();
+            }
+            _peerPairingVerified = _localPairingCode.Length == 0 ||
+                PairingManager.VerifyProof(_localPairingCode, _localPairingChallenge, pairingProof);
+            if (_localPairingCode.Length > 0 && !_peerPairingVerified)
+            {
+                PairingError = "本机已设置配对码，但对方未提供正确配对码。";
+            }
+            else if (_peerPairingRequired && _remotePairingCode.Length == 0)
+            {
+                PairingError = "目标设备需要输入 6 位配对码。";
+            }
 
             if (PeerInfo?.DeviceId == peer.DeviceId)
             {
@@ -263,16 +333,56 @@ public class SessionConnection : IDisposable
                 // sides start together. Keep the session usable even if the
                 // first identity frame arrived before the UI subscribed.
                 PeerInfo = peer;
-                UpdateState(SessionState.Connected);
+                TryCompleteAuthentication();
                 return;
             }
             PeerInfo = peer;
-            UpdateState(SessionState.Connected);
-            PeerIdentified?.Invoke(this, peer);
+            TryCompleteAuthentication();
         }
         catch (JsonException)
         {
             // Ignore malformed identity frames without dropping a healthy socket.
+        }
+    }
+
+    private void TryCompleteAuthentication()
+    {
+        if (PeerInfo == null || _disposed || State == SessionState.Connected) return;
+
+        if (_localPairingCode.Length > 0 && !_peerPairingVerified)
+        {
+            return;
+        }
+
+        if (_peerPairingRequired && !_pairingProofSent)
+        {
+            PairingError ??= "目标设备需要输入 6 位配对码。";
+            return;
+        }
+
+        PairingError = null;
+        UpdateState(SessionState.Connected);
+        if (!_peerIdentifiedRaised)
+        {
+            _peerIdentifiedRaised = true;
+            PeerIdentified?.Invoke(this, PeerInfo);
+        }
+    }
+
+    private async Task AuthenticationTimeoutAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(8), token);
+            if (State != SessionState.Connected)
+            {
+                PairingError ??= "设备身份或配对码验证超时。";
+                Dispose();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
         }
     }
 
@@ -300,7 +410,7 @@ public class SessionConnection : IDisposable
             {
                 await Task.Delay(TimeSpan.FromSeconds(5), token);
                 int missed = Interlocked.Increment(ref _missedHeartbeats);
-                if (missed > 3)
+                if (missed > MaxMissedHeartbeats)
                 {
                     UpdateState(SessionState.Reconnecting);
                     Dispose();
@@ -383,11 +493,24 @@ public class SessionManager : IDisposable
         get { lock (_lock) return _connections.Where(connection => connection.State != SessionState.Disconnected).ToList(); }
     }
 
-    public SessionManager(DeviceIdentity localIdentity, TrustStore trustStore, int listenPort = Constants.SessionTcpPort)
+    public SessionManager(
+        DeviceIdentity localIdentity,
+        TrustStore trustStore,
+        int listenPort = Constants.SessionTcpPort,
+        string? localPairingCode = null)
     {
         _localIdentity = localIdentity;
         _trustStore = trustStore;
         _listenPort = listenPort;
+        _localPairingCode = PairingManager.NormalizePairingCode(localPairingCode);
+    }
+
+    private string _localPairingCode;
+
+    public string LocalPairingCode
+    {
+        get => _localPairingCode;
+        set => _localPairingCode = PairingManager.NormalizePairingCode(value);
     }
 
     public void StartListener()
@@ -438,7 +561,11 @@ public class SessionManager : IDisposable
         }
     }
 
-    public async Task<SessionConnection> ConnectToPeerAsync(IPAddress remoteIp, int port = Constants.SessionTcpPort)
+    public async Task<SessionConnection> ConnectToPeerAsync(
+        IPAddress remoteIp,
+        int port = Constants.SessionTcpPort,
+        string? remotePairingCode = null,
+        CancellationToken cancellationToken = default)
     {
         var matchingIp = NetworkInterfaceHelper.FindMatchingLocalPhysicalAddress(remoteIp);
         if (matchingIp != null)
@@ -447,8 +574,8 @@ public class SessionManager : IDisposable
             try
             {
                 boundClient.Client.Bind(new IPEndPoint(matchingIp, 0));
-                await ConnectWithTimeoutAsync(boundClient, remoteIp, port);
-                return RegisterConnection(boundClient, isOutbound: true);
+                await ConnectWithTimeoutAsync(boundClient, remoteIp, port, cancellationToken);
+                return RegisterConnection(boundClient, isOutbound: true, remotePairingCode: remotePairingCode);
             }
             catch
             {
@@ -460,8 +587,8 @@ public class SessionManager : IDisposable
         var client = new TcpClient(AddressFamily.InterNetwork) { NoDelay = true };
         try
         {
-            await ConnectWithTimeoutAsync(client, remoteIp, port);
-            return RegisterConnection(client, isOutbound: true);
+            await ConnectWithTimeoutAsync(client, remoteIp, port, cancellationToken);
+            return RegisterConnection(client, isOutbound: true, remotePairingCode: remotePairingCode);
         }
         catch
         {
@@ -473,12 +600,18 @@ public class SessionManager : IDisposable
     private static async Task ConnectWithTimeoutAsync(
         TcpClient client,
         IPAddress remoteIp,
-        int port)
+        int port,
+        CancellationToken cancellationToken)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
         try
         {
             await client.ConnectAsync(remoteIp, port, timeout.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
@@ -493,7 +626,7 @@ public class SessionManager : IDisposable
             try
             {
                 var client = await _listener.AcceptTcpClientAsync(token);
-                RegisterConnection(client, isOutbound: false);
+                RegisterConnection(client, isOutbound: false, remotePairingCode: null);
             }
             catch (OperationCanceledException)
             {
@@ -506,9 +639,17 @@ public class SessionManager : IDisposable
         }
     }
 
-    private SessionConnection RegisterConnection(TcpClient client, bool isOutbound)
+    private SessionConnection RegisterConnection(
+        TcpClient client,
+        bool isOutbound,
+        string? remotePairingCode)
     {
-        var connection = new SessionConnection(client, _localIdentity, isOutbound);
+        var connection = new SessionConnection(
+            client,
+            _localIdentity,
+            isOutbound,
+            _localPairingCode,
+            remotePairingCode);
         lock (_lock) _connections.Add(connection);
 
         connection.FrameReceived += (_, frame) =>

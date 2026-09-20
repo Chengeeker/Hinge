@@ -138,6 +138,9 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
         widget.sessionManager ??
         SessionManager(localIdentity: _identity, trustStore: _trustStore);
     _ownsSession = widget.sessionManager == null;
+    _sessionManager.localPairingCode = _workspaceState.localPairingCode;
+    _discoveryService.pairingRequired =
+        _workspaceState.localPairingCode.isNotEmpty;
     _dataService = WorkspaceDataService();
     WidgetsBinding.instance.pointerRouter.addGlobalRoute(_handleGlobalPointer);
     _loadGlobalHapticFeedbackSetting();
@@ -323,6 +326,9 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   void _handleWorkspaceStateChanged() {
     // MaterialApp is rebuilt by AnimatedBuilder. DynamicColorBuilder supplies
     // the complete wallpaper-derived CorePalette when Android updates it.
+    _sessionManager.localPairingCode = _workspaceState.localPairingCode;
+    _discoveryService.pairingRequired =
+        _workspaceState.localPairingCode.isNotEmpty;
   }
 
   Future<void> _loadStoragePaths() async {
@@ -725,6 +731,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   StreamSubscription<DiscoveryConnectionRequest>?
   _connectionRequestSubscription;
   StreamSubscription<String>? _fileReceivedSubscription;
+  StreamSubscription<List<SharedFile>>? _sharedFileSubscription;
   final List<StreamSubscription<dynamic>> _incomingPeerSubscriptions = [];
   final Set<SessionConnection> _watchedConnections = <SessionConnection>{};
   StreamSubscription? _clipboardSubscription;
@@ -735,6 +742,9 @@ class _DevicesScreenState extends State<DevicesScreen>
   Device? _activeDevice;
   Device? _lastConnectedDevice;
   String? _connectingDeviceId;
+  final Map<String, String> _remotePairingCodes = <String, String>{};
+  final List<SharedFile> _pendingSharedFiles = <SharedFile>[];
+  bool _sharedFileDispatchInFlight = false;
 
   StorageInfo? _storage;
   bool _storageLoading = false;
@@ -843,6 +853,14 @@ class _DevicesScreenState extends State<DevicesScreen>
             _showMessage('已收到文件：$name');
           }
         });
+    if (Platform.isAndroid) {
+      _sharedFileSubscription = widget.dataService.sharedFilesStream.listen(
+        _enqueueSharedFiles,
+        onError: (Object error, StackTrace stackTrace) {
+          if (mounted) _showMessage('接收分享文件失败：$error');
+        },
+      );
+    }
     _refreshNotes();
     _refreshTasks();
     _loadHapticFeedbackSetting();
@@ -880,6 +898,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     _incomingConnectionSubscription?.cancel();
     _connectionRequestSubscription?.cancel();
     _fileReceivedSubscription?.cancel();
+    _sharedFileSubscription?.cancel();
     _listenerStatusTimer?.cancel();
     _listenerStatusTimer = null;
     _startupAutoConnectTimer?.cancel();
@@ -896,9 +915,102 @@ class _DevicesScreenState extends State<DevicesScreen>
     _urlSubscription?.cancel();
     unawaited(_smsRelayManager.dispose());
     _notificationManager.dispose();
-    _activeConnection?.dispose();
+    // Only a native transport can outlive this Flutter state. The stable Dart
+    // socket path must close its own connection normally.
+    if (_isDesktop || !widget.sessionManager.usesNativeTransport) {
+      _activeConnection?.dispose();
+    }
     _ipController.dispose();
     super.dispose();
+  }
+
+  void _enqueueSharedFiles(List<SharedFile> files) {
+    if (!mounted || files.isEmpty || _isDesktop) return;
+    unawaited(_enqueueSharedFilesAsync(files));
+  }
+
+  Future<void> _enqueueSharedFilesAsync(List<SharedFile> files) async {
+    if (!mounted || files.isEmpty || _isDesktop) return;
+
+    // Android's foreground service keeps this queue on disk and dispatches it
+    // after a native-session reconnect. The in-memory Dart queue remains only
+    // as a compatibility fallback for tests/older hosts.
+    if (Platform.isAndroid) {
+      final targetDeviceId =
+          _activeDevice?.deviceId ?? _lastConnectedDevice?.deviceId ?? '';
+      var queuedCount = 0;
+      final fallbackFiles = <SharedFile>[];
+      for (final file in files) {
+        final queued = await widget.sessionManager.enqueueFileTransfer(
+          path: file.path,
+          name: file.name,
+          mimeType: file.mimeType,
+          targetDeviceId: targetDeviceId,
+        );
+        if (queued) {
+          queuedCount++;
+        } else {
+          fallbackFiles.add(file);
+        }
+      }
+      if (queuedCount == files.length) {
+        _showMessage('已加入原生发送队列，连接恢复后自动发送');
+        return;
+      }
+      if (queuedCount > 0 && mounted) {
+        _showMessage('部分文件已加入原生发送队列，其余文件暂存到页面队列');
+      }
+      files = fallbackFiles;
+    }
+
+    _pendingSharedFiles.addAll(files);
+    if (mounted) _showMessage('已加入发送队列，连接设备后自动发送');
+    unawaited(_dispatchPendingSharedFiles());
+  }
+
+  Future<void> _dispatchPendingSharedFiles() async {
+    if (_isDesktop ||
+        _sharedFileDispatchInFlight ||
+        _pendingSharedFiles.isEmpty) {
+      return;
+    }
+    final connection = _activeConnection;
+    if (connection == null || connection.state != SessionState.connected) {
+      return;
+    }
+
+    _sharedFileDispatchInFlight = true;
+    final batch = List<SharedFile>.of(_pendingSharedFiles);
+    _pendingSharedFiles.clear();
+    var nextIndex = 0;
+    try {
+      for (; nextIndex < batch.length; nextIndex++) {
+        final file = batch[nextIndex];
+        await widget.transferManager.sendFile(
+          connection,
+          file.path,
+          mimeType: file.mimeType,
+          fileNameOverride: file.name,
+          precomputeHash: false,
+        );
+        try {
+          final cachedFile = File(file.path);
+          if (cachedFile.existsSync()) await cachedFile.delete();
+        } catch (_) {}
+      }
+      if (mounted) {
+        _showMessage(
+          batch.length == 1
+              ? '已发送 ${batch.first.name}'
+              : '已发送 ${batch.length} 个文件',
+        );
+      }
+    } catch (error) {
+      _pendingSharedFiles.insertAll(0, batch.sublist(nextIndex));
+      if (mounted) _showMessage('发送暂时失败，文件已保留，重连后会自动继续：$error');
+    } finally {
+      _sharedFileDispatchInFlight = false;
+    }
   }
 
   @override
@@ -1172,6 +1284,9 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (!mounted) return;
     _configureTransferStorage();
     widget.clipboardManager.autoSync = _workspaceState.clipboardSyncEnabled;
+    widget.sessionManager.localPairingCode = _workspaceState.localPairingCode;
+    widget.discoveryService.pairingRequired =
+        _workspaceState.localPairingCode.isNotEmpty;
     setState(() {});
     _refreshStorage();
     if (_workspaceState.currentTabIndex == 4) _refreshCalendar();
@@ -1520,6 +1635,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                   networkAddresses: [connection.remoteAddress],
                   connectionState: DeviceConnectionState.connected,
                   trustState: DeviceTrustState.trusted,
+                  pairingRequired: peer.pairingRequired,
                 ))
             .copyWith(
               name: peer.name,
@@ -1530,6 +1646,7 @@ class _DevicesScreenState extends State<DevicesScreen>
               }.toList(),
               connectionState: DeviceConnectionState.connected,
               trustState: DeviceTrustState.trusted,
+              pairingRequired: peer.pairingRequired,
             );
 
     if (!mounted) return;
@@ -1549,6 +1666,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       _activeDevice = device;
     });
     _refreshStorage();
+    unawaited(_dispatchPendingSharedFiles());
   }
 
   DevicePlatform _parseDevicePlatform(String platform) {
@@ -1680,53 +1798,73 @@ class _DevicesScreenState extends State<DevicesScreen>
         _activeDevice = device;
       });
       await _refreshStorage();
+      unawaited(_dispatchPendingSharedFiles());
       _showMessage('已恢复 ${device.name} 的设备会话');
       return;
     }
+
+    String? remotePairingCode;
+    if (device.pairingRequired) {
+      remotePairingCode = _remotePairingCodes[device.deviceId];
+      if (remotePairingCode == null || remotePairingCode.isEmpty) {
+        if (automatic) {
+          _showMessage('设备 ${device.name} 需要配对码，请手动连接并输入后再恢复历史连接');
+          return;
+        }
+        remotePairingCode = await _promptRemotePairingCode(device.name);
+        if (remotePairingCode == null || remotePairingCode.isEmpty) return;
+        _remotePairingCodes[device.deviceId] = remotePairingCode;
+      }
+    }
+
     setState(() => _connectingDeviceId = device.deviceId);
     _showMessage(
       automatic ? '正在自动连接历史设备 ${device.name}…' : '正在尝试连接 ${device.name}…',
     );
     Object? lastError;
     final previousConnection = _activeConnection;
+    SessionConnection? connection;
     try {
       final addresses = await _orderedConnectionAddresses(
         device.networkAddresses,
       );
-      SessionConnection? connection;
       var reverseConnection = false;
       // Start both directions in parallel. Duplicate sockets are collapsed by
       // SessionManager after the identity handshake, while the first usable
       // path wins immediately without waiting for an inbound TCP timeout.
-      for (final address in addresses) {
-        widget.discoveryService.requestReverseConnection(
-          address,
-          device.discoveryPort,
-          automatic,
-        );
+      if (!device.pairingRequired) {
+        for (final address in addresses) {
+          widget.discoveryService.requestReverseConnection(
+            address,
+            device.discoveryPort,
+            automatic,
+          );
+        }
       }
 
       final completer = Completer<SessionConnection>();
       var resolved = false;
 
       // Parallel Branch 1: High-sensitivity polling for incoming reverse connection
-      unawaited(() async {
-        final deadline = DateTime.now().add(const Duration(seconds: 6));
-        while (DateTime.now().isBefore(deadline) && !resolved) {
-          final rev = widget.sessionManager.connectionForDevice(
-            device.deviceId,
-          );
-          if (rev != null && rev.state == SessionState.connected) {
-            if (!resolved) {
-              resolved = true;
-              reverseConnection = true;
-              completer.complete(rev);
+      if (!device.pairingRequired) {
+        unawaited(() async {
+          final deadline = DateTime.now().add(const Duration(seconds: 6));
+          while (DateTime.now().isBefore(deadline) && !resolved) {
+            final rev = widget.sessionManager.connectionForDevice(
+              device.deviceId,
+            );
+            if (rev != null && rev.state == SessionState.connected) {
+              if (!resolved) {
+                resolved = true;
+                reverseConnection = true;
+                completer.complete(rev);
+              }
+              return;
             }
-            return;
+            await Future<void>.delayed(const Duration(milliseconds: 50));
           }
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-      }());
+        }());
+      }
 
       // Parallel Branch 2: Direct outbound TCP connection attempts
       unawaited(() async {
@@ -1741,12 +1879,13 @@ class _DevicesScreenState extends State<DevicesScreen>
               final direct = await widget.sessionManager.connectToPeer(
                 InternetAddress(address),
                 port,
+                remotePairingCode,
               );
               if (!resolved) {
                 resolved = true;
                 completer.complete(direct);
               } else {
-                direct.dispose();
+                direct.dispose(manual: false);
               }
               return;
             } catch (error) {
@@ -1775,7 +1914,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       }
       if (attemptGeneration != _connectionAttemptGeneration ||
           (automatic && _isHistoricalReconnectSuppressed(device.deviceId))) {
-        connection.dispose();
+        connection.dispose(manual: false);
         return;
       }
       if (!reverseConnection) _watchConnectionData(connection);
@@ -1783,10 +1922,12 @@ class _DevicesScreenState extends State<DevicesScreen>
           connection.peerInfo ??
           await connection.peerStream.first.timeout(
             const Duration(seconds: 3),
-            onTimeout: () => throw TimeoutException('对方没有完成设备身份握手'),
+            onTimeout: () => throw TimeoutException(
+              connection?.pairingError ?? '对方没有完成设备身份握手',
+            ),
           );
       if (peer.deviceId != device.deviceId) {
-        connection.dispose();
+        connection.dispose(manual: false);
         throw StateError('目标设备身份不匹配');
       }
       // Simultaneous direct and reverse attempts may briefly create two
@@ -1798,7 +1939,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           connection;
       if (attemptGeneration != _connectionAttemptGeneration ||
           (automatic && _isHistoricalReconnectSuppressed(device.deviceId))) {
-        connection.dispose();
+        connection.dispose(manual: false);
         return;
       }
       _connectionSubscription?.cancel();
@@ -1822,6 +1963,9 @@ class _DevicesScreenState extends State<DevicesScreen>
       await _refreshStorage();
       _showMessage('已连接 ${device.name}');
     } catch (error) {
+      if (connection?.pairingError?.isNotEmpty == true) {
+        _remotePairingCodes.remove(device.deviceId);
+      }
       _showMessage('连接 ${device.name} 失败：$error');
     } finally {
       if (mounted) setState(() => _connectingDeviceId = null);
@@ -1901,6 +2045,9 @@ class _DevicesScreenState extends State<DevicesScreen>
     _cancelHistoricalReconnect();
     _connectionSubscription?.cancel();
     _connectionSubscription = null;
+    // This is an explicit user action, so it must reach the native foreground
+    // broker as a manual disconnect. Widget/engine teardown is the only path
+    // that leaves a native-owned session alive.
     _activeConnection?.dispose();
     _lastConnectedDevice = null;
     setState(() {
@@ -3886,6 +4033,20 @@ class _DevicesScreenState extends State<DevicesScreen>
             const SizedBox(height: 16),
             Card(
               child: ListTile(
+                leading: Icon(Symbols.password_rounded, color: scheme.primary),
+                title: const Text('连接安全'),
+                subtitle: Text(
+                  _workspaceState.localPairingCode.isEmpty
+                      ? '未启用本机配对码'
+                      : '已启用 6 位本机配对码；连接本机时需要验证',
+                ),
+                trailing: const Icon(Symbols.chevron_right_rounded),
+                onTap: _showPairingCodeSettingsDialog,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: ListTile(
                 leading: Icon(
                   Symbols.folder_special_rounded,
                   color: scheme.primary,
@@ -4109,6 +4270,123 @@ class _DevicesScreenState extends State<DevicesScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _showPairingCodeSettingsDialog() async {
+    final controller = TextEditingController(
+      text: _workspaceState.localPairingCode,
+    );
+    try {
+      final code = await showDialog<String?>(
+        context: context,
+        builder: (dialogContext) {
+          String errorText = '';
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('本机配对码'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('设置后，其他设备连接到这台手机时需要输入此 6 位数字。留空表示不启用。'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    maxLength: 6,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: InputDecoration(
+                      labelText: '6 位数字',
+                      errorText: errorText.isEmpty ? null : errorText,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final value = controller.text.trim();
+                    if (value.isNotEmpty &&
+                        !PairingManager.isValidPairingCode(value)) {
+                      setDialogState(() => errorText = '请输入完整的 6 位数字');
+                      return;
+                    }
+                    Navigator.pop(dialogContext, value);
+                  },
+                  child: const Text('保存'),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      if (code == null || !mounted) return;
+      _workspaceState.setLocalPairingCode(code);
+      _showMessage(code.isEmpty ? '本机配对码已关闭' : '本机配对码已保存；新连接会要求输入配对码');
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<String?> _promptRemotePairingCode(String deviceName) async {
+    final controller = TextEditingController();
+    try {
+      final code = await showDialog<String?>(
+        context: context,
+        builder: (dialogContext) {
+          String errorText = '';
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text('连接 $deviceName'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('该设备已启用本机配对码，请输入后继续连接。'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    maxLength: 6,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: InputDecoration(
+                      labelText: '6 位数字配对码',
+                      errorText: errorText.isEmpty ? null : errorText,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final value = controller.text.trim();
+                    if (!PairingManager.isValidPairingCode(value)) {
+                      setDialogState(() => errorText = '请输入完整的 6 位数字');
+                      return;
+                    }
+                    Navigator.pop(dialogContext, value);
+                  },
+                  child: const Text('连接'),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      return code == null ? null : PairingManager.normalizePairingCode(code);
+    } finally {
+      controller.dispose();
+    }
   }
 
   Future<void> _showStorageSettingsDialog() async {

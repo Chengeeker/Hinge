@@ -98,6 +98,19 @@ void main() {
       expect(sas1, isNot(equals(sasDifferent)));
     });
 
+    test('PairingManager binds the proof to the local challenge', () {
+      const code = '654321';
+      const challenge = '00112233445566778899aabbccddeeff';
+      expect(PairingManager.isValidPairingCode(code), isTrue);
+      expect(PairingManager.isValidPairingCode('65432'), isFalse);
+      expect(PairingManager.isValidPairingCode('65432a'), isFalse);
+
+      final proof = PairingManager.createProof(code, challenge);
+      expect(PairingManager.verifyProof(code, challenge, proof), isTrue);
+      expect(PairingManager.verifyProof('654320', challenge, proof), isFalse);
+      expect(PairingManager.verifyProof(code, 'changed', proof), isFalse);
+    });
+
     test('ProtocolFrame serialization and parsing roundtrip', () {
       final payloadText = 'Hello Frame World';
       final payload = Uint8List.fromList(utf8.encode(payloadText));
@@ -217,6 +230,50 @@ void main() {
       await sub.cancel();
       client.dispose();
       server.dispose();
+    });
+
+    test('SessionManager accepts the correct remote pairing code', () async {
+      final server = SessionManager(
+        localIdentity: const DeviceIdentity(
+          deviceId: 'pairing-server-id',
+          name: 'Pairing Server',
+        ),
+        trustStore: TrustStore(),
+        listenPort: 0,
+        localPairingCode: '654321',
+      );
+      await server.startListener();
+      final client = SessionManager(
+        localIdentity: const DeviceIdentity(
+          deviceId: 'pairing-client-id',
+          name: 'Pairing Client',
+        ),
+        trustStore: TrustStore(),
+        listenPort: 0,
+      );
+      SessionConnection? incoming;
+      final sub = server.onClientConnected.listen((connection) {
+        incoming = connection;
+      });
+
+      try {
+        final outgoing = await client.connectToPeer(
+          InternetAddress.loopbackIPv4,
+          server.listeningPort,
+          '654321',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(outgoing.state, equals(SessionState.connected));
+        expect(incoming?.state, equals(SessionState.connected));
+        expect(outgoing.isPairingAuthenticated, isTrue);
+        expect(incoming?.isPairingAuthenticated, isTrue);
+        outgoing.dispose();
+      } finally {
+        await sub.cancel();
+        client.dispose();
+        server.dispose();
+      }
     });
   });
 }

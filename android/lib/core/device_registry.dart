@@ -56,6 +56,7 @@ class DeviceRegistry {
             sessionPort: message.port,
             discoveryPort: message.discoveryPort,
             capabilities: message.capabilities,
+            pairingRequired: message.pairingRequired,
             networkAddresses: dev.networkAddresses,
             connectionState: DeviceConnectionState.discovered,
             trustState: dev.trustState,
@@ -67,7 +68,8 @@ class DeviceRegistry {
           dev.manufacturer != message.manufacturer ||
           dev.model != message.model ||
           dev.sessionPort != message.port ||
-          dev.discoveryPort != message.discoveryPort) {
+          dev.discoveryPort != message.discoveryPort ||
+          dev.pairingRequired != message.pairingRequired) {
         _records[message.deviceId] = _DeviceRecord(
           device: Device(
             deviceId: dev.deviceId,
@@ -80,6 +82,7 @@ class DeviceRegistry {
             sessionPort: message.port,
             discoveryPort: message.discoveryPort,
             capabilities: message.capabilities,
+            pairingRequired: message.pairingRequired,
             networkAddresses: dev.networkAddresses,
             connectionState: dev.connectionState,
             trustState: dev.trustState,
@@ -107,6 +110,7 @@ class DeviceRegistry {
         sessionPort: message.port,
         discoveryPort: message.discoveryPort,
         capabilities: message.capabilities,
+        pairingRequired: message.pairingRequired,
         networkAddresses: initialAddresses,
         connectionState: DeviceConnectionState.discovered,
         trustState: DeviceTrustState.untrusted,
@@ -153,6 +157,7 @@ class DeviceRegistry {
             appVersion: record.device.appVersion,
             protocolVersion: record.device.protocolVersion,
             capabilities: record.device.capabilities,
+            pairingRequired: record.device.pairingRequired,
             networkAddresses: record.device.networkAddresses,
             connectionState: DeviceConnectionState.disconnected,
             trustState: record.device.trustState,
@@ -289,6 +294,9 @@ class DeviceRegistry {
       capabilities: sourceIsNewer
           ? source.device.capabilities
           : target.device.capabilities,
+      pairingRequired: sourceIsNewer
+          ? source.device.pairingRequired
+          : target.device.pairingRequired,
       networkAddresses: addresses,
       trustState: trustState,
     );

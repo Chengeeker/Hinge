@@ -28,6 +28,7 @@ class Device {
   final List<String> networkAddresses;
   final DeviceConnectionState connectionState;
   final DeviceTrustState trustState;
+  final bool pairingRequired;
 
   const Device({
     required this.deviceId,
@@ -43,6 +44,7 @@ class Device {
     required this.networkAddresses,
     this.connectionState = DeviceConnectionState.discovered,
     this.trustState = DeviceTrustState.untrusted,
+    this.pairingRequired = false,
   });
 
   Device copyWith({
@@ -59,6 +61,7 @@ class Device {
     List<String>? networkAddresses,
     DeviceConnectionState? connectionState,
     DeviceTrustState? trustState,
+    bool? pairingRequired,
   }) {
     return Device(
       deviceId: deviceId ?? this.deviceId,
@@ -74,6 +77,7 @@ class Device {
       networkAddresses: networkAddresses ?? this.networkAddresses,
       connectionState: connectionState ?? this.connectionState,
       trustState: trustState ?? this.trustState,
+      pairingRequired: pairingRequired ?? this.pairingRequired,
     );
   }
 
@@ -91,6 +95,7 @@ class Device {
     'networkAddresses': networkAddresses,
     'connectionState': connectionState.name,
     'trustState': trustState.name,
+    'pairingRequired': pairingRequired,
   };
 
   factory Device.fromJson(Map<String, dynamic> json) {
@@ -122,6 +127,7 @@ class Device {
         (e) => e.name == json['trustState'],
         orElse: () => DeviceTrustState.untrusted,
       ),
+      pairingRequired: json['pairingRequired'] as bool? ?? false,
     );
   }
 }

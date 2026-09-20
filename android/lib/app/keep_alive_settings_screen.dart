@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../core/workspace_data_service.dart';
@@ -73,6 +74,17 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
   ) async {
     final opened = await opener();
     if (!opened && mounted) _showMessage(unavailableMessage);
+  }
+
+  Future<void> _copyConnectionDiagnostics() async {
+    final diagnostics = await widget.dataService.readConnectionDiagnostics();
+    if (!mounted) return;
+    if (diagnostics.trim().isEmpty) {
+      _showMessage('暂时没有连接诊断记录');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: diagnostics));
+    if (mounted) _showMessage('连接诊断已复制，可直接发给开发者排查');
   }
 
   void _showMessage(String message) {
@@ -179,6 +191,15 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                   status: '系统页面',
                   onTap: widget.dataService.openAppSettings,
                   action: '打开',
+                ),
+                const Divider(height: 1),
+                _settingTile(
+                  icon: Symbols.content_copy_rounded,
+                  title: '复制连接诊断',
+                  subtitle: '导出服务、网络、心跳和重连记录，不包含文件内容、验证码或配对码',
+                  status: '本机日志',
+                  onTap: _copyConnectionDiagnostics,
+                  action: '复制',
                 ),
               ],
             ),

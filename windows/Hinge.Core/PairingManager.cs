@@ -67,6 +67,52 @@ public class PairingManager
         _trustStore = trustStore;
     }
 
+    public static string NormalizePairingCode(string? value)
+    {
+        string code = value?.Trim() ?? string.Empty;
+        return code.Length == 6 && code.All(character => character is >= '0' and <= '9')
+            ? code
+            : string.Empty;
+    }
+
+    public static bool IsValidPairingCode(string? value) =>
+        NormalizePairingCode(value).Length == 6;
+
+    public static string CreateChallenge()
+    {
+        byte[] bytes = new byte[16];
+        RandomNumberGenerator.Fill(bytes);
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    public static string CreateProof(string pairingCode, string challenge)
+    {
+        string normalized = NormalizePairingCode(pairingCode);
+        if (normalized.Length == 0 || string.IsNullOrWhiteSpace(challenge)) return string.Empty;
+
+        byte[] key = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+        byte[] context = Encoding.UTF8.GetBytes($"Hinge-Pairing-v1|{challenge.Trim().ToLowerInvariant()}");
+        using var hmac = new HMACSHA256(key);
+        return Convert.ToHexString(hmac.ComputeHash(context)).ToLowerInvariant();
+    }
+
+    public static bool VerifyProof(string pairingCode, string challenge, string proof)
+    {
+        string expected = CreateProof(pairingCode, challenge);
+        if (expected.Length == 0 || string.IsNullOrWhiteSpace(proof)) return false;
+
+        try
+        {
+            return CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(expected),
+                Convert.FromHexString(proof.Trim()));
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Backward-compatible legacy deterministic PIN derivation (prototype).
     /// </summary>

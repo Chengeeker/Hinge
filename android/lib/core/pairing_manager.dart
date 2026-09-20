@@ -102,6 +102,60 @@ class PairingManager {
 
   PairingManager({required this._localIdentity, required this._trustStore});
 
+  static String normalizePairingCode(String? value) {
+    final code = value?.trim() ?? '';
+    return RegExp(r'^\d{6}$').hasMatch(code) ? code : '';
+  }
+
+  static bool isValidPairingCode(String? value) =>
+      normalizePairingCode(value).length == 6;
+
+  static String createChallenge() {
+    final random = Random.secure();
+    return List<int>.generate(16, (_) => random.nextInt(256))
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+  }
+
+  static String createProof(String pairingCode, String challenge) {
+    final normalized = normalizePairingCode(pairingCode);
+    if (normalized.isEmpty || challenge.trim().isEmpty) return '';
+    final key = sha256.convert(utf8.encode(normalized)).bytes;
+    final context = utf8.encode(
+      'Hinge-Pairing-v1|${challenge.trim().toLowerCase()}',
+    );
+    return Hmac(sha256, key).convert(context).toString().toLowerCase();
+  }
+
+  static bool verifyProof(
+    String pairingCode,
+    String challenge,
+    String proof,
+  ) {
+    final expected = createProof(pairingCode, challenge);
+    if (expected.isEmpty || proof.trim().isEmpty) return false;
+    try {
+      final expectedBytes = _hexBytes(expected);
+      final actualBytes = _hexBytes(proof.trim());
+      if (expectedBytes.length != actualBytes.length) return false;
+      var difference = 0;
+      for (var index = 0; index < expectedBytes.length; index++) {
+        difference |= expectedBytes[index] ^ actualBytes[index];
+      }
+      return difference == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static List<int> _hexBytes(String value) {
+    if (value.length.isOdd) throw const FormatException('invalid hex');
+    return [
+      for (var index = 0; index < value.length; index += 2)
+        int.parse(value.substring(index, index + 2), radix: 16),
+    ];
+  }
+
   /// Backward-compatible legacy deterministic PIN derivation (prototype).
   static int derivePin(String initiatorId, String receiverId, String salt) {
     final input = '$initiatorId:$receiverId:$salt';

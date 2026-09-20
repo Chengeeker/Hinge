@@ -37,6 +37,7 @@ import android.util.Base64
 import android.util.Size
 import android.provider.CalendarContract
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.provider.DocumentsContract
 import androidx.core.content.FileProvider
@@ -56,6 +57,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.LinkedHashMap
 import java.util.Locale
+import java.util.ArrayDeque
+import java.util.UUID
 import java.net.Inet4Address
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
@@ -96,6 +99,9 @@ class MainActivity : FlutterActivity() {
     private var notificationPermissionResult: MethodChannel.Result? = null
     private var mediaPermissionResult: MethodChannel.Result? = null
     private var smsPermissionResult: MethodChannel.Result? = null
+    private val shareLock = Any()
+    private val pendingShareBatches = ArrayDeque<List<Map<String, Any?>>>()
+    private var shareEventSink: EventChannel.EventSink? = null
     private data class StorageCacheEntry(
         val expiresAt: Long,
         val entries: List<Map<String, Any?>>,
@@ -158,6 +164,8 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         startConnectionService()
+        cleanupSharedFileCache()
+        handleShareIntent(intent)
         // A notification click can create the activity from a cold start.
         // Handle the same deep link path as onNewIntent so the directory
         // shortcut works whether Flutter is already running or not.
@@ -214,11 +222,45 @@ class MainActivity : FlutterActivity() {
                 NotificationHistoryBridge.detach()
             }
         })
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "hinge/share/events",
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                if (events == null) return
+                drainPendingShareBatches(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                synchronized(shareLock) {
+                    shareEventSink = null
+                }
+            }
+        })
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "hinge/native_connection/events",
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                HingeNativeConnectionEvents.attach(events)
+                HingeForegroundService.current?.connectionBroker()?.let {
+                    it.emitCurrentSnapshotForFlutter()
+                }
+            }
+
+            override fun onCancel(arguments: Any?) {
+                HingeNativeConnectionEvents.detach()
+            }
+        })
     }
 
     override fun onDestroy() {
         stopScreenCapture()
         releaseDiscoveryMulticastLock()
+        synchronized(shareLock) {
+            shareEventSink = null
+        }
+        HingeNativeConnectionEvents.detach()
         SmsRelayBridge.detach()
         NotificationHistoryBridge.detach()
         contentExecutor.shutdownNow()
@@ -241,6 +283,7 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        handleShareIntent(intent)
         when (intent.action) {
             ACTION_OPEN_RECEIVED_DIRECTORY -> {
                 openReceivedDirectory(intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH))
@@ -251,6 +294,204 @@ class MainActivity : FlutterActivity() {
                     intent.getStringExtra(EXTRA_RECEIVED_FILE_MIME),
                 )
             }
+        }
+    }
+
+    /**
+     * Android share targets deliver content:// URIs, not filesystem paths.
+     * Copy them to an app-owned cache before handing them to Dart so the
+     * existing streaming FILE_OFFER/FILE_CHUNK implementation can be reused.
+     */
+    private fun handleShareIntent(intent: Intent?) {
+        if (intent == null) return
+        val action = intent.action
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+            return
+        }
+        val uris = extractSharedUris(intent)
+        if (uris.isEmpty()) return
+        val requestedMimeType = intent.type.orEmpty()
+        try {
+            contentExecutor.execute {
+                val files = copySharedUris(uris, requestedMimeType)
+                publishSharedFiles(files)
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // The activity is already being destroyed; there is no receiver
+            // left that could process this share request.
+        }
+    }
+
+    private fun extractSharedUris(intent: Intent): List<Uri> {
+        val uris = ArrayList<Uri>()
+        if (intent.action == Intent.ACTION_SEND) {
+            sharedStreamUri(intent)?.let { uris.add(it) }
+        } else if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            uris.addAll(sharedStreamUris(intent))
+        }
+
+        // Some file managers put the stream only in ClipData. Include it as a
+        // fallback and de-duplicate providers that set both representations.
+        val clipData = intent.clipData
+        if (clipData != null) {
+            for (index in 0 until clipData.itemCount) {
+                clipData.getItemAt(index).uri?.let { uris.add(it) }
+            }
+        }
+        return uris.distinctBy { it.toString() }
+    }
+
+    private fun sharedStreamUri(intent: Intent): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+    }
+
+    private fun sharedStreamUris(intent: Intent): List<Uri> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                ?: emptyList()
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+                ?: emptyList()
+        }
+    }
+
+    private fun copySharedUris(
+        uris: List<Uri>,
+        requestedMimeType: String,
+    ): List<Map<String, Any?>> {
+        val directory = File(cacheDir, "hinge_share")
+        if (!directory.exists() && !directory.mkdirs() && !directory.isDirectory) {
+            return emptyList()
+        }
+
+        return uris.mapIndexedNotNull { index, uri ->
+            var target: File? = null
+            try {
+                val fallbackName = if (uris.size == 1) {
+                    "分享文件"
+                } else {
+                    "分享文件_${index + 1}"
+                }
+                val displayName = sanitizeSharedFileName(
+                    querySharedDisplayName(uri),
+                    fallbackName,
+                )
+                target = File(
+                    directory,
+                    "${System.currentTimeMillis()}_${UUID.randomUUID()}_$displayName",
+                )
+                val input = if (uri.scheme.equals("file", ignoreCase = true)) {
+                    val source = File(uri.path.orEmpty())
+                    if (!source.isFile) return@mapIndexedNotNull null
+                    source.inputStream()
+                } else {
+                    contentResolver.openInputStream(uri)
+                        ?: return@mapIndexedNotNull null
+                }
+                input.use { inputStream ->
+                    target!!.outputStream().use { output ->
+                        inputStream.copyTo(output)
+                    }
+                }
+                val mimeType = contentResolver.getType(uri)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: requestedMimeType.takeIf {
+                        it.isNotBlank() && it != "*/*"
+                    }
+                    ?: "application/octet-stream"
+                mapOf(
+                    "path" to target!!.absolutePath,
+                    "name" to displayName,
+                    "mimeType" to mimeType,
+                    "sizeBytes" to target!!.length(),
+                )
+            } catch (_: Exception) {
+                target?.delete()
+                null
+            }
+        }
+    }
+
+    private fun querySharedDisplayName(uri: Uri): String {
+        if (uri.scheme.equals("file", ignoreCase = true)) {
+            return File(uri.path.orEmpty()).name
+        }
+        return try {
+            contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use ""
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index < 0) "" else cursor.getString(index).orEmpty()
+            }.orEmpty().ifBlank {
+                uri.lastPathSegment?.substringAfterLast('/').orEmpty()
+            }
+        } catch (_: Exception) {
+            uri.lastPathSegment?.substringAfterLast('/').orEmpty()
+        }
+    }
+
+    private fun sanitizeSharedFileName(rawName: String, fallback: String): String {
+        val sanitized = rawName.trim()
+            .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
+            .trimEnd('.', ' ')
+            .take(180)
+        return sanitized.ifBlank { fallback }
+    }
+
+    private fun publishSharedFiles(files: List<Map<String, Any?>>) {
+        if (files.isEmpty()) return
+        runOnUiThread {
+            var sink: EventChannel.EventSink? = null
+            synchronized(shareLock) {
+                sink = shareEventSink
+                if (sink == null) pendingShareBatches.addLast(files)
+            }
+            if (sink != null) {
+                try {
+                    sink!!.success(mapOf("files" to files))
+                } catch (_: Exception) {
+                    synchronized(shareLock) {
+                        pendingShareBatches.addFirst(files)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun drainPendingShareBatches(events: EventChannel.EventSink) {
+        val batches: List<List<Map<String, Any?>>> = synchronized(shareLock) {
+            shareEventSink = events
+            val copy = pendingShareBatches.toList()
+            pendingShareBatches.clear()
+            copy
+        }
+        for (batch in batches) {
+            try {
+                events.success(mapOf("files" to batch))
+            } catch (_: Exception) {
+                synchronized(shareLock) {
+                    pendingShareBatches.addLast(batch)
+                }
+            }
+        }
+    }
+
+    private fun cleanupSharedFileCache() {
+        val directory = File(cacheDir, "hinge_share")
+        val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+        directory.listFiles()?.forEach { file ->
+            if (file.isFile && file.lastModified() < cutoff) file.delete()
         }
     }
 
@@ -273,6 +514,19 @@ class MainActivity : FlutterActivity() {
             "requestNotificationPermission" -> requestNotificationPermission(result)
             "persistentNotificationEnabled" -> result.success(persistentNotificationEnabled())
             "setPersistentNotificationEnabled" -> setPersistentNotificationEnabled(call, result)
+            "startNativeSession" -> startNativeSession(call, result)
+            "updateNativePairingCode" -> updateNativePairingCode(call, result)
+            "nativeConnect" -> nativeConnect(call, result)
+            "nativeDisconnect" -> nativeDisconnect(call, result)
+            "nativeSendFrame" -> nativeSendFrame(call, result)
+            "nativeEnqueueFile" -> nativeEnqueueFile(call, result)
+            "readConnectionDiagnostics" -> result.success(
+                HingeForegroundService.current?.connectionBroker()?.readDiagnostics() ?: "",
+            )
+            "clearConnectionDiagnostics" -> {
+                HingeForegroundService.current?.connectionBroker()?.clearDiagnostics()
+                result.success(true)
+            }
             "smsRelayEnabled" -> result.success(smsRelayEnabled())
             "setSmsRelayEnabled" -> setSmsRelayEnabled(call, result)
             "smsPermissionStatus" -> result.success(smsPermissionStatus())
@@ -347,6 +601,103 @@ class MainActivity : FlutterActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun startNativeSession(call: MethodCall, result: MethodChannel.Result) {
+        val arguments = call.arguments as? Map<*, *>
+        val service = HingeForegroundService.current
+        if (service != null) {
+            result.success(service.connectionBroker().configure(arguments))
+            return
+        }
+
+        // The Activity starts the foreground service before Flutter finishes
+        // configuring its engine. If Android has not delivered onCreate yet,
+        // carry the configuration in the start Intent and let the service
+        // apply it immediately after creation.
+        val intent = Intent(this, HingeForegroundService::class.java).apply {
+            action = HingeForegroundService.ACTION_CONFIGURE
+            putExtra("deviceId", arguments?.get("deviceId")?.toString())
+            putExtra("name", arguments?.get("name")?.toString())
+            putExtra("manufacturer", arguments?.get("manufacturer")?.toString())
+            putExtra("model", arguments?.get("model")?.toString())
+            putExtra("localPairingCode", arguments?.get("localPairingCode")?.toString())
+            putExtra("listenPort", (arguments?.get("listenPort") as? Number)?.toInt() ?: 52831)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("native_service_start_failed", "无法启动原生连接服务：${error.message}", null)
+        }
+    }
+
+    private fun updateNativePairingCode(call: MethodCall, result: MethodChannel.Result) {
+        val broker = HingeForegroundService.current?.connectionBroker()
+        if (broker == null) {
+            result.error("native_service_unavailable", "原生连接服务尚未启动", null)
+            return
+        }
+        broker.updateLocalPairingCode(call.argument<String>("localPairingCode").orEmpty())
+        result.success(true)
+    }
+
+    private fun nativeConnect(call: MethodCall, result: MethodChannel.Result) {
+        val broker = HingeForegroundService.current?.connectionBroker()
+        if (broker == null) {
+            result.error("native_service_unavailable", "原生连接服务尚未启动", null)
+            return
+        }
+        try {
+            val id = broker.connect(
+                connectionId = call.argument<String>("connectionId").orEmpty(),
+                address = call.argument<String>("address").orEmpty(),
+                port = call.argument<Int>("port") ?: 52831,
+                remotePairingCode = call.argument<String>("remotePairingCode").orEmpty(),
+            )
+            result.success(id)
+        } catch (error: Exception) {
+            result.error("native_connect_failed", error.message, null)
+        }
+    }
+
+    private fun nativeDisconnect(call: MethodCall, result: MethodChannel.Result) {
+        HingeForegroundService.current?.connectionBroker()?.disconnect(
+            connectionId = call.argument<String>("connectionId").orEmpty(),
+            manual = call.argument<Boolean>("manual") ?: true,
+        )
+        result.success(true)
+    }
+
+    private fun nativeSendFrame(call: MethodCall, result: MethodChannel.Result) {
+        val payload = call.argument<ByteArray>("payload") ?: ByteArray(0)
+        HingeForegroundService.current?.connectionBroker()?.sendFrame(
+            connectionId = call.argument<String>("connectionId").orEmpty(),
+            type = call.argument<Int>("type") ?: 0,
+            payload = payload,
+        )
+        result.success(true)
+    }
+
+    private fun nativeEnqueueFile(call: MethodCall, result: MethodChannel.Result) {
+        val broker = HingeForegroundService.current?.connectionBroker()
+        if (broker == null) {
+            result.error("native_service_unavailable", "原生连接服务尚未启动", null)
+            return
+        }
+        result.success(
+            broker.enqueueFile(
+                path = call.argument<String>("path").orEmpty(),
+                name = call.argument<String>("name").orEmpty(),
+                mimeType = call.argument<String>("mimeType").orEmpty(),
+                targetDeviceId = call.argument<String>("targetDeviceId").orEmpty(),
+                deleteAfter = call.argument<Boolean>("deleteAfter") ?: true,
+            ),
+        )
     }
 
     private fun openAppSettings(result: MethodChannel.Result) {
@@ -1061,6 +1412,7 @@ class MainActivity : FlutterActivity() {
             "imageStoragePath" to preferences.getString("image_storage_path", "").orEmpty(),
             "videoStoragePath" to preferences.getString("video_storage_path", "").orEmpty(),
             "fileStoragePath" to preferences.getString("file_storage_path", "").orEmpty(),
+            "localPairingCode" to preferences.getString("local_pairing_code", "").orEmpty(),
         )
     }
 
@@ -1083,6 +1435,7 @@ class MainActivity : FlutterActivity() {
             .putString("image_storage_path", values["imageStoragePath"]?.toString() ?: "")
             .putString("video_storage_path", values["videoStoragePath"]?.toString() ?: "")
             .putString("file_storage_path", values["fileStoragePath"]?.toString() ?: "")
+            .putString("local_pairing_code", values["localPairingCode"]?.toString() ?: "")
             .apply()
         result.success(true)
     }
@@ -1376,7 +1729,9 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             ""
         }
-        notificationIconCache[packageName] = encoded
+        // Do not permanently cache a transient package-visibility or package
+        // manager failure. A later read after an app/package update can retry.
+        if (encoded.isNotEmpty()) notificationIconCache[packageName] = encoded
         return encoded
     }
 

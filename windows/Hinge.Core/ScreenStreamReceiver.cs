@@ -271,7 +271,7 @@ public class ScreenStreamReceiver : IDisposable
 
     public async Task StartStreamAsync(SessionConnection conn, ScreenStreamConfig config)
     {
-        if (conn == null || conn.State != SessionState.Connected)
+        if (conn == null || !conn.IsSessionReady)
         {
             throw new InvalidOperationException("设备会话尚未连接。");
         }

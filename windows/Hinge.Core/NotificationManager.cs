@@ -111,7 +111,7 @@ public class NotificationManager : IDisposable
         List<SessionConnection> targets;
         lock (_connLock)
         {
-            targets = _connections.Where(c => c.State == SessionState.Connected).ToList();
+            targets = _connections.Where(c => c.IsSessionReady).ToList();
         }
 
         foreach (var conn in targets)

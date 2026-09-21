@@ -170,7 +170,7 @@ public class DeviceRegistry
         {
             foreach (var pair in _devices)
             {
-                if (pair.Value.Device.ConnectionState == ConnectionState.Connected)
+                if (IsLiveSession(pair.Value.Device.ConnectionState))
                 {
                     // A live TCP session is authoritative. UDP discovery packets can be
                     // lost briefly without making an established session offline.
@@ -197,7 +197,7 @@ public class DeviceRegistry
         {
             if (string.IsNullOrWhiteSpace(deviceId) ||
                 !_devices.TryGetValue(deviceId, out var record) ||
-                record.Device.ConnectionState != ConnectionState.Connected)
+                !IsLiveSession(record.Device.ConnectionState))
             {
                 return;
             }
@@ -213,6 +213,46 @@ public class DeviceRegistry
         {
             NotifyChanged();
         }
+    }
+
+    public void MarkSessionSuspended(string deviceId)
+    {
+        bool changed = false;
+        lock (_sync)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId) ||
+                !_devices.TryGetValue(deviceId, out var record) ||
+                !IsLiveSession(record.Device.ConnectionState) ||
+                record.Device.ConnectionState == ConnectionState.Suspended)
+            {
+                return;
+            }
+
+            record.Device.ConnectionState = ConnectionState.Suspended;
+            changed = true;
+        }
+
+        if (changed) NotifyChanged();
+    }
+
+    public void MarkSessionConnected(string deviceId)
+    {
+        bool changed = false;
+        lock (_sync)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId) ||
+                !_devices.TryGetValue(deviceId, out var record) ||
+                record.Device.ConnectionState == ConnectionState.Disconnected ||
+                record.Device.ConnectionState == ConnectionState.Connected)
+            {
+                return;
+            }
+
+            record.Device.ConnectionState = ConnectionState.Connected;
+            changed = true;
+        }
+
+        if (changed) NotifyChanged();
     }
 
     private bool ReconcileDuplicateRecords(string preferredDeviceId)
@@ -233,7 +273,7 @@ public class DeviceRegistry
         }
 
         var survivor = group
-            .OrderByDescending(pair => pair.Value.Device.ConnectionState == ConnectionState.Connected)
+            .OrderByDescending(pair => IsLiveSession(pair.Value.Device.ConnectionState))
             .ThenByDescending(pair => string.Equals(pair.Key, preferredDeviceId, StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(pair => pair.Value.LastSeen)
             .First();
@@ -313,6 +353,9 @@ public class DeviceRegistry
     {
         DevicesChanged?.Invoke(this, GetAllDevices());
     }
+
+    private static bool IsLiveSession(ConnectionState state) =>
+        state is ConnectionState.Connected or ConnectionState.Suspended;
 
     private static bool CanCollapseStaleIdentity(
         Device existing,

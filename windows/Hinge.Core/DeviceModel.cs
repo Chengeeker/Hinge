@@ -21,6 +21,7 @@ public enum ConnectionState
     Connecting,
     Authenticating,
     Connected,
+    Suspended,
     Reconnecting
 }
 

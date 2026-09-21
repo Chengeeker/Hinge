@@ -58,10 +58,7 @@ void main() {
 
       final legacyJson = Map<String, dynamic>.from(json)
         ..remove('automaticReconnect');
-      expect(
-        DiscoveryMessage.fromJson(legacyJson).automaticReconnect,
-        isFalse,
-      );
+      expect(DiscoveryMessage.fromJson(legacyJson).automaticReconnect, isFalse);
     });
 
     test('DiscoveryService emits reverse connection requests', () async {
@@ -170,6 +167,37 @@ void main() {
       registry.dispose();
     });
 
+    test('DeviceRegistry keeps a suspended session live across pruning', () {
+      final registry = DeviceRegistry();
+      final msg = DiscoveryMessage(
+        deviceId: 'phone-suspended',
+        name: 'Phone',
+        platform: 'android',
+        timestamp: 1,
+      );
+
+      registry.upsertDevice(msg, '192.168.1.21');
+      registry.markSessionConnected(msg.deviceId);
+      expect(
+        registry.devices.single.connectionState,
+        equals(DeviceConnectionState.connected),
+      );
+
+      registry.markSessionSuspended(msg.deviceId);
+      registry.pruneOffline(Duration.zero);
+      expect(
+        registry.devices.single.connectionState,
+        equals(DeviceConnectionState.suspended),
+      );
+
+      registry.markSessionConnected(msg.deviceId);
+      expect(
+        registry.devices.single.connectionState,
+        equals(DeviceConnectionState.connected),
+      );
+      registry.dispose();
+    });
+
     test(
       'DeviceRegistry reconciles duplicate identities on one LAN address',
       () {
@@ -204,27 +232,78 @@ void main() {
 
     test('NetworkInterfaceHelper calculates broadcast address correctly', () {
       final ip = InternetAddress('192.168.3.34');
-      final broadcast = NetworkInterfaceHelper.calculateBroadcastAddress(ip, 24);
+      final broadcast = NetworkInterfaceHelper.calculateBroadcastAddress(
+        ip,
+        24,
+      );
       expect(broadcast.address, equals('192.168.3.255'));
 
       final ip2 = InternetAddress('10.0.1.50');
-      final broadcast2 = NetworkInterfaceHelper.calculateBroadcastAddress(ip2, 16);
+      final broadcast2 = NetworkInterfaceHelper.calculateBroadcastAddress(
+        ip2,
+        16,
+      );
       expect(broadcast2.address, equals('10.0.255.255'));
     });
 
     test('NetworkInterfaceHelper identifies virtual and reserved IPs and interfaces', () {
-      expect(NetworkInterfaceHelper.isReservedOrVirtualIp(InternetAddress('127.0.0.1')), isTrue);
-      expect(NetworkInterfaceHelper.isReservedOrVirtualIp(InternetAddress('169.254.1.2')), isTrue);
-      expect(NetworkInterfaceHelper.isReservedOrVirtualIp(InternetAddress('198.18.0.1')), isTrue);
-      expect(NetworkInterfaceHelper.isReservedOrVirtualIp(InternetAddress('198.19.2.3')), isTrue);
-      expect(NetworkInterfaceHelper.isReservedOrVirtualIp(InternetAddress('192.168.1.100')), isFalse);
-      expect(NetworkInterfaceHelper.isReservedOrVirtualIp(InternetAddress('10.10.1.20')), isFalse);
+      expect(
+        NetworkInterfaceHelper.isReservedOrVirtualIp(
+          InternetAddress('127.0.0.1'),
+        ),
+        isTrue,
+      );
+      expect(
+        NetworkInterfaceHelper.isReservedOrVirtualIp(
+          InternetAddress('169.254.1.2'),
+        ),
+        isTrue,
+      );
+      expect(
+        NetworkInterfaceHelper.isReservedOrVirtualIp(
+          InternetAddress('198.18.0.1'),
+        ),
+        isTrue,
+      );
+      expect(
+        NetworkInterfaceHelper.isReservedOrVirtualIp(
+          InternetAddress('198.19.2.3'),
+        ),
+        isTrue,
+      );
+      expect(
+        NetworkInterfaceHelper.isReservedOrVirtualIp(
+          InternetAddress('192.168.1.100'),
+        ),
+        isFalse,
+      );
+      expect(
+        NetworkInterfaceHelper.isReservedOrVirtualIp(
+          InternetAddress('10.10.1.20'),
+        ),
+        isFalse,
+      );
 
-      expect(NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('tun0'), isTrue);
-      expect(NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('wintun'), isTrue);
-      expect(NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('tap-adapter'), isTrue);
-      expect(NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('wlan0'), isFalse);
-      expect(NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('eth0'), isFalse);
+      expect(
+        NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('tun0'),
+        isTrue,
+      );
+      expect(
+        NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('wintun'),
+        isTrue,
+      );
+      expect(
+        NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('tap-adapter'),
+        isTrue,
+      );
+      expect(
+        NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('wlan0'),
+        isFalse,
+      );
+      expect(
+        NetworkInterfaceHelper.isVirtualOrVpnInterfaceName('eth0'),
+        isFalse,
+      );
     });
 
     test('DiscoveryMessage round-trip with addresses', () {
@@ -260,5 +339,3 @@ void main() {
     });
   });
 }
-
-

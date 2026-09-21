@@ -207,7 +207,7 @@ public sealed partial class PhotosPage : Page
 
         var connection = _connectionProvider?.Invoke() ?? _connection;
         _connection = connection;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("等待连接设备", "请先在首页连接 Android 设备。", InfoBarSeverity.Informational);
             return;
@@ -368,7 +368,7 @@ public sealed partial class PhotosPage : Page
         PageHeading.Text = "时光轴";
         PageDescription.Text = "按拍摄时间倒序查看手机中的全部图片。";
 
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("等待连接设备", "请先在首页连接 Android 设备。", InfoBarSeverity.Informational);
             return;
@@ -387,7 +387,7 @@ public sealed partial class PhotosPage : Page
     {
         var connection = _connectionProvider?.Invoke() ?? _connection;
         _connection = connection;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法打开相册", "设备会话已断开。", InfoBarSeverity.Error);
             return;
@@ -421,7 +421,7 @@ public sealed partial class PhotosPage : Page
     {
         var connection = _connectionProvider?.Invoke() ?? _connection;
         _connection = connection;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法读取图片", "设备会话已断开。", InfoBarSeverity.Error);
             return;
@@ -491,7 +491,7 @@ public sealed partial class PhotosPage : Page
         }
 
         var connection = _connectionProvider?.Invoke() ?? _connection;
-        if (connection?.State != SessionState.Connected) return;
+        if (connection?.IsSessionReady != true) return;
 
         var cancellation = _photoLoadingCancellation;
         if (cancellation == null || cancellation.IsCancellationRequested) return;
@@ -583,7 +583,7 @@ public sealed partial class PhotosPage : Page
     private async Task ShowPhotoPreviewAsync(RemotePhotoItem photo)
     {
         var connection = _connectionProvider?.Invoke() ?? _connection;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法预览图片", "设备会话已断开。", InfoBarSeverity.Error);
             return;
@@ -1031,7 +1031,7 @@ public sealed partial class PhotosPage : Page
         item.DragStarting += (_, args) =>
         {
             var connection = _connectionProvider?.Invoke() ?? _connection;
-            if (_client == null || connection?.State != SessionState.Connected ||
+            if (_client == null || connection?.IsSessionReady != true ||
                 string.IsNullOrWhiteSpace(photo.Uri))
             {
                 args.Cancel = true;
@@ -1190,7 +1190,7 @@ public sealed partial class PhotosPage : Page
     {
         if (_client == null || version != _loadVersion) return;
         var connection = _connectionProvider?.Invoke() ?? _connection;
-        if (connection?.State != SessionState.Connected || string.IsNullOrWhiteSpace(uri)) return;
+        if (connection?.IsSessionReady != true || string.IsNullOrWhiteSpace(uri)) return;
         await _thumbnailGate.WaitAsync();
         try
         {

@@ -945,7 +945,10 @@ internal static class Program
         dynamic shortcut = shell.CreateShortcut(shortcutPath);
         shortcut.TargetPath = executablePath;
         shortcut.WorkingDirectory = workingDirectory;
-        shortcut.IconLocation = $"{executablePath},0";
+        var iconPath = Path.Combine(workingDirectory, "Assets", "app_icon.ico");
+        shortcut.IconLocation = File.Exists(iconPath)
+            ? $"{iconPath},0"
+            : $"{executablePath},0";
         shortcut.Description = "Hinge 跨设备办公";
         shortcut.Save();
         SetShortcutProperty(shortcutPath, appUserModelId);

@@ -18,7 +18,15 @@ enum SessionState {
   connecting,
   authenticating,
   connected,
+  suspended,
   reconnecting,
+}
+
+extension SessionStateX on SessionState {
+  /// The authenticated transport is still owned by the native service while
+  /// Android is temporarily not delivering LAN traffic (typically Doze).
+  bool get isUsable =>
+      this == SessionState.connected || this == SessionState.suspended;
 }
 
 class SessionPeerInfo {
@@ -124,7 +132,7 @@ class _SocketSessionConnection extends SessionConnection {
   @override
   bool get isDisposed => _disposed;
   @override
-  bool get isReady => !_disposed && _state == SessionState.connected;
+  bool get isReady => !_disposed && _state.isUsable;
   @override
   Stream<ProtocolFrame> get frames => _frameController.stream;
   @override
@@ -157,9 +165,7 @@ class _SocketSessionConnection extends SessionConnection {
     try {
       await stateStream
           .firstWhere(
-            (state) =>
-                state == SessionState.connected ||
-                state == SessionState.disconnected,
+            (state) => state.isUsable || state == SessionState.disconnected,
           )
           .timeout(timeout);
     } catch (_) {
@@ -242,10 +248,10 @@ class _SocketSessionConnection extends SessionConnection {
     _outgoingBuffer.clear();
     try {
       _socket.add(bytes);
-      _socket.flush().whenComplete(() {
-        _writeInProgress = false;
-        if (_outgoingBuffer.isNotEmpty) _flushOutgoing();
-      });
+      // Socket.add queues bytes directly; flushing every frame adds latency
+      // to bulk FILE_CHUNK traffic without making a TCP socket more reliable.
+      _writeInProgress = false;
+      if (_outgoingBuffer.isNotEmpty) _flushOutgoing();
     } catch (_) {
       _writeInProgress = false;
       _updateState(SessionState.disconnected);
@@ -611,7 +617,7 @@ class _NativeSessionConnection extends SessionConnection {
   bool get isDisposed => _disposed;
 
   @override
-  bool get isReady => !_disposed && _state == SessionState.connected;
+  bool get isReady => !_disposed && _state.isUsable;
 
   @override
   Stream<ProtocolFrame> get frames => _frameController.stream;
@@ -646,9 +652,7 @@ class _NativeSessionConnection extends SessionConnection {
     try {
       await stateStream
           .firstWhere(
-            (value) =>
-                value == SessionState.connected ||
-                value == SessionState.disconnected,
+            (value) => value.isUsable || value == SessionState.disconnected,
           )
           .timeout(timeout);
     } catch (_) {
@@ -724,6 +728,7 @@ class _NativeSessionConnection extends SessionConnection {
       'connecting' => SessionState.connecting,
       'authenticating' => SessionState.authenticating,
       'connected' => SessionState.connected,
+      'suspended' => SessionState.suspended,
       'reconnecting' => SessionState.reconnecting,
       _ => SessionState.disconnected,
     };
@@ -884,7 +889,7 @@ class SessionManager {
   SessionConnection? connectionForDevice(String deviceId) {
     for (final connection in _connections) {
       if (!connection.isDisposed &&
-          connection.state == SessionState.connected &&
+          connection.state.isUsable &&
           connection.peerInfo?.deviceId == deviceId) {
         return connection;
       }
@@ -1148,7 +1153,7 @@ class SessionManager {
         .where(
           (connection) =>
               !connection.isDisposed &&
-              connection.state == SessionState.connected &&
+              connection.state.isUsable &&
               connection.peerInfo?.deviceId == remoteId,
         )
         .toList();

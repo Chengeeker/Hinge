@@ -45,7 +45,7 @@ public sealed partial class CalendarPage : Page
         _events = Array.Empty<RemoteCalendarEvent>();
         _eventsByDate = new Dictionary<DateTime, List<RemoteCalendarEvent>>();
 
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             CalendarSummaryText.Text = "请先在首页连接 Android 手机。";
             BuildCalendarGrid();
@@ -484,7 +484,7 @@ public sealed partial class CalendarPage : Page
         if (end <= start) end = start.AddHours(1);
 
         var connection = _connectionProvider?.Invoke() ?? _connection;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             await ShowMessageAsync("无法创建日程", "请先在首页连接 Android 手机。", false);
             return;

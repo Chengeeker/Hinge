@@ -21,6 +21,7 @@ public class Win32TrayManager : ITrayManager
 
     public event EventHandler? OpenRequested;
     public event EventHandler? ExitRequested;
+    public event EventHandler? PairingRequested;
 
     public void Initialize(string appName, string initialTooltip)
     {
@@ -40,6 +41,10 @@ public class Win32TrayManager : ITrayManager
             var open = new Forms.ToolStripMenuItem("打开 Hinge");
             open.Click += (_, _) => RequestOpen(bypassBalloonSuppression: true);
             _contextMenu.Items.Add(open);
+            _contextMenu.Items.Add(new Forms.ToolStripSeparator());
+            var pairing = new Forms.ToolStripMenuItem("开启手机 BLE 自动唤醒配对");
+            pairing.Click += (_, _) => PairingRequested?.Invoke(this, EventArgs.Empty);
+            _contextMenu.Items.Add(pairing);
             _contextMenu.Items.Add(new Forms.ToolStripSeparator());
             var exit = new Forms.ToolStripMenuItem("退出");
             exit.Click += (_, _) => RequestExit();
@@ -181,6 +186,12 @@ public class Win32TrayManager : ITrayManager
     {
         try
         {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico");
+            if (File.Exists(iconPath))
+            {
+                return new Icon(iconPath);
+            }
+
             string? processPath = Environment.ProcessPath;
             if (!string.IsNullOrWhiteSpace(processPath))
             {

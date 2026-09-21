@@ -27,6 +27,8 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
       _status['persistentNotification'] != false;
   bool get _batteryOptimizationIgnored =>
       _status['batteryOptimizationIgnored'] == true;
+  bool get _companionSupported => _status['companionSupported'] == true;
+  bool get _companionAssociated => _status['companionAssociated'] == true;
 
   @override
   void initState() {
@@ -76,6 +78,24 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
     if (!opened && mounted) _showMessage(unavailableMessage);
   }
 
+  Future<void> _associateCompanion() async {
+    final associated = await widget.dataService.associateCompanion();
+    if (!mounted) return;
+    if (!associated) {
+      _showMessage('没有完成 Windows BLE 自动唤醒绑定；请先在 Windows 托盘开启配对广播');
+    } else {
+      _showMessage('Windows 自动唤醒已绑定');
+    }
+    await _loadStatus();
+  }
+
+  Future<void> _removeCompanion() async {
+    final removed = await widget.dataService.removeCompanion();
+    if (!mounted) return;
+    _showMessage(removed ? '已解除 Windows 自动唤醒绑定' : '解除绑定失败，请重试');
+    await _loadStatus();
+  }
+
   Future<void> _copyConnectionDiagnostics() async {
     final diagnostics = await widget.dataService.readConnectionDiagnostics();
     if (!mounted) return;
@@ -114,12 +134,12 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '让连接在后台继续工作',
+                    '让 Hinge 在后台保持待命',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Hinge 使用 Android 前台服务维持局域网连接。不同厂商还可能需要额外允许后台运行。',
+                    'Hinge 使用 Android 前台服务提供局域网发现、连接恢复和唤醒入口。无操作时会进入低功耗待命；不同厂商还可能需要额外允许后台运行。',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 8),
@@ -130,9 +150,57 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                       color: scheme.primary,
                     ),
                     title: const Text('常驻通知'),
-                    subtitle: const Text('在通知中心保留连接状态，避免后台服务被系统直接回收'),
+                    subtitle: const Text('在通知中心保留 Hinge 的后台状态，并提供点击唤醒入口'),
                     value: _persistentNotification,
                     onChanged: _setPersistentNotification,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Windows 自动唤醒（实验性）',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '绑定后，Windows 右键发送文件时会先发一个很短的 BLE 唤醒信号。Android 被系统唤醒后恢复原有局域网连接；BLE 信号不携带文件、验证码或配对码。',
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    !_companionSupported
+                        ? '当前系统没有 Companion Device 支持'
+                        : _companionAssociated
+                        ? '已绑定 Windows BLE 唤醒设备'
+                        : '尚未绑定',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      if (_companionSupported && !_companionAssociated)
+                        FilledButton.tonal(
+                          onPressed: _loading ? null : _associateCompanion,
+                          child: const Text('开始绑定'),
+                        ),
+                      if (_companionSupported && _companionAssociated)
+                        OutlinedButton(
+                          onPressed: _loading ? null : _removeCompanion,
+                          child: const Text('解除绑定'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '绑定时请先在 Windows Hinge 托盘菜单或设置页开启“60 秒 BLE 配对广播”。',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
               ),
@@ -163,7 +231,7 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                   title: '后台高耗电设置',
                   subtitle: _batteryOptimizationIgnored
                       ? '已加入系统电池优化白名单'
-                      : '允许应用在息屏和省电状态下继续保持连接',
+                      : '降低后台休眠时被系统限制的概率；不保证永久保持 TCP',
                   status: _statusText(_batteryOptimizationIgnored),
                   onTap: () => _openSetting(
                     widget.dataService.openBatteryOptimizationSettings,
@@ -210,7 +278,7 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
             child: const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                '说明：Android 不允许普通应用绕过系统和厂商的后台管理。完成以上设置可以降低断连概率，但省电策略、手动强行停止应用或厂商系统更新仍可能中断连接。',
+                '说明：自动唤醒的目标是“需要发送时再恢复连接”，不是永久维持 TCP。Android 不允许普通应用绕过系统和厂商的后台管理；BLE、局域网或 Companion 不可用时，常驻通知仍是可靠的人工兜底入口。',
               ),
             ),
           ),

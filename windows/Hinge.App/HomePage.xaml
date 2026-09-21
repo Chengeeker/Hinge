@@ -29,7 +29,6 @@
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Button x:Name="SendFileButton" Content="发送文件" />
-                            <Button x:Name="SendTextButton" Content="发送文字" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -53,48 +52,108 @@
                         <TextBlock Text="附近设备" Style="{StaticResource HingeSectionTitleStyle}" />
                             <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
-                        <Button x:Name="RefreshButton" Grid.Column="1" Content="重新搜索" Margin="0,0,16,0" />
+                        <Button
+                            x:Name="RefreshButton"
+                            Grid.Column="1"
+                            Content="重新搜索"
+                            Height="36"
+                            MinHeight="36"
+                            VerticalAlignment="Center"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center" />
                     </Grid>
                     <ListView
                         x:Name="DeviceListView"
                         IsItemClickEnabled="True"
-                        SelectionMode="None" />
+                        SelectionMode="None"
+                        Padding="0"
+                        HorizontalContentAlignment="Stretch"
+                        ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <!-- The default ListView hover surface spans the whole item,
+                             including the action column. Keep the device action button
+                             visually independent instead of letting that surface cover it. -->
+                        <ListView.Resources>
+                            <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="Transparent" />
+                        </ListView.Resources>
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
                 </StackPanel>
             </Border>
-
-            <Grid ColumnSpacing="16">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Border Style="{StaticResource HingeCardStyle}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="连接状态" Style="{StaticResource HingeSectionTitleStyle}" />
-                        <InfoBar
-                            x:Name="ActivityInfoBar"
-                            IsOpen="True"
-                            IsClosable="False"
-                            Severity="Informational"
-                            Title="Hinge 已就绪"
-                            Message="等待设备发现或建立会话。" />
-                        <TextBlock x:Name="StatusText" Style="{StaticResource HingeCaptionStyle}" />
-                    </StackPanel>
-                </Border>
-                <Border Grid.Column="1" Style="{StaticResource HingeCardStyle}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="剪贴板同步" Style="{StaticResource HingeSectionTitleStyle}" />
-                        <TextBlock x:Name="ClipboardStatusText" Text="等待设备连接" Style="{StaticResource HingeCaptionStyle}" />
-                        <Button x:Name="ClipboardButton" Content="切换剪贴板同步" HorizontalAlignment="Left" />
-                    </StackPanel>
-                </Border>
-            </Grid>
 
             <Border Style="{StaticResource HingeCardStyle}">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="说明" Style="{StaticResource HingeSectionTitleStyle}" />
-                    <TextBlock Text="首页只负责设备发现、连接状态和常用操作。笔记、待办、日历、相册等功能在侧边栏中独立打开。" Style="{StaticResource HingeCaptionStyle}" />
+                    <TextBlock Text="剪贴板同步" Style="{StaticResource HingeSectionTitleStyle}" />
+                    <TextBlock Text="接收到的文本会写入本机系统剪贴板。" Style="{StaticResource HingeCaptionStyle}" />
+                    <TextBlock x:Name="ClipboardStatusText" Text="等待设备连接" Style="{StaticResource HingeCaptionStyle}" />
+                    <Button x:Name="ClipboardButton" Content="切换剪贴板同步" HorizontalAlignment="Left" />
                 </StackPanel>
             </Border>
+
+            <Border Style="{StaticResource HingeCardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="传输记录" Style="{StaticResource HingeSectionTitleStyle}" />
+                            <TextBlock Text="最新记录在上方；进行中的任务可取消，历史记录可删除。" Style="{StaticResource HingeCaptionStyle}" />
+                        </StackPanel>
+                        <Button
+                            x:Name="ClearTransferHistoryButton"
+                            Grid.Column="1"
+                            Content="清空记录"
+                            Height="36"
+                            MinHeight="36"
+                            VerticalAlignment="Center"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center" />
+                    </Grid>
+                    <ListView
+                        x:Name="TransferHistoryListView"
+                        MaxHeight="240"
+                        Padding="0"
+                        SelectionMode="None"
+                        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                        ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
+                </StackPanel>
+            </Border>
+
+            <!-- The connection status controls remain named for background
+                 lifecycle updates, but are intentionally not part of the home
+                 page layout. The visible status is represented by the device
+                 row and the transfer history above. -->
+            <Grid Width="0" Height="0" Visibility="Collapsed">
+                <InfoBar
+                    x:Name="ActivityInfoBar"
+                    IsOpen="False"
+                    IsClosable="False"
+                    Severity="Informational"
+                    Title="Hinge 已就绪"
+                    Message="等待设备发现或建立会话。" />
+                <TextBlock x:Name="StatusText" />
+            </Grid>
         </StackPanel>
     </ScrollViewer>
 </Page>

@@ -64,6 +64,7 @@ public partial class App : Application
             if (!existingWindow.HandleActivationArguments(launchArguments))
             {
                 existingWindow.Activate();
+                existingWindow.RefreshTaskbarIcon();
             }
             return;
         }
@@ -82,6 +83,10 @@ public partial class App : Application
         else
         {
             _window.Activate();
+            if (_window is MainWindow activatedWindow)
+            {
+                activatedWindow.RefreshTaskbarIcon();
+            }
             LogLifecycle("main-window-activated");
         }
     }

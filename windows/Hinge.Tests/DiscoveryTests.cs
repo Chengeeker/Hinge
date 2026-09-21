@@ -252,6 +252,31 @@ public class DiscoveryTests
     }
 
     [Fact]
+    public void DeviceRegistry_Keeps_Suspended_Session_Live_And_Restores_It()
+    {
+        var registry = new DeviceRegistry();
+        var message = new DiscoveryMessage
+        {
+            DeviceId = "phone-suspended",
+            Name = "Phone",
+            Platform = "android"
+        };
+        registry.UpsertDevice(message, "192.168.3.28");
+        Assert.True(registry.TryGetDevice(message.DeviceId, out var device));
+        device!.ConnectionState = ConnectionState.Discovered;
+
+        registry.MarkSessionConnected(message.DeviceId);
+        Assert.Equal(ConnectionState.Connected, device.ConnectionState);
+
+        registry.MarkSessionSuspended(message.DeviceId);
+        registry.PruneOffline(TimeSpan.Zero);
+        Assert.Equal(ConnectionState.Suspended, device.ConnectionState);
+
+        registry.MarkSessionConnected(message.DeviceId);
+        Assert.Equal(ConnectionState.Connected, device.ConnectionState);
+    }
+
+    [Fact]
     public void DiscoveryService_Lifecycle_StartsAndStops()
     {
         var identity = new DeviceIdentity { DeviceId = "test-local", Name = "LocalTest" };

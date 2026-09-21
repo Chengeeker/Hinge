@@ -140,7 +140,7 @@ class DeviceRegistry {
       final record = entry.value;
       // A live TCP session is authoritative. UDP discovery is only presence
       // information and may be lost by an access point for a few intervals.
-      if (record.device.connectionState == DeviceConnectionState.connected) {
+      if (_isLiveSession(record.device.connectionState)) {
         continue;
       }
       if (record.lastSeen.isBefore(cutoff) &&
@@ -175,8 +175,7 @@ class DeviceRegistry {
 
   void markSessionDisconnected(String deviceId) {
     final record = _records[deviceId];
-    if (record == null ||
-        record.device.connectionState != DeviceConnectionState.connected) {
+    if (record == null || !_isLiveSession(record.device.connectionState)) {
       return;
     }
     final stillPresent =
@@ -187,6 +186,38 @@ class DeviceRegistry {
         connectionState: stillPresent
             ? DeviceConnectionState.discovered
             : DeviceConnectionState.disconnected,
+      ),
+      lastSeen: record.lastSeen,
+    );
+    _notify();
+  }
+
+  void markSessionSuspended(String deviceId) {
+    final record = _records[deviceId];
+    if (record == null ||
+        !_isLiveSession(record.device.connectionState) ||
+        record.device.connectionState == DeviceConnectionState.suspended) {
+      return;
+    }
+    _records[deviceId] = _DeviceRecord(
+      device: record.device.copyWith(
+        connectionState: DeviceConnectionState.suspended,
+      ),
+      lastSeen: record.lastSeen,
+    );
+    _notify();
+  }
+
+  void markSessionConnected(String deviceId) {
+    final record = _records[deviceId];
+    if (record == null ||
+        record.device.connectionState == DeviceConnectionState.disconnected ||
+        record.device.connectionState == DeviceConnectionState.connected) {
+      return;
+    }
+    _records[deviceId] = _DeviceRecord(
+      device: record.device.copyWith(
+        connectionState: DeviceConnectionState.connected,
       ),
       lastSeen: record.lastSeen,
     );
@@ -207,10 +238,8 @@ class DeviceRegistry {
     if (group.length <= 1) return false;
 
     group.sort((left, right) {
-      final leftConnected =
-          left.value.device.connectionState == DeviceConnectionState.connected;
-      final rightConnected =
-          right.value.device.connectionState == DeviceConnectionState.connected;
+      final leftConnected = _isLiveSession(left.value.device.connectionState);
+      final rightConnected = _isLiveSession(right.value.device.connectionState);
       if (leftConnected != rightConnected) return rightConnected ? 1 : -1;
 
       final leftPreferred = left.key == preferredDeviceId;
@@ -248,6 +277,10 @@ class DeviceRegistry {
       ),
     );
   }
+
+  static bool _isLiveSession(DeviceConnectionState state) =>
+      state == DeviceConnectionState.connected ||
+      state == DeviceConnectionState.suspended;
 
   static bool _sameOptionalIdentity(String left, String right) {
     if (left.trim().isEmpty || right.trim().isEmpty) return true;

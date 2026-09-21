@@ -29,7 +29,7 @@ public sealed partial class TodoPage : Page
         int version = ++_loadVersion;
         TasksList.Items.Clear();
 
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("等待连接设备", "请先在首页连接 Android 设备。", InfoBarSeverity.Informational);
             return;
@@ -147,7 +147,7 @@ public sealed partial class TodoPage : Page
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         var connection = _connectionProvider?.Invoke() ?? _connection;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法删除", "设备会话已断开。", InfoBarSeverity.Error);
             return;
@@ -202,7 +202,7 @@ public sealed partial class TodoPage : Page
     private async Task SaveTaskAsync(RemoteWorkspaceTask task)
     {
         var connection = _connectionProvider?.Invoke() ?? _connection;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法保存", "设备会话已断开。", InfoBarSeverity.Error);
             return;

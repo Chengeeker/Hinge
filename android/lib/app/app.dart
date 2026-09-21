@@ -143,9 +143,8 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     _discoveryService.pairingRequired =
         _workspaceState.localPairingCode.isNotEmpty;
     if (Platform.isAndroid) {
-      _networkPolicySubscription = _sessionManager.onNetworkPolicyChanged.listen(
-        (_) => unawaited(_discoveryService.refreshNetwork()),
-      );
+      _networkPolicySubscription = _sessionManager.onNetworkPolicyChanged
+          .listen((_) => unawaited(_discoveryService.refreshNetwork()));
     }
     _dataService = WorkspaceDataService();
     WidgetsBinding.instance.pointerRouter.addGlobalRoute(_handleGlobalPointer);
@@ -984,7 +983,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       return;
     }
     final connection = _activeConnection;
-    if (connection == null || connection.state != SessionState.connected) {
+    if (connection == null || !connection.isReady) {
       return;
     }
 
@@ -1057,7 +1056,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (!mounted ||
         _isDesktop ||
         _backgroundRecoveryInFlight ||
-        _activeConnection?.state == SessionState.connected ||
+        _activeConnection?.isReady == true ||
         _connectingDeviceId != null ||
         _lastConnectedDevice == null ||
         _isHistoricalReconnectSuppressed(_lastConnectedDevice?.deviceId)) {
@@ -1068,7 +1067,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       // Rebind the Android process first. This is important after Wi-Fi roam,
       // DHCP renewal or a router changing the phone's local address.
       await widget.discoveryService.refreshNetwork();
-      if (!mounted || _activeConnection?.state == SessionState.connected) {
+      if (!mounted || _activeConnection?.isReady == true) {
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -1080,7 +1079,7 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   Future<void> _reconnectAfterResume() async {
     if (_resumeReconnectScheduled ||
-        _activeConnection?.state == SessionState.connected ||
+        _activeConnection?.isReady == true ||
         _connectingDeviceId != null ||
         _lastConnectedDevice == null ||
         _isHistoricalReconnectSuppressed(_lastConnectedDevice?.deviceId)) {
@@ -1090,7 +1089,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     try {
       await Future<void>.delayed(const Duration(milliseconds: 250));
       if (!mounted ||
-          _activeConnection?.state == SessionState.connected ||
+          _activeConnection?.isReady == true ||
           _isHistoricalReconnectSuppressed(_lastConnectedDevice?.deviceId)) {
         return;
       }
@@ -1107,8 +1106,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Future<void> _maybeAutoConnectHistoricalDevice(List<Device> devices) async {
-    if (_activeConnection?.state == SessionState.connected ||
-        _connectingDeviceId != null) {
+    if (_activeConnection?.isReady == true || _connectingDeviceId != null) {
       return;
     }
 
@@ -1134,7 +1132,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     _showMessage('正在自动连接历史设备：${candidate.name}…');
     await _connect(candidate, automatic: true);
 
-    if (_activeConnection?.state == SessionState.connected) {
+    if (_activeConnection?.isReady == true) {
       _automaticConnectAttempts.remove(candidate.deviceId);
     } else {
       _scheduleHistoricalReconnect(candidate.deviceId);
@@ -1155,7 +1153,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         _historicalReconnectTimer = null;
       }
       if (!mounted ||
-          _activeConnection?.state == SessionState.connected ||
+          _activeConnection?.isReady == true ||
           _isHistoricalReconnectSuppressed(deviceId)) {
         return;
       }
@@ -1359,6 +1357,15 @@ class _DevicesScreenState extends State<DevicesScreen>
         device.connectionState != DeviceConnectionState.disconnected;
   }
 
+  bool _isSessionConnected(Device device) {
+    final active = _activeConnection;
+    if (_activeDevice?.deviceId == device.deviceId && active?.isReady == true) {
+      return true;
+    }
+    final existing = widget.sessionManager.connectionForDevice(device.deviceId);
+    return existing?.isReady == true;
+  }
+
   void _setPage(int index) {
     if (!_isDesktop) {
       setState(() {
@@ -1509,8 +1516,16 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
     _incomingPeerSubscriptions.add(
       connection.stateStream.listen((state) {
-        if (!mounted || state != SessionState.disconnected) return;
         final deviceId = connection.peerInfo?.deviceId ?? '';
+        if (state == SessionState.suspended) {
+          widget.discoveryService.registry.markSessionSuspended(deviceId);
+          return;
+        }
+        if (state == SessionState.connected) {
+          widget.discoveryService.registry.markSessionConnected(deviceId);
+          return;
+        }
+        if (!mounted || state != SessionState.disconnected) return;
         widget.discoveryService.registry.markSessionDisconnected(deviceId);
         _scheduleHistoricalReconnect(deviceId);
         if (_activeConnection == connection) {
@@ -1658,6 +1673,7 @@ class _DevicesScreenState extends State<DevicesScreen>
               pairingRequired: peer.pairingRequired,
             );
 
+    widget.discoveryService.registry.markSessionConnected(peer.deviceId);
     if (!mounted) return;
     _lastConnectedDevice = device;
     setState(() {
@@ -1769,7 +1785,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     final active = _activeConnection;
     if (active != null &&
         _activeDevice?.deviceId == device.deviceId &&
-        active.state == SessionState.connected) {
+        active.isReady) {
       return client.invokeOnConnection(active, command, payload);
     }
     return client.invoke(device, command, payload);
@@ -1862,7 +1878,7 @@ class _DevicesScreenState extends State<DevicesScreen>
             final rev = widget.sessionManager.connectionForDevice(
               device.deviceId,
             );
-            if (rev != null && rev.state == SessionState.connected) {
+            if (rev != null && rev.isReady) {
               if (!resolved) {
                 resolved = true;
                 reverseConnection = true;
@@ -1953,6 +1969,14 @@ class _DevicesScreenState extends State<DevicesScreen>
       }
       _connectionSubscription?.cancel();
       _connectionSubscription = connection.stateStream.listen((state) {
+        if (state == SessionState.suspended) {
+          widget.discoveryService.registry.markSessionSuspended(peer.deviceId);
+          return;
+        }
+        if (state == SessionState.connected) {
+          widget.discoveryService.registry.markSessionConnected(peer.deviceId);
+          return;
+        }
         if (!mounted || state != SessionState.disconnected) return;
         widget.discoveryService.registry.markSessionDisconnected(peer.deviceId);
         _scheduleHistoricalReconnect(peer.deviceId);
@@ -3048,7 +3072,11 @@ class _DevicesScreenState extends State<DevicesScreen>
   Widget _buildMobileHomePage() {
     final selected = _selectedDevice;
     final connectedCount = _allDevices
-        .where((device) => _isDiscovered(device))
+        .where(
+          (device) =>
+              device.connectionState == DeviceConnectionState.connected ||
+              device.connectionState == DeviceConnectionState.suspended,
+        )
         .length;
     return _pageBody(
       Column(
@@ -3317,9 +3345,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         ),
       );
     }
-    final online =
-        _activeDevice?.deviceId == selected.deviceId &&
-        _activeConnection != null;
+    final online = _isSessionConnected(selected);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -3644,8 +3670,8 @@ class _DevicesScreenState extends State<DevicesScreen>
         .where(
           (device) =>
               device.connectionState == DeviceConnectionState.connected ||
-              (_activeDevice?.deviceId == device.deviceId &&
-                  _activeConnection != null),
+              device.connectionState == DeviceConnectionState.suspended ||
+              _isSessionConnected(device),
         )
         .toList();
     return _pageBody(
@@ -3674,8 +3700,7 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   Widget _connectedDeviceCard(Device device) {
     final online = _isDiscovered(device);
-    final connected =
-        _activeDevice?.deviceId == device.deviceId && _activeConnection != null;
+    final connected = _isSessionConnected(device);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Card(
@@ -3699,7 +3724,10 @@ class _DevicesScreenState extends State<DevicesScreen>
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : connected
-              ? OutlinedButton(onPressed: _disconnect, child: const Text('断开'))
+              ? OutlinedButton(
+                  onPressed: _disconnect,
+                  child: const Text('断开连接'),
+                )
               : FilledButton(
                   onPressed: _connectingDeviceId == null && online
                       ? () => _connect(device)
@@ -3783,7 +3811,15 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _discoveredDeviceCard(Device device) {
-    final online = _isDiscovered(device);
+    final connected = _isSessionConnected(device);
+    final online = connected || _isDiscovered(device);
+    final status = connected
+        ? '已连接'
+        : switch (device.connectionState) {
+            DeviceConnectionState.suspended => '后台休眠',
+            DeviceConnectionState.disconnected => '离线',
+            _ => '在线',
+          };
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Card(
@@ -3803,7 +3839,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${online ? '在线' : '离线'} · ${device.networkAddresses.join(', ')}',
+                      '${online ? status : '离线'} · ${device.networkAddresses.join(', ')}',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
@@ -3811,14 +3847,19 @@ class _DevicesScreenState extends State<DevicesScreen>
                   ],
                 ),
               ),
-              FilledButton(
-                onPressed: _connectingDeviceId == null && online
-                    ? () => _connect(device)
-                    : null,
-                child: Text(
-                  _connectingDeviceId == device.deviceId ? '连接中…' : '连接',
-                ),
-              ),
+              connected
+                  ? OutlinedButton(
+                      onPressed: _disconnect,
+                      child: const Text('断开连接'),
+                    )
+                  : FilledButton(
+                      onPressed: _connectingDeviceId == null && online
+                          ? () => _connect(device)
+                          : null,
+                      child: Text(
+                        _connectingDeviceId == device.deviceId ? '连接中…' : '连接',
+                      ),
+                    ),
             ],
           ),
         ),

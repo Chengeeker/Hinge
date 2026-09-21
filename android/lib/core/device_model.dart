@@ -9,6 +9,7 @@ enum DeviceConnectionState {
   connecting,
   authenticating,
   connected,
+  suspended,
   reconnecting,
 }
 

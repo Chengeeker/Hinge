@@ -102,6 +102,11 @@
                         </Grid>
                         <TextBlock x:Name="PairingCodeStatusText" Text="未启用本机配对码" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                     </StackPanel>
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Android 自动唤醒" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Text="右键发送文件时，先用短暂 BLE 广播唤醒已绑定的 Android Hinge，再沿用局域网连接传输。广播不承载文件或配对码。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <Button x:Name="StartBlePairingButton" Content="开启 60 秒 BLE 配对广播" HorizontalAlignment="Left" />
+                    </StackPanel>
                     <Button x:Name="AboutButton" Content="关于应用" HorizontalAlignment="Left" />
                     <ToggleSwitch x:Name="MinimizeToTrayToggle" Header="关闭窗口时最小化到托盘" OnContent="开启" OffContent="关闭" />
                     <TextBlock Text="开启后点击关闭按钮会隐藏窗口，仍可从系统托盘恢复或退出应用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />

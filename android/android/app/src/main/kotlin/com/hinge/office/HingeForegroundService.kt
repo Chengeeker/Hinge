@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.content.pm.ServiceInfo
 import org.json.JSONArray
 import org.json.JSONObject
@@ -31,10 +32,12 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Keeps the native LAN listener, TCP sessions and background maintenance alive
- * while the app is not in the foreground. The notification is intentional:
- * Android requires a user-visible foreground service for a connection that
- * continues in the background.
+ * Owns the native LAN listener, active TCP sessions and background
+ * wake/resume lifecycle while the app is not in the foreground. When the
+ * device is idle, it can enter low-power standby and retain only the
+ * foreground-service status and wake entry. The notification is intentional:
+ * Android requires a user-visible foreground service for this background
+ * connection and wake lifecycle.
  */
 class HingeForegroundService : Service() {
     private lateinit var nativeConnectionBroker: HingeNativeConnectionBroker
@@ -56,6 +59,14 @@ class HingeForegroundService : Service() {
     private val discoveryExecutor = Executors.newSingleThreadExecutor()
     private val discoveryBeaconInFlight = AtomicBoolean(false)
     private var discoveryBeaconRunnable: Runnable? = null
+    private val standbyHandler = Handler(Looper.getMainLooper())
+    private var standbyCheckRunnable: Runnable? = null
+    @Volatile
+    private var activityForeground = false
+    @Volatile
+    private var lowPowerStandby = false
+    @Volatile
+    private var activeWindowUntilElapsed = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -68,16 +79,14 @@ class HingeForegroundService : Service() {
             HingeDiagnostics.from(this).log("native_broker_disabled_using_dart_transport")
         }
         createNotificationChannel()
-        acquireCpuWakeLock()
         registerPhysicalNetworkCallback()
-        acquireMulticastLock()
-        acquireWifiLock()
         smsContentObserver = SmsContentObserver(this)
-        startDiscoveryBeaconLoop()
+        startStandbyMonitor()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        val action = intent?.action
+        if (action == ACTION_STOP) {
             HingeDiagnostics.from(this).log("service_stop_requested")
             nativeConnectionBroker.stop()
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -85,7 +94,7 @@ class HingeForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        if (ENABLE_NATIVE_CONNECTION_BROKER && intent?.action == ACTION_CONFIGURE) {
+        if (ENABLE_NATIVE_CONNECTION_BROKER && action == ACTION_CONFIGURE) {
             nativeConnectionBroker.configure(
                 mapOf(
                     "deviceId" to intent.getStringExtra("deviceId"),
@@ -96,34 +105,23 @@ class HingeForegroundService : Service() {
                     "listenPort" to intent.getIntExtra("listenPort", SESSION_PORT),
                 ),
             )
+            activateConnectionWindow("configure")
+        }
+
+        if (action == ACTION_START) {
+            activateConnectionWindow("service_start")
+        }
+
+        if (ENABLE_NATIVE_CONNECTION_BROKER && action == ACTION_WAKE) {
+            activateConnectionWindow("wake")
+            nativeConnectionBroker.requestWake(
+                intent.getStringExtra(EXTRA_WAKE_REASON).orEmpty().ifEmpty { "companion" },
+            )
         }
 
         refreshSmsContentObserver()
 
-        val notificationBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            Notification.Builder(this)
-        }
-        val notification = notificationBuilder
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle("Hinge 正在保持设备连接")
-            .setContentText("局域网发现与连接保活在后台运行")
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setOngoing(persistentNotificationEnabled())
-            .setAutoCancel(!persistentNotificationEnabled())
-            .setContentIntent(mainActivityIntent())
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        publishForegroundNotification()
         // The native beacon is deliberately independent from the Flutter
         // isolate. If an OEM suspends or reclaims Dart while the foreground
         // notification remains visible, a Windows client that starts later
@@ -158,6 +156,9 @@ class HingeForegroundService : Service() {
         if (current === this) current = null
         discoveryBeaconRunnable?.let(discoveryHandler::removeCallbacks)
         discoveryBeaconRunnable = null
+        standbyCheckRunnable?.let(standbyHandler::removeCallbacks)
+        standbyCheckRunnable = null
+        standbyHandler.removeCallbacksAndMessages(null)
         discoveryExecutor.shutdownNow()
         releaseCpuWakeLock()
         smsContentObserver?.close()
@@ -172,6 +173,96 @@ class HingeForegroundService : Service() {
 
     fun connectionBroker(): HingeNativeConnectionBroker = nativeConnectionBroker
 
+    fun setActivityForeground(foreground: Boolean) {
+        activityForeground = foreground
+        if (foreground) {
+            activateConnectionWindow("activity_foreground")
+        } else {
+            activeWindowUntilElapsed = maxOf(
+                activeWindowUntilElapsed,
+                SystemClock.elapsedRealtime() + ACTIVE_WINDOW_MS,
+            )
+        }
+    }
+
+    private fun publishForegroundNotification() {
+        val notificationBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+        val notification = notificationBuilder
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setContentTitle(
+                if (lowPowerStandby) "Hinge 已进入低功耗待命" else "Hinge 正在后台运行",
+            )
+            .setContentText(
+                if (lowPowerStandby) "发送文件时会尝试自动唤醒；点击通知可立即恢复连接"
+                else "局域网发现与连接服务已启动，空闲后会进入低功耗待命",
+            )
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setOngoing(persistentNotificationEnabled())
+            .setAutoCancel(!persistentNotificationEnabled())
+            .setContentIntent(mainActivityIntent())
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun activateConnectionWindow(reason: String) {
+        activeWindowUntilElapsed = SystemClock.elapsedRealtime() + ACTIVE_WINDOW_MS
+        if (lowPowerStandby) {
+            lowPowerStandby = false
+            nativeConnectionBroker.exitLowPowerStandby(reason)
+            HingeDiagnostics.from(this).log(
+                "low_power_standby_exited",
+                mapOf("reason" to reason),
+            )
+        }
+        acquireCpuWakeLock()
+        acquireMulticastLock()
+        acquireWifiLock()
+        startDiscoveryBeaconLoop()
+        broadcastDiscoveryBeacon()
+    }
+
+    private fun startStandbyMonitor() {
+        if (standbyCheckRunnable != null) return
+        val runnable = object : Runnable {
+            override fun run() {
+                evaluateLowPowerStandby()
+                standbyHandler.postDelayed(this, STANDBY_CHECK_INTERVAL_MS)
+            }
+        }
+        standbyCheckRunnable = runnable
+        standbyHandler.postDelayed(runnable, STANDBY_CHECK_INTERVAL_MS)
+    }
+
+    private fun evaluateLowPowerStandby() {
+        if (lowPowerStandby || activityForeground) return
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (powerManager?.isInteractive == true) return
+        if (SystemClock.elapsedRealtime() < activeWindowUntilElapsed) return
+
+        lowPowerStandby = true
+        activeWindowUntilElapsed = 0L
+        nativeConnectionBroker.enterLowPowerStandby()
+        stopDiscoveryBeaconLoop()
+        releaseCpuWakeLock()
+        releaseMulticastLock()
+        releaseWifiLock()
+        publishForegroundNotification()
+        HingeDiagnostics.from(this).log("low_power_standby_entered")
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java)
@@ -181,7 +272,7 @@ class HingeForegroundService : Service() {
                 "设备连接",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "保持 Hinge 的局域网设备连接"
+                description = "提供 Hinge 的后台设备发现、连接恢复和唤醒入口"
                 setShowBadge(false)
             },
         )
@@ -189,6 +280,7 @@ class HingeForegroundService : Service() {
 
     private fun mainActivityIntent(): PendingIntent {
         val intent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_WAKE
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
@@ -201,6 +293,7 @@ class HingeForegroundService : Service() {
     }
 
     private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
         try {
             val wifiManager = applicationContext
                 .getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -229,7 +322,9 @@ class HingeForegroundService : Service() {
         } catch (_: Exception) {
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            wifiLowLatencyLock?.isHeld != true
+        ) {
             runCatching {
                 wifiManager.createWifiLock(
                     WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
@@ -246,7 +341,9 @@ class HingeForegroundService : Service() {
         // screen-off/background companion lock. Android 14 deprecated
         // HIGH_PERF and maps it back to LOW_LATENCY, so do not request it
         // there.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            wifiHighPerformanceLock?.isHeld != true
+        ) {
             runCatching {
                 wifiManager.createWifiLock(
                     WifiManager.WIFI_MODE_FULL_HIGH_PERF,
@@ -276,10 +373,12 @@ class HingeForegroundService : Service() {
      * A foreground service keeps the process important, but it does not keep
      * the CPU executing while the screen is off. The native TCP broker and its
      * heartbeat timer otherwise stop making progress even though this service
-     * notification remains visible. This lock is held only for the lifetime
-     * of the user-visible connection service and is released during teardown.
+     * notification remains visible. This lock is held only during an active
+     * connection/wake window; low-power standby releases it while keeping the
+     * foreground service and notification alive.
      */
     private fun acquireCpuWakeLock() {
+        if (cpuWakeLock?.isHeld == true) return
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             cpuWakeLock = powerManager.newWakeLock(
@@ -585,6 +684,7 @@ class HingeForegroundService : Service() {
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
 
     private fun startDiscoveryBeaconLoop() {
+        if (lowPowerStandby) return
         if (discoveryBeaconRunnable != null) return
         val runnable = object : Runnable {
             override fun run() {
@@ -596,6 +696,11 @@ class HingeForegroundService : Service() {
         discoveryHandler.post(runnable)
     }
 
+    private fun stopDiscoveryBeaconLoop() {
+        discoveryBeaconRunnable?.let(discoveryHandler::removeCallbacks)
+        discoveryBeaconRunnable = null
+    }
+
     /**
      * Sends a small discovery announcement from the foreground service itself.
      * Flutter's DiscoveryService still consumes the same discovery payload,
@@ -604,6 +709,7 @@ class HingeForegroundService : Service() {
      * present.
      */
     private fun broadcastDiscoveryBeacon() {
+        if (lowPowerStandby) return
         if (!discoveryBeaconInFlight.compareAndSet(false, true)) return
         discoveryExecutor.execute {
             try {
@@ -777,11 +883,15 @@ class HingeForegroundService : Service() {
         const val ACTION_START = "com.hinge.office.START_CONNECTION_SERVICE"
         const val ACTION_STOP = "com.hinge.office.STOP_CONNECTION_SERVICE"
         const val ACTION_CONFIGURE = "com.hinge.office.CONFIGURE_CONNECTION_SERVICE"
+        const val ACTION_WAKE = "com.hinge.office.WAKE_CONNECTION_SERVICE"
+        const val EXTRA_WAKE_REASON = "wakeReason"
         private const val CHANNEL_ID = "hinge_connection"
         private const val NOTIFICATION_ID = 52831
         private const val DISCOVERY_PORT = 52830
         private const val SESSION_PORT = 52831
         private const val PROTOCOL_VERSION = "0.1"
         private const val DISCOVERY_BEACON_INTERVAL_MS = 5_000L
+        private const val ACTIVE_WINDOW_MS = 90_000L
+        private const val STANDBY_CHECK_INTERVAL_MS = 15_000L
     }
 }

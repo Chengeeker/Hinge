@@ -68,9 +68,7 @@ class ClipboardManager {
   }
 
   void broadcastClipboardEvent(ClipboardEventMessage msg) {
-    final active = _activeConnections
-        .where((c) => c.state == SessionState.connected)
-        .toList();
+    final active = _activeConnections.where((c) => c.isReady).toList();
 
     for (final conn in active) {
       conn.sendJson(MessageType.clipboardEvent, msg.toJson());

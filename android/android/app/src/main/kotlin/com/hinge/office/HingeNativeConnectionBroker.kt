@@ -114,7 +114,16 @@ private val VIDEO_EXTENSIONS = setOf(
 private const val FOREGROUND_HEARTBEAT_INTERVAL_MS = 5_000L
 private const val BACKGROUND_HEARTBEAT_INTERVAL_MS = 20_000L
 private const val FOREGROUND_CONNECTION_TIMEOUT_MS = 45_000L
-private const val BACKGROUND_CONNECTION_TIMEOUT_MS = 180_000L
+private const val BACKGROUND_CONNECTION_SUSPEND_AFTER_MS = 180_000L
+private const val FOREGROUND_RECOVERY_GRACE_MS = 15_000L
+private const val FOREGROUND_RECOVERY_HEARTBEAT_INTERVAL_MS = 1_000L
+private val RECONNECT_BACKOFF_MS = longArrayOf(
+    2_000L,
+    5_000L,
+    10_000L,
+    30_000L,
+    60_000L,
+)
 
 private data class NativeProtocolFrame(
     val version: Int,
@@ -205,6 +214,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
     private val transferWaiters = ConcurrentHashMap<String, CompletableFuture<TransferResponse>>()
     private val taskRetryFutures = ConcurrentHashMap<String, ScheduledFuture<*>>()
     private val reconnectFutures = ConcurrentHashMap<String, ScheduledFuture<*>>()
+    private val reconnectAttempts = ConcurrentHashMap<String, Int>()
     private val incomingTransfers = ConcurrentHashMap<String, NativeIncomingTransfer>()
     private val taskDirectory = File(appContext.filesDir, "hinge_transfer_queue")
 
@@ -222,6 +232,8 @@ class HingeNativeConnectionBroker(private val context: Context) {
     private var physicalNetworkStateKnown = false
     @Volatile
     private var physicalNetworkAvailable = true
+    @Volatile
+    private var lowPowerStandby = false
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -287,6 +299,49 @@ class HingeNativeConnectionBroker(private val context: Context) {
             "pairing_configuration_changed",
             mapOf("configured" to localPairingCode.isNotEmpty()),
         )
+    }
+
+    /**
+     * Stop periodic heartbeat scheduling while the phone is locked and idle.
+     * The authenticated socket remains owned by the broker, and inbound
+     * frames are still handled; a later BLE/manual wake exits this mode and
+     * resumes the normal heartbeat/reconnect path.
+     */
+    fun enterLowPowerStandby(reason: String = "idle_background") {
+        if (lowPowerStandby) return
+        lowPowerStandby = true
+        diagnostics.log("low_power_standby_entered", mapOf("reason" to reason))
+        connections.values.forEach { it.pauseForLowPowerStandby() }
+        HingeNativeConnectionEvents.emit(
+            mapOf("event" to "low_power_standby", "standby" to true, "reason" to reason),
+        )
+    }
+
+    fun exitLowPowerStandby(reason: String = "wake") {
+        if (!lowPowerStandby) return
+        lowPowerStandby = false
+        diagnostics.log("low_power_standby_exited", mapOf("reason" to reason))
+        connections.values.forEach { it.resumeFromLowPowerStandby() }
+        scheduleHistoricalReconnects(0L)
+        dispatchPendingTasks()
+        HingeNativeConnectionEvents.emit(
+            mapOf("event" to "low_power_standby", "standby" to false, "reason" to reason),
+        )
+    }
+
+    /**
+     * Called by the CompanionDeviceService after a short Windows BLE wake
+     * advertisement. This is deliberately a reconnect hint, not a new
+     * transport: saved, authenticated LAN peers remain the source of truth.
+     */
+    fun requestWake(reason: String = "companion") {
+        start()
+        exitLowPowerStandby(reason)
+        ensureListener()
+        diagnostics.log("connection_wake_requested", mapOf("reason" to reason))
+        scheduleHistoricalReconnects(0L)
+        dispatchPendingTasks()
+        emitSnapshot()
     }
 
     /**
@@ -508,6 +563,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
         taskRetryFutures.clear()
         reconnectFutures.values.forEach { it.cancel(false) }
         reconnectFutures.clear()
+        reconnectAttempts.clear()
         bridgeWriteExecutor.shutdownNow()
         executor.shutdownNow()
         scheduler.shutdownNow()
@@ -679,10 +735,19 @@ class HingeNativeConnectionBroker(private val context: Context) {
         peerConfigs.values
             .filter { it.deviceId.isNotEmpty() }
             .distinctBy { reconnectKey(it) }
-            .forEach { scheduleReconnect(it, delayMs) }
+            .forEach { scheduleReconnect(it, delayMs, resetBackoff = true) }
     }
 
-    private fun scheduleReconnect(config: NativePeerConfig, delayMs: Long = 2500L) {
+    private fun scheduleReconnect(
+        config: NativePeerConfig,
+        delayMs: Long? = null,
+        resetBackoff: Boolean = false,
+    ) {
+        val key = reconnectKey(config)
+        if (resetBackoff) {
+            reconnectAttempts.remove(key)
+            reconnectFutures.remove(key)?.cancel(false)
+        }
         if (!started.get() ||
             (config.deviceId.isNotEmpty() && manualDisconnects.contains(config.deviceId)) ||
             (physicalNetworkStateKnown && !physicalNetworkAvailable)
@@ -692,12 +757,19 @@ class HingeNativeConnectionBroker(private val context: Context) {
         if (hasMatchingConnection(config)) {
             return
         }
-        val key = reconnectKey(config)
         val pending = reconnectFutures[key]
         if (pending != null && !pending.isDone && !pending.isCancelled) return
+        val attempt = reconnectAttempts.merge(key, 1) { current, _ -> current + 1 } ?: 1
+        val effectiveDelayMs = delayMs ?: RECONNECT_BACKOFF_MS[
+            (attempt - 1).coerceAtMost(RECONNECT_BACKOFF_MS.lastIndex)
+        ]
         diagnostics.log(
             "reconnect_scheduled",
-            mapOf("device" to config.deviceId.ifEmpty { "unknown" }, "delayMs" to delayMs),
+            mapOf(
+                "device" to config.deviceId.ifEmpty { "unknown" },
+                "delayMs" to effectiveDelayMs,
+                "attempt" to attempt,
+            ),
         )
         val future = scheduler.schedule({
             reconnectFutures.remove(key)
@@ -718,9 +790,12 @@ class HingeNativeConnectionBroker(private val context: Context) {
             executor.execute { connection.runOutbound() }
             diagnostics.log(
                 "reconnect_attempt",
-                mapOf("device" to config.deviceId.ifEmpty { "unknown" }),
+                mapOf(
+                    "device" to config.deviceId.ifEmpty { "unknown" },
+                    "attempt" to attempt,
+                ),
             )
-        }, delayMs, TimeUnit.MILLISECONDS)
+        }, effectiveDelayMs, TimeUnit.MILLISECONDS)
         reconnectFutures[key] = future
     }
 
@@ -739,7 +814,9 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
 
     private fun cancelReconnect(config: NativePeerConfig) {
-        reconnectFutures.remove(reconnectKey(config))?.cancel(false)
+        val key = reconnectKey(config)
+        reconnectFutures.remove(key)?.cancel(false)
+        reconnectAttempts.remove(key)
     }
 
     private fun onFrame(connection: NativeConnection, frame: NativeProtocolFrame) {
@@ -944,7 +1021,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
     }
 
     private fun dispatchPendingTasks() {
-        if (queuedTasks.isEmpty()) return
+        if (lowPowerStandby || queuedTasks.isEmpty()) return
         queuedTasks.values.forEach { task ->
             if (activeTasks.contains(task.id)) return@forEach
             val connection = connections.values.firstOrNull {
@@ -981,7 +1058,9 @@ class HingeNativeConnectionBroker(private val context: Context) {
             val offset = response.offset.coerceIn(0L, file.length())
             FileInputStream(file).use { input ->
                 skipFully(input, offset)
-                val buffer = ByteArray(512 * 1024)
+                // Match the Windows sender's bulk-transfer frame size. The
+                // receiver remains compatible with older smaller chunks.
+                val buffer = ByteArray(2 * 1024 * 1024)
                 var bytesSent = offset
                 var chunkIndex = 0
                 while (bytesSent < file.length()) {
@@ -1200,6 +1279,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
         private var output: OutputStream? = null
         private var heartbeatFuture: ScheduledFuture<*>? = null
         private var authFuture: ScheduledFuture<*>? = null
+        private var interactiveRecoveryStartedAt = 0L
         private val sessionId = uuidBytes(UUID.randomUUID().toString())
         private val localChallenge = randomHex(16)
         private var peerChallenge = ""
@@ -1344,7 +1424,10 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 }
                 try {
                     stream.write(frame)
-                    stream.flush()
+                    // SocketOutputStream is not file-buffered. Avoid a
+                    // flush for each multi-megabyte file frame, but keep it
+                    // for control traffic where prompt delivery matters.
+                    if (type != HingeProtocol.fileChunk) stream.flush()
                 } catch (error: Exception) {
                     diagnostics.log("socket_write_failed", mapOf("reason" to error.javaClass.simpleName))
                     close(false, "socket_write_failed")
@@ -1402,6 +1485,11 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
 
         private fun handleFrame(frame: NativeProtocolFrame) {
+            if (state == "suspended") {
+                interactiveRecoveryStartedAt = 0L
+                updateState("connected")
+                diagnostics.log("heartbeat_resumed")
+            }
             when (frame.type) {
                 HingeProtocol.sessionInit, HingeProtocol.sessionAck -> {
                     acceptPeerIdentity(frame.payload)
@@ -1456,33 +1544,56 @@ class HingeNativeConnectionBroker(private val context: Context) {
             pairingError = ""
             isReady = true
             authFuture?.cancel(false)
-            updateState("connected")
+            updateState(if (lowPowerStandby) "suspended" else "connected")
             synchronized(writeLock) {
                 val stream = output ?: return@synchronized
                 while (queuedFrames.isNotEmpty()) {
                     runCatching {
                         stream.write(queuedFrames.removeFirst())
-                        stream.flush()
                     }.onFailure { close(false, "queued_write_failed") }
                 }
+                runCatching { stream.flush() }
+                    .onFailure { close(false, "queued_flush_failed") }
             }
             onConnectionReady(this)
         }
 
         private fun heartbeat() {
             if (closed || !isReady) return
+            if (lowPowerStandby) {
+                if (state != "suspended") updateState("suspended")
+                heartbeatFuture = null
+                return
+            }
             val now = SystemClock.elapsedRealtime()
             val background = !isScreenInteractive()
-            val timeout = if (background) {
-                BACKGROUND_CONNECTION_TIMEOUT_MS
-            } else {
-                FOREGROUND_CONNECTION_TIMEOUT_MS
-            }
             val elapsed = now - lastInboundAt
-            if (elapsed > timeout) {
+            if (background && elapsed > BACKGROUND_CONNECTION_SUSPEND_AFTER_MS) {
+                if (state != "suspended") {
+                    interactiveRecoveryStartedAt = 0L
+                    updateState("suspended")
+                    diagnostics.log(
+                        "heartbeat_suspended",
+                        mapOf("elapsedMs" to elapsed),
+                    )
+                }
+            } else if (!background && state == "suspended") {
+                if (interactiveRecoveryStartedAt == 0L) {
+                    interactiveRecoveryStartedAt = now
+                    diagnostics.log("heartbeat_resume_probe_started")
+                } else if (now - interactiveRecoveryStartedAt > FOREGROUND_RECOVERY_GRACE_MS) {
+                    diagnostics.log(
+                        "heartbeat_resume_probe_timeout",
+                        mapOf("elapsedMs" to elapsed),
+                    )
+                    updateState("reconnecting")
+                    close(false, "heartbeat_timeout")
+                    return
+                }
+            } else if (!background && elapsed > FOREGROUND_CONNECTION_TIMEOUT_MS) {
                 diagnostics.log(
                     "heartbeat_timeout",
-                    mapOf("elapsedMs" to elapsed, "background" to background),
+                    mapOf("elapsedMs" to elapsed, "background" to false),
                 )
                 updateState("reconnecting")
                 close(false, "heartbeat_timeout")
@@ -1492,11 +1603,26 @@ class HingeNativeConnectionBroker(private val context: Context) {
             if (!closed) {
                 heartbeatFuture = scheduler.schedule(
                     { heartbeat() },
-                    if (background) BACKGROUND_HEARTBEAT_INTERVAL_MS
-                    else FOREGROUND_HEARTBEAT_INTERVAL_MS,
+                    when {
+                        background -> BACKGROUND_HEARTBEAT_INTERVAL_MS
+                        state == "suspended" -> FOREGROUND_RECOVERY_HEARTBEAT_INTERVAL_MS
+                        else -> FOREGROUND_HEARTBEAT_INTERVAL_MS
+                    },
                     TimeUnit.MILLISECONDS,
                 )
             }
+        }
+
+        fun pauseForLowPowerStandby() {
+            if (closed) return
+            heartbeatFuture?.cancel(false)
+            heartbeatFuture = null
+            if (isReady && state != "suspended") updateState("suspended")
+        }
+
+        fun resumeFromLowPowerStandby() {
+            if (closed || !isReady || heartbeatFuture != null) return
+            heartbeatFuture = scheduler.schedule({ heartbeat() }, 0L, TimeUnit.MILLISECONDS)
         }
 
         private fun isScreenInteractive(): Boolean {

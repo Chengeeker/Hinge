@@ -16,6 +16,14 @@ import android.content.ContentUris
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.companion.AssociationInfo
+import android.companion.AssociationRequest
+import android.companion.BluetoothLeDeviceFilter
+import android.companion.CompanionDeviceManager
+import android.content.IntentSender
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -71,6 +79,7 @@ class MainActivity : FlutterActivity() {
     private val notificationPermissionRequest = 4103
     private val mediaPermissionRequest = 4104
     private val smsPermissionRequest = 4105
+    private val companionAssociationRequest = 4401
     // MediaStore/Calendar work is off the UI thread. A small adaptive pool
     // keeps thumbnail and metadata requests responsive on modern phones while
     // avoiding an unbounded thread explosion on low-end devices.
@@ -95,6 +104,7 @@ class MainActivity : FlutterActivity() {
     private var notificationPermissionResult: MethodChannel.Result? = null
     private var mediaPermissionResult: MethodChannel.Result? = null
     private var smsPermissionResult: MethodChannel.Result? = null
+    private var companionAssociationResult: MethodChannel.Result? = null
     private val shareLock = Any()
     private val pendingShareBatches = ArrayDeque<List<Map<String, Any?>>>()
     private var shareEventSink: EventChannel.EventSink? = null
@@ -159,7 +169,14 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        startConnectionService()
+        startConnectionService(
+            if (intent?.action == HingeForegroundService.ACTION_WAKE) {
+                HingeForegroundService.ACTION_WAKE
+            } else {
+                HingeForegroundService.ACTION_START
+            },
+        )
+        HingeCompanionManager.startObserving(this)
         cleanupSharedFileCache()
         handleShareIntent(intent)
         // A notification click can create the activity from a cold start.
@@ -250,6 +267,16 @@ class MainActivity : FlutterActivity() {
         })
     }
 
+    override fun onResume() {
+        super.onResume()
+        HingeForegroundService.current?.setActivityForeground(true)
+    }
+
+    override fun onPause() {
+        HingeForegroundService.current?.setActivityForeground(false)
+        super.onPause()
+    }
+
     override fun onDestroy() {
         stopScreenCapture()
         releaseDiscoveryMulticastLock()
@@ -265,6 +292,10 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == companionAssociationRequest) {
+            handleCompanionAssociationResult(resultCode, data)
+            return
+        }
         if (requestCode != screenCapturePermissionRequest) return
         val pending = screenCaptureResult
         screenCaptureResult = null
@@ -279,6 +310,9 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.action == HingeForegroundService.ACTION_WAKE) {
+            startConnectionService(HingeForegroundService.ACTION_WAKE)
+        }
         handleShareIntent(intent)
         when (intent.action) {
             ACTION_OPEN_RECEIVED_DIRECTORY -> {
@@ -510,6 +544,13 @@ class MainActivity : FlutterActivity() {
             "requestNotificationPermission" -> requestNotificationPermission(result)
             "persistentNotificationEnabled" -> result.success(persistentNotificationEnabled())
             "setPersistentNotificationEnabled" -> setPersistentNotificationEnabled(call, result)
+            "companionStatus" -> result.success(HingeCompanionManager.status(this))
+            "associateCompanion" -> associateCompanion(result)
+            "removeCompanion" -> result.success(HingeCompanionManager.removeAssociation(this))
+            "wakeConnection" -> {
+                HingeCompanionManager.requestWake(this, "manual")
+                result.success(true)
+            }
             "startNativeSession" -> startNativeSession(call, result)
             "updateNativePairingCode" -> updateNativePairingCode(call, result)
             "nativeConnect" -> nativeConnect(call, result)
@@ -588,9 +629,9 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun startConnectionService() {
+    private fun startConnectionService(action: String = HingeForegroundService.ACTION_START) {
         val intent = Intent(this, HingeForegroundService::class.java).apply {
-            action = HingeForegroundService.ACTION_START
+            this.action = action
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -714,6 +755,7 @@ class MainActivity : FlutterActivity() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         val batteryOptimizationIgnored = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
             powerManager?.isIgnoringBatteryOptimizations(packageName) == true
+        val companion = HingeCompanionManager.status(this)
         return mapOf(
             "notificationPermission" to hasNotificationPermission(),
             "persistentNotification" to persistentNotificationEnabled(),
@@ -721,7 +763,128 @@ class MainActivity : FlutterActivity() {
             "manufacturer" to Build.MANUFACTURER,
             "model" to Build.MODEL,
             "apiLevel" to Build.VERSION.SDK_INT,
+            "companionSupported" to (companion["supported"] == true),
+            "companionAssociated" to (companion["associated"] == true),
+            "companionAddress" to (companion["address"]?.toString().orEmpty()),
         )
+    }
+
+    private fun associateCompanion(result: MethodChannel.Result) {
+        if (!HingeCompanionManager.isSupported(this) || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            result.error("companion_unsupported", "当前 Android 设备不支持 Companion Device 唤醒", null)
+            return
+        }
+
+        val manager = getSystemService(CompanionDeviceManager::class.java)
+        if (manager == null) {
+            result.error("companion_unavailable", "系统 Companion Device 服务不可用", null)
+            return
+        }
+
+        val scanFilter = ScanFilter.Builder()
+            .setManufacturerData(
+                HingeWakeProtocol.COMPANY_ID,
+                HingeWakeProtocol.FILTER_DATA,
+                HingeWakeProtocol.FILTER_MASK,
+            )
+            .build()
+        val deviceFilter = BluetoothLeDeviceFilter.Builder()
+            .setScanFilter(scanFilter)
+            .build()
+        val request = AssociationRequest.Builder()
+            .addDeviceFilter(deviceFilter)
+            .setSingleDevice(true)
+            .build()
+
+        companionAssociationResult = result
+        val callback = object : CompanionDeviceManager.Callback() {
+            override fun onAssociationPending(intentSender: IntentSender) {
+                launchCompanionPicker(intentSender)
+            }
+
+            @Suppress("DEPRECATION")
+            override fun onDeviceFound(intentSender: IntentSender) {
+                launchCompanionPicker(intentSender)
+            }
+
+            override fun onAssociationCreated(associationInfo: AssociationInfo) {
+                val address = associationInfo.deviceMacAddress?.toString()
+                if (address.isNullOrBlank()) return
+                val saved = HingeCompanionManager.saveAssociation(this@MainActivity, address)
+                companionAssociationResult?.success(saved)
+                companionAssociationResult = null
+            }
+
+            override fun onFailure(errorMessage: CharSequence?) {
+                companionAssociationResult?.error(
+                    "companion_association_failed",
+                    errorMessage?.toString() ?: "没有找到 Hinge Windows BLE 广播",
+                    null,
+                )
+                companionAssociationResult = null
+            }
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                manager.associate(request, mainExecutor, callback)
+            } else {
+                @Suppress("DEPRECATION")
+                manager.associate(request, callback, null)
+            }
+        } catch (error: Exception) {
+            companionAssociationResult = null
+            result.error("companion_association_failed", error.message, null)
+        }
+    }
+
+    private fun launchCompanionPicker(intentSender: IntentSender) {
+        try {
+            startIntentSenderForResult(
+                intentSender,
+                companionAssociationRequest,
+                null,
+                0,
+                0,
+                0,
+            )
+        } catch (error: IntentSender.SendIntentException) {
+            companionAssociationResult?.error(
+                "companion_picker_failed",
+                error.message,
+                null,
+            )
+            companionAssociationResult = null
+        }
+    }
+
+    private fun handleCompanionAssociationResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            companionAssociationResult?.success(false)
+            companionAssociationResult = null
+            return
+        }
+
+        val bluetoothDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE, BluetoothDevice::class.java)
+                ?: data.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE, ScanResult::class.java)?.device
+        } else {
+            @Suppress("DEPRECATION")
+            val classicDevice = data.getParcelableExtra<BluetoothDevice>(CompanionDeviceManager.EXTRA_DEVICE)
+            @Suppress("DEPRECATION")
+            val scanResult = data.getParcelableExtra<ScanResult>(CompanionDeviceManager.EXTRA_DEVICE)
+            classicDevice ?: scanResult?.device
+        }
+        val address = bluetoothDevice?.address
+        if (address == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+ completes the association through
+            // onAssociationCreated(AssociationInfo), which may arrive after
+            // this legacy activity result without EXTRA_DEVICE.
+            return
+        }
+        val saved = address != null && HingeCompanionManager.saveAssociation(this, address)
+        companionAssociationResult?.success(saved)
+        companionAssociationResult = null
     }
 
     private fun openNotificationSettings(): Boolean {

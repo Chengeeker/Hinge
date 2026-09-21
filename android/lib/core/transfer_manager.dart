@@ -28,7 +28,8 @@ class _IncomingFileContext {
 }
 
 class TransferManager {
-  static const int _fileChunkSize = 512 * 1024;
+  // Keep the Dart fallback aligned with the native broker and Windows sender.
+  static const int _fileChunkSize = 2 * 1024 * 1024;
   final String _defaultDirectory;
   String _downloadDirectory;
   String _imageDirectory;

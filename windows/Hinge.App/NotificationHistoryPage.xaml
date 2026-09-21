@@ -17,13 +17,29 @@
                         <TextBlock Text="读取 Android 通知访问权限开启后收到的应用通知。点击微信或 QQ 通知时，优先打开 Windows 本机客户端，无法打开时再使用 Android 原通知入口。" Style="{StaticResource HingePageDescriptionStyle}" />
                     </StackPanel>
                     <local:HingeWrapPanel Spacing="8" LineSpacing="8" JustifyLastLine="False" VerticalAlignment="Center">
-                        <ComboBox x:Name="ApplicationFilter" Width="180" PlaceholderText="全部应用" SelectionChanged="ApplicationFilter_SelectionChanged" />
-                        <ComboBox x:Name="SortOptions" Width="148" SelectedIndex="1" SelectionChanged="SortOptions_SelectionChanged">
+                        <ComboBox x:Name="ApplicationFilter" Width="180" Height="36" VerticalAlignment="Center" PlaceholderText="全部应用" SelectionChanged="ApplicationFilter_SelectionChanged" />
+                        <ComboBox x:Name="SortOptions" Width="148" Height="36" VerticalAlignment="Center" SelectedIndex="1" SelectionChanged="SortOptions_SelectionChanged">
                             <ComboBoxItem Content="时间（早到晚）" Tag="asc" />
                             <ComboBoxItem Content="时间（晚到早）" Tag="desc" />
                         </ComboBox>
-                        <Button x:Name="ClearButton" Content="清空" Click="ClearButton_Click" />
-                        <Button x:Name="RefreshButton" Style="{StaticResource HingeIconButtonStyle}" Click="RefreshButton_Click" ToolTipService.ToolTip="刷新通知" AutomationProperties.Name="刷新通知">
+                        <Button
+                            x:Name="ClearButton"
+                            Content="清空"
+                            Height="36"
+                            MinHeight="36"
+                            VerticalAlignment="Center"
+                            HorizontalContentAlignment="Center"
+                            VerticalContentAlignment="Center"
+                            Click="ClearButton_Click" />
+                        <Button
+                            x:Name="RefreshButton"
+                            Style="{StaticResource HingeIconButtonStyle}"
+                            Height="36"
+                            MinHeight="36"
+                            VerticalAlignment="Center"
+                            Click="RefreshButton_Click"
+                            ToolTipService.ToolTip="刷新通知"
+                            AutomationProperties.Name="刷新通知">
                             <SymbolIcon Symbol="Refresh" />
                         </Button>
                     </local:HingeWrapPanel>

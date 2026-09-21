@@ -61,7 +61,7 @@ public sealed partial class NotificationHistoryPage : Page
         var connection = _connectionProvider?.Invoke() ?? _connection;
         _connection = connection;
         var version = reset ? ++_loadVersion : _loadVersion;
-        if (_client == null || connection?.State != SessionState.Connected)
+        if (_client == null || connection?.IsSessionReady != true)
         {
             if (reset)
             {

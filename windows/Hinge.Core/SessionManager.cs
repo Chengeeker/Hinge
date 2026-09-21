@@ -11,6 +11,7 @@ public enum SessionState
     Connecting,
     Authenticating,
     Connected,
+    Suspended,
     Reconnecting
 }
 
@@ -37,7 +38,10 @@ public class SessionMessageEventArgs : EventArgs
 
 public class SessionConnection : IDisposable
 {
+    private static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan AndroidHeartbeatInterval = TimeSpan.FromSeconds(20);
     private const int MaxMissedHeartbeats = 6;
+    private const int AndroidSuspendedAfterMissedHeartbeats = 3;
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly DeviceIdentity _localIdentity;
@@ -57,7 +61,7 @@ public class SessionConnection : IDisposable
 
     public Guid SessionId { get; } = Guid.NewGuid();
     public SessionState State { get; private set; } = SessionState.Connecting;
-    public bool IsSessionReady => State == SessionState.Connected;
+    public bool IsSessionReady => State is SessionState.Connected or SessionState.Suspended;
     public bool IsOutbound { get; }
     public SessionPeerInfo? PeerInfo { get; private set; }
     public string? RemoteDeviceId => PeerInfo?.DeviceId;
@@ -135,7 +139,13 @@ public class SessionConnection : IDisposable
         try
         {
             await _stream.WriteAsync(data, _cts.Token);
-            await _stream.FlushAsync(_cts.Token);
+            // NetworkStream writes are not buffered like a file stream. A
+            // flush after every 2 MiB FILE_CHUNK only adds an await without
+            // improving delivery; retain the flush for small control frames.
+            if (type != MessageType.FileChunk)
+            {
+                await _stream.FlushAsync(_cts.Token);
+            }
         }
         finally
         {
@@ -236,6 +246,12 @@ public class SessionConnection : IDisposable
 
     private void HandleIncomingFrame(ProtocolFrame frame)
     {
+        Interlocked.Exchange(ref _missedHeartbeats, 0);
+        if (State == SessionState.Suspended)
+        {
+            UpdateState(SessionState.Connected);
+        }
+
         if (frame.Type is MessageType.SessionInit or MessageType.SessionAck)
         {
             AcceptPeerIdentity(frame.Payload);
@@ -408,8 +424,32 @@ public class SessionConnection : IDisposable
         {
             while (!token.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromSeconds(5), token);
+                TimeSpan interval = string.Equals(
+                        PeerInfo?.Platform,
+                        "android",
+                        StringComparison.OrdinalIgnoreCase)
+                    ? AndroidHeartbeatInterval
+                    : DefaultHeartbeatInterval;
+                await Task.Delay(interval, token);
                 int missed = Interlocked.Increment(ref _missedHeartbeats);
+                if (string.Equals(
+                        PeerInfo?.Platform,
+                        "android",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    // Android may be in Doze while its foreground service and
+                    // TCP socket remain alive. Keep the socket and let a real
+                    // read/write error or FIN/RST decide disconnection.
+                    if (missed >= AndroidSuspendedAfterMissedHeartbeats &&
+                        State == SessionState.Connected)
+                    {
+                        UpdateState(SessionState.Suspended);
+                    }
+
+                    await SendFrameAsync(MessageType.HeartbeatPing, Array.Empty<byte>());
+                    continue;
+                }
+
                 if (missed > MaxMissedHeartbeats)
                 {
                     UpdateState(SessionState.Reconnecting);
@@ -678,7 +718,7 @@ public class SessionManager : IDisposable
         lock (_lock)
         {
             duplicates = _connections
-                .Where(connection => connection.State == SessionState.Connected && connection.RemoteDeviceId == remoteId)
+                .Where(connection => connection.IsSessionReady && connection.RemoteDeviceId == remoteId)
                 .ToList();
         }
         if (duplicates.Count <= 1) return;
@@ -697,7 +737,7 @@ public class SessionManager : IDisposable
         lock (_lock)
         {
             return _connections.FirstOrDefault(connection =>
-                connection.State == SessionState.Connected && connection.RemoteDeviceId == deviceId);
+                connection.IsSessionReady && connection.RemoteDeviceId == deviceId);
         }
     }
 

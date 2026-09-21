@@ -75,6 +75,7 @@ public sealed partial class MainWindow : Window
     private readonly DeviceRegistry _registry;
     private readonly DiscoveryService _discoveryService;
     private readonly Win32TrayManager _trayManager;
+    private readonly BluetoothWakeAdvertiser _wakeAdvertiser;
     private readonly WorkspaceRemoteClient _workspaceRemoteClient;
     private readonly PreviewCache _previewCache;
     private const int InitialFileBatchSize = 200;
@@ -135,6 +136,9 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _computerDropCancellation;
     private readonly SemaphoreSlim _shellSendGate = new(1, 1);
     private readonly PendingFileSendStore _pendingFileSendStore = new();
+    private readonly TransferHistoryStore _transferHistoryStore = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _pendingSendCancellations = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan TransferProgressUpdateInterval = TimeSpan.FromMilliseconds(100);
     private readonly ShellSendPipeServer _shellSendPipeServer;
     private IntPtr _windowIconLarge;
     private IntPtr _windowIconSmall;
@@ -399,6 +403,7 @@ public sealed partial class MainWindow : Window
             PairingRequired = _localPairingCode.Length > 0
         };
         _trayManager = new Win32TrayManager();
+        _wakeAdvertiser = new BluetoothWakeAdvertiser();
         _workspaceRemoteClient = new WorkspaceRemoteClient();
         _previewCache = new PreviewCache();
         App.LogLifecycle("main-window-services-created");
@@ -426,6 +431,8 @@ public sealed partial class MainWindow : Window
                 _appWindow?.Show();
                 Activate();
             });
+            _trayManager.PairingRequested += (_, _) =>
+                DispatcherQueue.TryEnqueue(() => _ = StartBlePairingBeaconAsync());
             _trayManager.ExitRequested += (_, _) => DispatcherQueue.TryEnqueue(() =>
             {
                 App.LogLifecycle("tray-exit-requested");
@@ -496,6 +503,7 @@ public sealed partial class MainWindow : Window
             case HomePage home:
                 _homePage = home;
                 ConfigureHomePage(home);
+                RefreshTransferHistory();
                 break;
             case FileManagementPage files:
                 _filePage = files;
@@ -727,8 +735,10 @@ public sealed partial class MainWindow : Window
         page.DeviceList.ItemClick += DeviceListView_ItemClick;
         page.Refresh.Click += BtnRefresh_Click;
         page.SendFile.Click += BtnFiles_Click;
-        page.SendText.Click += BtnQuickTransfer_Click;
         page.ClipboardToggle.Click += BtnClipboard_Click;
+        page.TransferCancelRequested += Home_TransferCancelRequested;
+        page.TransferHistoryDeleteRequested += Home_TransferHistoryDeleteRequested;
+        page.TransferHistoryClearRequested += Home_TransferHistoryClearRequested;
     }
 
     private void ConfigureFileManagementPage(FileManagementPage page)
@@ -887,6 +897,29 @@ public sealed partial class MainWindow : Window
         page.SilentStartup.IsEnabled = page.StartWithWindows.IsOn;
         page.StartWithWindows.Toggled += StartWithWindows_Toggled;
         page.SilentStartup.Toggled += SilentStartup_Toggled;
+        page.StartBlePairing.Click += StartBlePairing_Click;
+    }
+
+    private void StartBlePairing_Click(object sender, RoutedEventArgs e)
+    {
+        _ = StartBlePairingBeaconAsync();
+    }
+
+    private async Task StartBlePairingBeaconAsync()
+    {
+        _trayManager.ShowNotification(
+            "Hinge",
+            "BLE 配对广播已开启 60 秒；请在 Android 的“保活设置”中开始绑定 Windows 自动唤醒。");
+        var published = await _wakeAdvertiser.PublishAsync(
+            _localIdentity.DeviceId,
+            WakeAdvertisementKind.Pairing,
+            TimeSpan.FromSeconds(60),
+            CancellationToken.None);
+        _trayManager.ShowNotification(
+            "Hinge",
+            published
+                ? "BLE 配对广播已结束；如果 Android 尚未完成绑定，请再次开启。"
+                : "Windows 未能开启 BLE 广播；仍可使用 Android 常驻通知作为手动唤醒入口。");
     }
 
     private void ConfigurePersonalizationPage(PersonalizationPage page)
@@ -1886,9 +1919,27 @@ public sealed partial class MainWindow : Window
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico");
         if (!File.Exists(iconPath)) return;
 
-        // Give AppWindow an icon handle that has already been scaled to the
-        // native small-icon size. This avoids relying on a single 256px PNG
-        // entry inside the .ico when Windows creates the taskbar button.
+        // Prefer the packaged ICO path for both the title bar and taskbar.
+        // Passing a HICON-derived IconId first can succeed at the API level
+        // but still leave an unpackaged AUMID taskbar button on the generic
+        // Windows placeholder icon. The ICO contains the full size set the
+        // shell needs for taskbar, preview and high-DPI surfaces.
+        try { appWindow.SetIcon(iconPath); }
+        catch
+        {
+            // Fall back to the native handle below for older runtimes.
+        }
+
+        try
+        {
+            appWindow.SetTaskbarIcon(iconPath);
+            return;
+        }
+        catch
+        {
+            // Fall back to the native handle below for older runtimes.
+        }
+
         if (_windowIconSmall != IntPtr.Zero)
         {
             try
@@ -1904,17 +1955,9 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        try { appWindow.SetIcon(iconPath); }
-        catch
-        {
-            // The native WM_SETICON path remains available for unpackaged hosts.
-        }
-
-        try { appWindow.SetTaskbarIcon(iconPath); }
-        catch
-        {
-            // The embedded EXE icon is still the final fallback.
-        }
+        // The native WM_SETICON path remains available for unpackaged hosts;
+        // the embedded EXE icon is the final fallback if all AppWindow calls
+        // are unavailable.
     }
 
     private void ConfigureWindowIcon(IntPtr hwnd)
@@ -2924,9 +2967,9 @@ public sealed partial class MainWindow : Window
 
     private async Task TryAutoConnectHistoricalDeviceAsync(IReadOnlyList<Device> devices)
     {
-        if (_activeConnection?.State == SessionState.Connected ||
+        if (_activeConnection?.IsSessionReady == true ||
             _sessionManager.ActiveConnections.Any(connection =>
-                connection.State == SessionState.Connected) ||
+                connection.IsSessionReady) ||
             _connectingDeviceId != null)
         {
             return;
@@ -3042,7 +3085,11 @@ public sealed partial class MainWindow : Window
         {
             _pendingRemoteMedia.TrySetResult(path);
         }
-        DispatcherQueue.TryEnqueue(() => StatusText.Text = $"已接收文件：{Path.GetFileName(path)}");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            RecordReceivedTransfer(path);
+            StatusText.Text = $"已接收文件：{Path.GetFileName(path)}";
+        });
     }
 
     private void OnTransferFailed(object? sender, TransferFailure failure)
@@ -3058,17 +3105,101 @@ public sealed partial class MainWindow : Window
         }
 
         DispatcherQueue.TryEnqueue(() =>
-            StatusText.Text = $"文件接收失败：{failure.FileName} · {failure.Error}");
+        {
+            _transferHistoryStore.Upsert(new TransferHistoryRecord
+            {
+                Id = $"receive-{failure.TransferId}",
+                DeviceId = _activeConnection?.RemoteDeviceId ?? string.Empty,
+                DeviceName = _activeDevice?.Name ?? "Android 设备",
+                FileName = failure.FileName,
+                TransferId = failure.TransferId,
+                Direction = TransferDirection.Receive,
+                State = TransferState.Failed,
+                Error = failure.Error,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+            RefreshTransferHistory();
+            StatusText.Text = $"文件接收失败：{failure.FileName} · {failure.Error}";
+        });
     }
 
     private void OnClipboardReceived(object? sender, ClipboardEventMessage message)
     {
-        DispatcherQueue.TryEnqueue(() => ClipboardStatusText.Text = $"收到跨端内容：{Preview(message.Content)}");
+        DispatcherQueue.TryEnqueue(() => ClipboardStatusText.Text = $"已写入本机系统剪贴板：{Preview(message.Content)}");
     }
 
     private void OnUrlHandoffReceived(object? sender, string url)
     {
-        DispatcherQueue.TryEnqueue(() => ClipboardStatusText.Text = $"收到网页链接：{Preview(url)}");
+        DispatcherQueue.TryEnqueue(() => ClipboardStatusText.Text = $"已写入本机系统剪贴板：{Preview(url)}");
+    }
+
+    private void RefreshTransferHistory()
+    {
+        var records = _transferHistoryStore.GetAll();
+        DispatcherQueue.TryEnqueue(() => _homePage?.SetTransferHistory(records));
+    }
+
+    private void RecordReceivedTransfer(string path)
+    {
+        if (!File.Exists(path)) return;
+        var fileInfo = new FileInfo(path);
+        _transferHistoryStore.Upsert(new TransferHistoryRecord
+        {
+            Id = $"receive-{Guid.NewGuid():N}",
+            DeviceId = _activeConnection?.RemoteDeviceId ?? string.Empty,
+            DeviceName = _activeDevice?.Name ?? "Android 设备",
+            FileName = fileInfo.Name,
+            FilePath = path,
+            Direction = TransferDirection.Receive,
+            State = TransferState.Completed,
+            BytesTransferred = fileInfo.Length,
+            TotalBytes = fileInfo.Length,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            UpdatedAtUtc = DateTimeOffset.UtcNow
+        });
+        RefreshTransferHistory();
+    }
+
+    private void Home_TransferCancelRequested(object? sender, TransferHistoryRecord record)
+    {
+        _ = CancelTransferHistoryAsync(record);
+    }
+
+    private void Home_TransferHistoryDeleteRequested(object? sender, TransferHistoryRecord record)
+    {
+        if (!record.CanDelete) return;
+        if (!_transferHistoryStore.Delete(record.Id)) return;
+
+        RefreshTransferHistory();
+        StatusText.Text = $"已删除传输记录：{record.FileName}";
+    }
+
+    private async void Home_TransferHistoryClearRequested(object? sender, EventArgs e)
+    {
+        var deletableCount = _transferHistoryStore.GetAll().Count(record => record.CanDelete);
+        if (deletableCount == 0)
+        {
+            StatusText.Text = "没有可删除的传输记录；进行中的任务已保留。";
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "清空传输记录",
+            Content = $"将删除 {deletableCount} 条已完成、失败或已取消的记录。进行中的发送任务不会被删除。",
+            PrimaryButtonText = "清空记录",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = ((FrameworkElement)Content).XamlRoot
+        };
+        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
+
+        var deleted = _transferHistoryStore.DeleteWhere(record => record.CanDelete);
+        RefreshTransferHistory();
+        StatusText.Text = deleted > 0
+            ? $"已清空 {deleted} 条传输记录"
+            : "没有可删除的传输记录；进行中的任务已保留。";
     }
 
     private void OnNotificationReceived(object? sender, NotificationEventMessage notification)
@@ -3164,7 +3295,12 @@ public sealed partial class MainWindow : Window
         {
             bool online = device.ConnectionState != ConnectionState.Disconnected;
             bool connected = IsDeviceSessionConnected(device);
-            var row = new Grid { MinHeight = 58 };
+            bool suspended = connected && device.ConnectionState == ConnectionState.Suspended;
+            var row = new Grid
+            {
+                MinHeight = 58,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(42) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -3183,7 +3319,9 @@ public sealed partial class MainWindow : Window
             details.Children.Add(new TextBlock { Text = device.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
             details.Children.Add(new TextBlock
             {
-                Text = connected
+                Text = suspended
+                    ? $"后台休眠 · {string.Join(", ", device.NetworkAddresses)}"
+                    : connected
                     ? $"已连接 · {string.Join(", ", device.NetworkAddresses)}"
                     : online
                         ? $"在线 · {string.Join(", ", device.NetworkAddresses)}"
@@ -3207,7 +3345,12 @@ public sealed partial class MainWindow : Window
             {
                 Content = connected ? "断开连接" : online ? "连接" : "重试",
                 Tag = device,
-                IsEnabled = connected || online
+                IsEnabled = connected || online,
+                Height = 36,
+                MinHeight = 36,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center
             };
             connectButton.Click += DeviceConnect_Click;
             actions.Children.Add(connectButton);
@@ -3218,14 +3361,18 @@ public sealed partial class MainWindow : Window
             DeviceListView.Items.Add(new ListViewItem
             {
                 Content = row,
-                Tag = device
+                Tag = device,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0)
             });
         }
     }
 
     private bool IsDeviceSessionConnected(Device device)
     {
-        if (_activeConnection?.State == SessionState.Connected &&
+        if (_activeConnection?.IsSessionReady == true &&
             string.Equals(
                 _activeConnection.RemoteDeviceId,
                 device.DeviceId,
@@ -3235,7 +3382,7 @@ public sealed partial class MainWindow : Window
         }
 
         return _sessionManager.ActiveConnections.Any(connection =>
-            connection.State == SessionState.Connected &&
+            connection.IsSessionReady &&
             string.Equals(
                 connection.RemoteDeviceId,
                 device.DeviceId,
@@ -3384,7 +3531,7 @@ public sealed partial class MainWindow : Window
                     while (DateTime.UtcNow < deadline && !cts.Token.IsCancellationRequested)
                     {
                         var rev = _sessionManager.ConnectionForDevice(device.DeviceId);
-                        if (rev is { State: SessionState.Connected })
+                        if (rev is { IsSessionReady: true })
                         {
                             if (tcs.TrySetResult(rev))
                             {
@@ -3888,7 +4035,7 @@ public sealed partial class MainWindow : Window
 
     private void OnPeerIdentified(object? sender, SessionPeerInfo peer)
     {
-        if (sender is not SessionConnection connection || connection.State != SessionState.Connected) return;
+        if (sender is not SessionConnection connection || !connection.IsSessionReady) return;
 
         // Direct TCP can arrive without the UDP reverse-request marker. Do
         // the same process-lifetime manual-disconnect check here so an
@@ -3918,11 +4065,12 @@ public sealed partial class MainWindow : Window
                 Port = Constants.SessionTcpPort,
                 PairingRequired = peer.PairingRequired
             }, remoteAddress);
+            _registry.MarkSessionConnected(peer.DeviceId);
         }
 
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (connection.State != SessionState.Connected) return;
+            if (!connection.IsSessionReady) return;
             Device? device = FindDeviceForConnection(connection);
             if (device == null)
             {
@@ -3951,7 +4099,7 @@ public sealed partial class MainWindow : Window
             SetHeroDevice(device);
             HeaderStatusText.Text = $"已连接 {device.Name}";
             StatusText.Text = $"已建立局域网会话 · {DateTime.Now:HH:mm:ss}";
-            ClipboardStatusText.Text = "已连接设备，可同步剪贴板";
+            ClipboardStatusText.Text = "已连接设备，接收内容会写入系统剪贴板";
             ActivityInfoBar.Title = "设备连接正常";
             ActivityInfoBar.Message = $"已连接到 {device.Name}，双向身份握手已完成。";
             ActivityInfoBar.Severity = InfoBarSeverity.Success;
@@ -3995,7 +4143,7 @@ public sealed partial class MainWindow : Window
 
             DispatcherQueue.TryEnqueue(() =>
             {
-                if (connection.State != SessionState.Connected ||
+                if (!connection.IsSessionReady ||
                     _activeConnection != connection)
                 {
                     return;
@@ -4018,8 +4166,49 @@ public sealed partial class MainWindow : Window
 
     private void OnConnectionStateChanged(object? sender, SessionState state)
     {
-        if (sender is not SessionConnection connection ||
-            state != SessionState.Disconnected)
+        if (sender is not SessionConnection connection)
+        {
+            return;
+        }
+
+        var deviceId = connection.RemoteDeviceId ?? string.Empty;
+        if (state == SessionState.Suspended)
+        {
+            _registry.MarkSessionSuspended(deviceId);
+            if (ReferenceEquals(_activeConnection, connection))
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    HeaderStatusText.Text = "后台休眠，等待手机恢复";
+                    StatusText.Text = "连接仍保留 · 等待 Android 网络恢复";
+                    ActivityInfoBar.Title = "手机暂时休眠";
+                    ActivityInfoBar.Message = "手机屏幕关闭或系统进入省电状态，连接会在网络恢复后自动继续。";
+                    ActivityInfoBar.Severity = InfoBarSeverity.Informational;
+                });
+            }
+            return;
+        }
+
+        if (state == SessionState.Connected)
+        {
+            _registry.MarkSessionConnected(deviceId);
+            if (ReferenceEquals(_activeConnection, connection))
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    var device = FindDeviceForConnection(connection);
+                    if (device == null) return;
+                    HeaderStatusText.Text = $"已连接 {device.Name}";
+                    StatusText.Text = $"已恢复局域网会话 · {DateTime.Now:HH:mm:ss}";
+                    ActivityInfoBar.Title = "设备连接正常";
+                    ActivityInfoBar.Message = $"已恢复与 {device.Name} 的局域网会话。";
+                    ActivityInfoBar.Severity = InfoBarSeverity.Success;
+                });
+            }
+            return;
+        }
+
+        if (state != SessionState.Disconnected)
         {
             return;
         }
@@ -5647,6 +5836,7 @@ public sealed partial class MainWindow : Window
             // silent startup both arrive here before the first activation, so
             // establish the window lifetime once and immediately hide it.
             Activate();
+            RefreshTaskbarIcon();
             _appWindow?.Hide();
             App.LogLifecycle("primary-window-activated-once-and-hidden");
         }
@@ -5654,6 +5844,12 @@ public sealed partial class MainWindow : Window
         {
             // If AppWindow is not available yet, activation will show the window.
         }
+    }
+
+    internal void RefreshTaskbarIcon()
+    {
+        if (_appWindow == null) return;
+        ConfigureAppWindowIcons(_appWindow);
     }
 
     private async void BtnStorage_Click(object sender, RoutedEventArgs e)
@@ -5785,8 +5981,16 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            await _transferManager.SendFileAsync(connection, file.Path);
-            StatusText.Text = $"文件已发送：{file.Name}";
+            var result = await SendFilesToConnectionAsync(
+                connection,
+                new[] { file.Path },
+                string.Empty,
+                CancellationToken.None,
+                showFailureDialog: true);
+            if (result is { Completed: > 0 })
+            {
+                StatusText.Text = $"文件已发送：{file.Name}";
+            }
         }
         catch (Exception exception)
         {
@@ -5860,9 +6064,10 @@ public sealed partial class MainWindow : Window
     private async Task SendShellFilesAsync(ShellSendRequest request)
     {
         await _shellSendGate.WaitAsync();
+        PendingFileSend? pending = null;
+        CancellationTokenSource? cancellation = null;
         try
         {
-            PendingFileSend pending;
             try
             {
                 // Record the click before inspecting the socket. The session
@@ -5874,30 +6079,43 @@ public sealed partial class MainWindow : Window
                 _trayManager.ShowNotification("Hinge", exception.Message);
                 return;
             }
+            EnsurePendingTransferHistory(pending);
+            cancellation = new CancellationTokenSource();
+            _pendingSendCancellations[pending.Id] = cancellation;
 
             var connection = _sessionManager.ConnectionForDevice(request.DeviceId);
+            if (connection?.State == SessionState.Suspended)
+            {
+                connection = null;
+            }
             if (connection == null)
             {
-                try
+                connection = await TryWakeDeviceAsync(request.DeviceId, cancellation.Token);
+                if (connection == null)
                 {
-                    _trayManager.ShowNotification(
-                        "Hinge",
-                        "目标设备当前未连接，文件已加入待发送队列；连接恢复后会自动发送。");
+                    try
+                    {
+                        _trayManager.ShowNotification(
+                            "Hinge",
+                            "目标设备未在唤醒窗口内恢复连接，文件已加入待发送队列；请点击手机 Hinge 常驻通知，连接恢复后会自动发送。");
+                    }
+                    catch (ArgumentException exception)
+                    {
+                        _trayManager.ShowNotification("Hinge", exception.Message);
+                    }
+                    return;
                 }
-                catch (ArgumentException exception)
-                {
-                    _trayManager.ShowNotification("Hinge", exception.Message);
-                }
-                return;
             }
 
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(25));
             var result = await SendFilesToConnectionAsync(
                 connection,
-                request.FilePaths,
+                pending.FilePaths,
                 "Download/Hinge",
                 timeout.Token,
-                showFailureDialog: false);
+                showFailureDialog: false,
+                pendingId: pending.Id);
             if (result == null)
             {
                 _pendingFileSendStore.Remove(pending.Id);
@@ -5917,6 +6135,7 @@ public sealed partial class MainWindow : Window
                 // Keep only files that were not acknowledged by the phone.
                 // A transient disconnect is retried after the next handshake.
                 _pendingFileSendStore.ReplacePaths(pending.Id, remaining);
+                MarkPendingTransferHistoryWaiting(pending.Id, remaining);
             }
 
             var message = result.Failures.Count == 0
@@ -5926,16 +6145,83 @@ public sealed partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            _trayManager.ShowNotification("Hinge", "发送已超时或被取消。");
+            if (cancellation?.IsCancellationRequested == true)
+            {
+                if (pending != null)
+                {
+                    _pendingFileSendStore.Remove(pending.Id);
+                    MarkPendingTransferHistoryCancelled(pending.Id);
+                }
+                return;
+            }
+
+            if (pending != null)
+            {
+                MarkPendingTransferHistoryWaiting(pending.Id, pending.FilePaths);
+            }
+            _trayManager.ShowNotification("Hinge", "发送已超时，任务仍保留在待发送队列。");
         }
         catch (Exception exception)
         {
+            if (pending != null)
+            {
+                MarkPendingTransferHistoryWaiting(pending.Id, pending.FilePaths, exception.Message);
+            }
             _trayManager.ShowNotification("Hinge", $"文件发送失败：{exception.Message}");
         }
         finally
         {
+            if (pending != null &&
+                _pendingSendCancellations.TryRemove(pending.Id, out var registeredCancellation))
+            {
+                registeredCancellation.Dispose();
+            }
             _shellSendGate.Release();
         }
+    }
+
+    private async Task<SessionConnection?> TryWakeDeviceAsync(
+        string deviceId,
+        CancellationToken cancellationToken = default)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        var advertisement = _wakeAdvertiser.PublishAsync(
+            _localIdentity.DeviceId,
+            WakeAdvertisementKind.FileTransfer,
+            TimeSpan.FromSeconds(5),
+            timeout.Token);
+
+        try
+        {
+            while (!timeout.IsCancellationRequested)
+            {
+                var connection = _sessionManager.ConnectionForDevice(deviceId);
+                if (connection is { State: not SessionState.Suspended }) return connection;
+                await Task.Delay(250, timeout.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The queue remains durable when Bluetooth is unavailable or the
+            // companion/Android service cannot wake within this short window.
+        }
+        finally
+        {
+            timeout.Cancel();
+            try
+            {
+                await advertisement;
+            }
+            catch
+            {
+                // Publishing is best effort; the notification fallback is
+                // deliberately independent of its result.
+            }
+        }
+
+        var recovered = _sessionManager.ConnectionForDevice(deviceId);
+        return recovered is { State: not SessionState.Suspended } ? recovered : null;
     }
 
     private async Task ProcessPendingShellSendsAsync()
@@ -5947,7 +6233,19 @@ public sealed partial class MainWindow : Window
             gateAcquired = true;
             foreach (var pending in _pendingFileSendStore.GetAll())
             {
+                if (!_pendingFileSendStore.GetAll().Any(item =>
+                    string.Equals(item.Id, pending.Id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+                EnsurePendingTransferHistory(pending);
                 var connection = _sessionManager.ConnectionForDevice(pending.DeviceId);
+                if (connection?.State == SessionState.Suspended)
+                {
+                    // A suspended mobile session is waiting for the next
+                    // wake window; do not consume the durable queue here.
+                    continue;
+                }
                 if (connection == null) continue;
 
                 var existingPaths = pending.FilePaths
@@ -5963,13 +6261,17 @@ public sealed partial class MainWindow : Window
 
                 try
                 {
-                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                    using var cancellation = new CancellationTokenSource();
+                    _pendingSendCancellations[pending.Id] = cancellation;
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(25));
                     var result = await SendFilesToConnectionAsync(
                         connection,
                         existingPaths,
                         "Download/Hinge",
                         timeout.Token,
-                        showFailureDialog: false);
+                        showFailureDialog: false,
+                        pendingId: pending.Id);
                     if (result == null)
                     {
                         _pendingFileSendStore.Remove(pending.Id);
@@ -5987,6 +6289,7 @@ public sealed partial class MainWindow : Window
                     else
                     {
                         _pendingFileSendStore.ReplacePaths(pending.Id, remaining);
+                        MarkPendingTransferHistoryWaiting(pending.Id, remaining);
                     }
 
                     var message = result.Failures.Count == 0
@@ -5996,15 +6299,29 @@ public sealed partial class MainWindow : Window
                 }
                 catch (OperationCanceledException)
                 {
-                    // Keep the item. A subsequent connection event will retry
-                    // it without losing the user's original shell action.
+                    if (_pendingFileSendStore.GetAll().Any(item =>
+                        string.Equals(item.Id, pending.Id, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        MarkPendingTransferHistoryWaiting(pending.Id, existingPaths);
+                    }
+                    // Keep the item unless the user cancelled it from the home
+                    // page. A subsequent connection event will retry it without
+                    // losing the original Explorer action.
                     break;
                 }
                 catch (Exception exception)
                 {
                     // A transient session failure must not discard the task.
+                    MarkPendingTransferHistoryWaiting(pending.Id, existingPaths, exception.Message);
                     _trayManager.ShowNotification("Hinge", $"排队文件暂时未发送：{exception.Message}");
                     break;
+                }
+                finally
+                {
+                    if (_pendingSendCancellations.TryRemove(pending.Id, out var cancellation))
+                    {
+                        cancellation.Dispose();
+                    }
                 }
             }
         }
@@ -6038,7 +6355,8 @@ public sealed partial class MainWindow : Window
         IEnumerable<string> filePaths,
         string destination,
         CancellationToken cancellationToken,
-        bool showFailureDialog)
+        bool showFailureDialog,
+        string? pendingId = null)
     {
         var paths = filePaths
             .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
@@ -6059,22 +6377,129 @@ public sealed partial class MainWindow : Window
         foreach (var path in paths)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var fileInfo = new FileInfo(path);
+            var history = FindTransferHistory(pendingId, path) ?? new TransferHistoryRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                DeviceId = connection.RemoteDeviceId ?? string.Empty,
+                DeviceName = _activeDevice?.Name ?? connection.PeerInfo?.Name ?? "Android 设备",
+                FileName = fileInfo.Name,
+                FilePath = path,
+                PendingId = pendingId ?? string.Empty,
+                Direction = TransferDirection.Send,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            history = history with
+            {
+                State = TransferState.Transferring,
+                BytesTransferred = 0,
+                TotalBytes = fileInfo.Length,
+                Error = string.Empty,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            _transferHistoryStore.Upsert(history);
+            RefreshTransferHistory();
+
+            // SendFileAsync already reports progress per chunk. Persist and
+            // repaint it at a modest cadence so the history card moves
+            // smoothly without turning every network frame into a disk write
+            // and a full ListView rebuild.
+            var progressGate = new object();
+            var latestHistory = history;
+            var lastProgressUpdate = DateTimeOffset.MinValue;
+            var progressStopped = false;
+            var progressReporter = new Progress<TransferProgress>(progress =>
+            {
+                if (progress.State != TransferState.Transferring) return;
+
+                TransferHistoryRecord? snapshot = null;
+                var now = DateTimeOffset.UtcNow;
+                lock (progressGate)
+                {
+                    if (progressStopped) return;
+                    if (lastProgressUpdate != DateTimeOffset.MinValue &&
+                        now - lastProgressUpdate < TransferProgressUpdateInterval &&
+                        progress.BytesTransferred < progress.TotalBytes)
+                    {
+                        return;
+                    }
+
+                    latestHistory = latestHistory with
+                    {
+                        TransferId = progress.TransferId,
+                        State = TransferState.Transferring,
+                        BytesTransferred = progress.BytesTransferred,
+                        TotalBytes = progress.TotalBytes,
+                        UpdatedAtUtc = now
+                    };
+                    lastProgressUpdate = now;
+                    snapshot = latestHistory;
+                }
+
+                if (snapshot is null) return;
+                _transferHistoryStore.Upsert(snapshot);
+                RefreshTransferHistory();
+            });
+
+            void StopProgress()
+            {
+                lock (progressGate)
+                {
+                    progressStopped = true;
+                }
+            }
+
             try
             {
-                await _transferManager.SendFileAsync(
+                var transferId = await _transferManager.SendFileAsync(
                     connection,
                     path,
+                    progress: progressReporter,
                     cancellationToken: cancellationToken,
                     destinationPath: destination);
+
+                TransferHistoryRecord completedHistory;
+                lock (progressGate)
+                {
+                    progressStopped = true;
+                    completedHistory = latestHistory with
+                    {
+                        TransferId = transferId,
+                        State = TransferState.Completed,
+                        BytesTransferred = fileInfo.Length,
+                        TotalBytes = fileInfo.Length,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow
+                    };
+                    latestHistory = completedHistory;
+                }
+                _transferHistoryStore.Upsert(completedHistory);
+                RefreshTransferHistory();
                 completed++;
                 completedPaths.Add(path);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                StopProgress();
+                _transferHistoryStore.Upsert(latestHistory with
+                {
+                    State = TransferState.Cancelled,
+                    Error = "用户取消或发送超时",
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+                RefreshTransferHistory();
                 throw;
             }
             catch (Exception exception)
             {
+                StopProgress();
+                _transferHistoryStore.Upsert(latestHistory with
+                {
+                    State = TransferState.Failed,
+                    Error = exception.Message,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+                RefreshTransferHistory();
                 failures.Add($"{Path.GetFileName(path)}：{exception.Message}");
             }
         }
@@ -6104,6 +6529,117 @@ public sealed partial class MainWindow : Window
         return result;
     }
 
+    private TransferHistoryRecord? FindTransferHistory(string? pendingId, string filePath)
+    {
+        return _transferHistoryStore.GetAll().FirstOrDefault(record =>
+            string.Equals(record.PendingId, pendingId ?? string.Empty, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase) &&
+            record.State is not TransferState.Completed and not TransferState.Cancelled);
+    }
+
+    private void EnsurePendingTransferHistory(PendingFileSend pending)
+    {
+        var device = _registry.GetAllDevices().FirstOrDefault(candidate =>
+            string.Equals(candidate.DeviceId, pending.DeviceId, StringComparison.OrdinalIgnoreCase));
+        var trusted = _trustStore.GetDevice(pending.DeviceId);
+        var deviceName = device?.Name ?? trusted?.Name ?? "已配对设备";
+
+        foreach (var path in pending.FilePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+            var fileName = Path.GetFileName(path);
+            if (string.IsNullOrWhiteSpace(fileName)) continue;
+            var existing = _transferHistoryStore.GetAll().FirstOrDefault(record =>
+                string.Equals(record.PendingId, pending.Id, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(record.FilePath, path, StringComparison.OrdinalIgnoreCase));
+            if (existing != null) continue;
+
+            _transferHistoryStore.Upsert(new TransferHistoryRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                DeviceId = pending.DeviceId,
+                DeviceName = deviceName,
+                FileName = fileName,
+                FilePath = path,
+                PendingId = pending.Id,
+                Direction = TransferDirection.Send,
+                State = TransferState.WaitingAccept,
+                TotalBytes = File.Exists(path) ? new FileInfo(path).Length : 0,
+                CreatedAtUtc = pending.CreatedAtUtc,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+        }
+        RefreshTransferHistory();
+    }
+
+    private void MarkPendingTransferHistoryWaiting(
+        string pendingId,
+        IEnumerable<string> paths,
+        string? error = null)
+    {
+        var pathSet = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in _transferHistoryStore.GetAll().Where(record =>
+            string.Equals(record.PendingId, pendingId, StringComparison.OrdinalIgnoreCase) &&
+            pathSet.Contains(record.FilePath)))
+        {
+            _transferHistoryStore.Upsert(record with
+            {
+                State = TransferState.WaitingAccept,
+                Error = error ?? string.Empty,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+        }
+        RefreshTransferHistory();
+    }
+
+    private void MarkPendingTransferHistoryCancelled(string pendingId)
+    {
+        foreach (var record in _transferHistoryStore.GetAll().Where(record =>
+            string.Equals(record.PendingId, pendingId, StringComparison.OrdinalIgnoreCase) &&
+            record.State is not TransferState.Completed and not TransferState.Cancelled))
+        {
+            _transferHistoryStore.Upsert(record with
+            {
+                State = TransferState.Cancelled,
+                Error = "用户取消",
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+        }
+        RefreshTransferHistory();
+    }
+
+    private async Task CancelTransferHistoryAsync(TransferHistoryRecord record)
+    {
+        if (!record.CanCancel) return;
+
+        if (!string.IsNullOrWhiteSpace(record.PendingId))
+        {
+            if (_pendingSendCancellations.TryGetValue(record.PendingId, out var cancellation))
+            {
+                cancellation.Cancel();
+            }
+            _pendingFileSendStore.Remove(record.PendingId);
+            MarkPendingTransferHistoryCancelled(record.PendingId);
+            StatusText.Text = $"已取消发送：{record.FileName}";
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(record.TransferId))
+        {
+            _transferManager.CancelTransfer(record.TransferId);
+            _transferHistoryStore.Upsert(record with
+            {
+                State = TransferState.Cancelled,
+                Error = "用户取消",
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+            RefreshTransferHistory();
+            StatusText.Text = $"已取消发送：{record.FileName}";
+        }
+
+        await Task.CompletedTask;
+    }
+
     private void RefreshExplorerSendMenu()
     {
         // The shell menu is a single-target shortcut, not a history browser.
@@ -6125,7 +6661,7 @@ public sealed partial class MainWindow : Window
         }
 
         var connected = _sessionManager.ActiveConnections.FirstOrDefault(connection =>
-            connection.State == SessionState.Connected &&
+            connection.IsSessionReady &&
             string.Equals(connection.RemoteDeviceId, latestTrusted.DeviceId,
                 StringComparison.OrdinalIgnoreCase));
         var latestDevice = new ExplorerSendDevice(
@@ -6141,14 +6677,14 @@ public sealed partial class MainWindow : Window
 
     private SessionConnection? GetConnectedConnection()
     {
-        if (_activeConnection?.State == SessionState.Connected &&
+        if (_activeConnection?.IsSessionReady == true &&
             !string.IsNullOrWhiteSpace(_activeConnection.RemoteDeviceId))
         {
             return _activeConnection;
         }
 
         var connection = _sessionManager.ActiveConnections.FirstOrDefault(
-            candidate => candidate.State == SessionState.Connected &&
+            candidate => candidate.IsSessionReady &&
                 !string.IsNullOrWhiteSpace(candidate.RemoteDeviceId));
         // The identity handshake is the source of truth for a usable session.
         // A fast reconnect can briefly publish the peer before the UI receives
@@ -6224,6 +6760,7 @@ public sealed partial class MainWindow : Window
         _clipboardManager.Dispose();
         _notificationManager.Dispose();
         _remoteInputManager.Dispose();
+        _wakeAdvertiser.Dispose();
         _trayManager.Dispose();
         _shellSendPipeServer.Dispose();
         _shellSendGate.Dispose();

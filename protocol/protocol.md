@@ -83,7 +83,7 @@ Hinge Protocol 采用分层解耦架构：
 | `0x0003` | `PAIR_CONFIRM` | JSON | Pairing | 设备配对确认 |
 | `0x0010` | `SESSION_INIT` | JSON | Session | 会话握手发起 |
 | `0x0011` | `SESSION_ACK` | JSON | Session | 会话握手确认 |
-| `0x0012` | `HEARTBEAT_PING` | Empty | Session | 5秒心跳探测 |
+| `0x0012` | `HEARTBEAT_PING` | Empty | Session | 默认5秒探测；Android后台对端使用20秒 |
 | `0x0013` | `HEARTBEAT_PONG` | Empty | Session | 存活心跳应答 |
 | `0x0020` | `TEXT_MESSAGE` | JSON | Transfer | 短文本/URL即时投送 |
 | `0x0030` | `FILE_OFFER` | JSON | Transfer | 文件发送邀约与哈希元数据 |
@@ -104,6 +104,10 @@ Hinge Protocol 采用分层解耦架构：
 | `0x0082` | `COMPRESSED_CONTROL` | 二进制封装 | Session/Tools | 双方协商后压缩大控制载荷，内部保留原消息类型 |
 
 `DEVICE_DISCOVERY` 的 JSON 报文中，`automaticReconnect` 是可选布尔字段：设备主动恢复一个已经信任的历史会话时置为 `true`；手动连接请求或旧客户端省略该字段时按 `false` 处理。接收端只有在本地信任库中找到相同 `deviceId` 时才接受带标记的自动连接请求，因此更新后仍可复用历史身份，同时不会让新设备跳过用户授权。
+
+### 3.3 BLE 唤醒不是 OSP1 消息
+
+Windows Explorer 右键发送文件时，如果目标 TCP 会话不可用，Windows 可发送短暂的 BLE manufacturer-data 广播，唤醒已通过 Android `CompanionDeviceManager` 关联的 Hinge。该广播只携带 `HGW` 魔数、协议版本、唤醒原因和短设备标签，不进入 OSP1 帧、不携带文件或配对凭据；Android 收到系统 presence 回调后启动原生连接服务并重试历史可信 LAN peer。完整格式、时序和失败兜底见 [`wake.md`](wake.md)。
 
 ### 3.2 可选控制数据压缩
 

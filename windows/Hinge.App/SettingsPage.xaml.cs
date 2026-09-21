@@ -9,6 +9,7 @@ public sealed partial class SettingsPage : Page
     public Button Storage => StorageButton;
     public Button SavePairingCode => SavePairingCodeButton;
     public Button ClearPairingCode => ClearPairingCodeButton;
+    public Button StartBlePairing => StartBlePairingButton;
     public TextBox StoragePath => StoragePathTextBox;
     public TextBox PairingCode => PairingCodeTextBox;
     public TextBlock PairingCodeStatus => PairingCodeStatusText;

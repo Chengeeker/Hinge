@@ -17,7 +17,10 @@ public class IncomingFileContext
 
 public class TransferManager : IDisposable
 {
-    private const int FileChunkSize = 512 * 1024;
+    // Keep file frames large enough to avoid turning a bulk transfer into a
+    // long sequence of small socket writes. The protocol still accepts the
+    // older smaller chunks, so this is a sender-side performance improvement.
+    private const int FileChunkSize = 2 * 1024 * 1024;
     private string _downloadDirectory;
     private readonly ConcurrentDictionary<string, IncomingFileContext> _incomingTransfers = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _cancellations = new();
@@ -174,7 +177,13 @@ public class TransferManager : IDisposable
                     sha256 = await ComputeSha256Async(filePath, cts.Token);
                 }
 
-                using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var fs = new FileStream(
+                    filePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    FileChunkSize,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan))
                 {
                     if (offset > 0 && offset < fs.Length)
                     {

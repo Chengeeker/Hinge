@@ -83,7 +83,7 @@ public class ClipboardManager : IDisposable
         List<SessionConnection> conns;
         lock (_connectionLock)
         {
-            conns = _activeConnections.Where(c => c.State == SessionState.Connected).ToList();
+            conns = _activeConnections.Where(c => c.IsSessionReady).ToList();
         }
 
         foreach (var conn in conns)

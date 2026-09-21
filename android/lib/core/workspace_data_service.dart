@@ -473,6 +473,24 @@ class WorkspaceDataService {
     await _invoke('setPersistentNotificationEnabled', {'enabled': enabled});
   }
 
+  Future<Map<String, dynamic>> companionStatus() async {
+    final raw = await _invoke('companionStatus');
+    if (raw is! Map) return const {};
+    return raw.map((key, value) => MapEntry('$key', value));
+  }
+
+  Future<bool> associateCompanion() async {
+    return await _invoke('associateCompanion') == true;
+  }
+
+  Future<bool> removeCompanion() async {
+    return await _invoke('removeCompanion') == true;
+  }
+
+  Future<bool> wakeConnection() async {
+    return await _invoke('wakeConnection') == true;
+  }
+
   Future<bool> smsRelayEnabled() async {
     final raw = await _invoke('smsRelayEnabled');
     return raw is bool ? raw : false;

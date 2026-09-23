@@ -107,6 +107,22 @@
                         <TextBlock Text="右键发送文件时，先用短暂 BLE 广播唤醒已绑定的 Android Hinge，再沿用局域网连接传输。广播不承载文件或配对码。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                         <Button x:Name="StartBlePairingButton" Content="开启 60 秒 BLE 配对广播" HorizontalAlignment="Left" />
                     </StackPanel>
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Cloud Relay" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Text="可选的用户自有 Cloudflare Worker + R2 异步文件中转。局域网连接仍然优先；两台已信任设备需要使用同一 Relay 密钥。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <ToggleSwitch x:Name="CloudRelayEnabledToggle" Header="启用 Cloud Relay" OnContent="开启" OffContent="关闭" />
+                        <TextBox x:Name="CloudRelayEndpointTextBox" Header="Worker 地址" PlaceholderText="https://hinge-relay.example.workers.dev" />
+                        <TextBox x:Name="CloudRelayKeyTextBox" Header="Relay 加密密钥" PlaceholderText="Base64URL 32 字节密钥" />
+                        <PasswordBox x:Name="CloudRelayAdminTokenTextBox" Header="部署 Token（仅注册时使用）" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="GenerateCloudRelayKeyButton" Content="生成密钥" />
+                            <Button x:Name="CopyCloudRelayKeyButton" Content="复制密钥" />
+                            <Button x:Name="SaveCloudRelayButton" Content="保存配置" />
+                            <Button x:Name="RegisterCloudRelayButton" Content="注册此设备" />
+                            <Button x:Name="TestCloudRelayButton" Content="测试 Worker" />
+                        </StackPanel>
+                        <TextBlock x:Name="CloudRelayStatusText" Text="未配置 Cloud Relay" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
                     <Button x:Name="AboutButton" Content="关于应用" HorizontalAlignment="Left" />
                     <ToggleSwitch x:Name="MinimizeToTrayToggle" Header="关闭窗口时最小化到托盘" OnContent="开启" OffContent="关闭" />
                     <TextBlock Text="开启后点击关闭按钮会隐藏窗口，仍可从系统托盘恢复或退出应用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />

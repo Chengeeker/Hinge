@@ -10,6 +10,7 @@ public enum TransferState
     WaitingAccept,
     Transferring,
     Verifying,
+    AwaitingPickup,
     Completed,
     Failed,
     Cancelled
@@ -90,6 +91,8 @@ public class TransferProgress
     public string FileName { get; set; } = string.Empty;
     public long BytesTransferred { get; set; }
     public long TotalBytes { get; set; }
+    /// <summary>Measured payload throughput since this transfer started.</summary>
+    public double BytesPerSecond { get; set; }
     public double Percentage => TotalBytes > 0 ? (double)BytesTransferred / TotalBytes * 100.0 : 0.0;
     public TransferState State { get; set; }
 }

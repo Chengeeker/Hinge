@@ -10,6 +10,16 @@ public sealed partial class SettingsPage : Page
     public Button SavePairingCode => SavePairingCodeButton;
     public Button ClearPairingCode => ClearPairingCodeButton;
     public Button StartBlePairing => StartBlePairingButton;
+    public ToggleSwitch CloudRelayEnabled => CloudRelayEnabledToggle;
+    public TextBox CloudRelayEndpoint => CloudRelayEndpointTextBox;
+    public TextBox CloudRelayKey => CloudRelayKeyTextBox;
+    public PasswordBox CloudRelayAdminToken => CloudRelayAdminTokenTextBox;
+    public Button GenerateCloudRelayKey => GenerateCloudRelayKeyButton;
+    public Button CopyCloudRelayKey => CopyCloudRelayKeyButton;
+    public Button SaveCloudRelay => SaveCloudRelayButton;
+    public Button RegisterCloudRelay => RegisterCloudRelayButton;
+    public Button TestCloudRelay => TestCloudRelayButton;
+    public TextBlock CloudRelayStatus => CloudRelayStatusText;
     public TextBox StoragePath => StoragePathTextBox;
     public TextBox PairingCode => PairingCodeTextBox;
     public TextBlock PairingCodeStatus => PairingCodeStatusText;

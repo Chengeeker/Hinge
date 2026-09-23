@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Hinge.Core;
 using Xunit;
 
@@ -53,9 +54,21 @@ public class TransferTests
 
         string downloadDir = Path.Combine(Path.GetTempPath(), $"dl_{Guid.NewGuid()}");
         using var receiverTransfer = new TransferManager(downloadDir);
+        string? offeredHash = null;
+        string? completedHash = null;
 
         serverSession.MessageReceived += async (s, e) =>
         {
+            if (e.Frame.Type == MessageType.FileOffer)
+            {
+                offeredHash = JsonSerializer.Deserialize<FileOfferMessage>(
+                    Encoding.UTF8.GetString(e.Frame.Payload))?.Sha256;
+            }
+            else if (e.Frame.Type == MessageType.FileComplete)
+            {
+                completedHash = JsonSerializer.Deserialize<FileCompleteMessage>(
+                    Encoding.UTF8.GetString(e.Frame.Payload))?.Sha256;
+            }
             await receiverTransfer.HandleIncomingFrameAsync(e.Connection, e.Frame);
         };
 
@@ -85,6 +98,8 @@ public class TransferTests
 
             string receivedPath = await fileReceivedTcs.Task;
             Assert.True(File.Exists(receivedPath));
+            Assert.True(string.IsNullOrEmpty(offeredHash));
+            Assert.False(string.IsNullOrWhiteSpace(completedHash));
 
             byte[] receivedBytes = File.ReadAllBytes(receivedPath);
             Assert.Equal(testBytes.Length, receivedBytes.Length);

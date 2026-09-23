@@ -22,6 +22,8 @@ import java.util.ArrayDeque
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.Future
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -101,8 +103,11 @@ private object HingeProtocol {
     const val fileComplete = 0x0034
     const val compressedControl = 0x0082
     const val compressionCapability = "control-compression-zlib-v1"
+    const val streamingFileHashCapability = "streaming-file-hash-v1"
     val magic = byteArrayOf(0x4f, 0x53, 0x50, 0x31)
 }
+
+private const val BULK_SOCKET_BUFFER_SIZE = 4 * 1024 * 1024
 
 private val IMAGE_EXTENSIONS = setOf(
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp", ".tif", ".tiff",
@@ -175,6 +180,7 @@ private data class TransferResponse(
 )
 
 private data class NativeIncomingTransfer(
+    val connectionId: String,
     val transferId: String,
     val fileName: String,
     val fileSize: Long,
@@ -182,7 +188,24 @@ private data class NativeIncomingTransfer(
     val tempFile: File,
     val finalFile: File,
     val output: java.io.FileOutputStream,
+    var hash: MessageDigest?,
+    var hashIsContiguous: Boolean,
+    val startedAtMs: Long,
+    val startOffset: Long,
     var bytesReceived: Long,
+    var lastProgressAtMs: Long = 0L,
+    var readElapsedNs: Long = 0L,
+    var writeElapsedNs: Long = 0L,
+    var hashElapsedNs: Long = 0L,
+    var nextDiagnosticByte: Long = 16L * 1024 * 1024,
+)
+
+private data class NativeOutgoingChunk(
+    val buffer: ByteArray,
+    val count: Int,
+    val offset: Long,
+    val index: Int,
+    val end: Boolean = false,
 )
 
 /**
@@ -486,17 +509,40 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
     }
 
+    /** Queues a bulk chunk on the service I/O executor without a payload frame clone. */
+    fun sendFileChunk(
+        connectionId: String,
+        transferId: ByteArray,
+        chunkIndex: Int,
+        offset: Long,
+        data: ByteArray,
+        count: Int,
+    ) {
+        try {
+            bridgeWriteExecutor.execute {
+                val connection = connections[connectionId]
+                if (connection == null) {
+                    diagnostics.log("socket_send_dropped", mapOf("reason" to "unknown_connection"))
+                    return@execute
+                }
+                connection.sendFileChunk(transferId, chunkIndex, offset, data, count)
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            diagnostics.log("socket_send_dropped", mapOf("reason" to "service_stopping"))
+        }
+    }
+
     fun enqueueFile(
         path: String,
         name: String,
         mimeType: String,
         targetDeviceId: String,
         deleteAfter: Boolean,
-    ): Boolean {
+    ): Map<String, Any> {
         val source = File(path)
         if (!source.isFile || !source.canRead()) {
             diagnostics.log("transfer_enqueue_failed", mapOf("reason" to "source_unavailable"))
-            return false
+            return mapOf("accepted" to false, "connectionReady" to false)
         }
         val id = UUID.randomUUID().toString()
         val safeName = name.trim().ifEmpty { source.name.ifEmpty { "分享文件" } }
@@ -533,12 +579,20 @@ class HingeNativeConnectionBroker(private val context: Context) {
             HingeNativeConnectionEvents.emit(
                 mapOf("event" to "transfer_queued", "taskId" to task.id),
             )
+            val connectionReady = !lowPowerStandby && connections.values.any {
+                it.isReady &&
+                    (task.targetDeviceId.isEmpty() ||
+                        it.peer?.deviceId == task.targetDeviceId)
+            }
             dispatchPendingTasks()
-            return true
+            return mapOf(
+                "accepted" to true,
+                "connectionReady" to connectionReady,
+            )
         } catch (error: Exception) {
             diagnostics.log("transfer_enqueue_failed", mapOf("reason" to error.javaClass.simpleName))
             runCatching { taskFile.delete() }
-            return false
+            return mapOf("accepted" to false, "connectionReady" to false)
         }
     }
 
@@ -582,8 +636,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     while (started.get() && listener === server) {
                         try {
                             val socket = server.accept()
-                            socket.tcpNoDelay = true
-                            socket.keepAlive = true
+                            tuneSocket(socket)
                             val id = "native-${UUID.randomUUID()}"
                             registerConnection(
                                 NativeConnection(
@@ -627,6 +680,13 @@ class HingeNativeConnectionBroker(private val context: Context) {
             runCatching { previous?.close() }
         }
         ensureListener()
+    }
+
+    private fun tuneSocket(socket: Socket) {
+        runCatching { socket.tcpNoDelay = true }
+        runCatching { socket.keepAlive = true }
+        runCatching { socket.sendBufferSize = BULK_SOCKET_BUFFER_SIZE }
+        runCatching { socket.receiveBufferSize = BULK_SOCKET_BUFFER_SIZE }
     }
 
     private fun registerConnection(connection: NativeConnection) {
@@ -838,12 +898,12 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 }
             }
         }
-        if (!HingeNativeConnectionEvents.isAttached()) {
-            when (frame.type) {
-                HingeProtocol.fileOffer -> if (handleIncomingOffer(connection, frame.payload)) return
-                HingeProtocol.fileChunk -> if (handleIncomingChunk(connection, frame.payload)) return
-                HingeProtocol.fileComplete -> if (handleIncomingComplete(connection, frame.payload)) return
-            }
+        // Keep bulk file bytes in the native service even while Flutter is
+        // attached. Flutter receives compact lifecycle/progress events only.
+        when (frame.type) {
+            HingeProtocol.fileOffer -> if (handleIncomingOffer(connection, frame.payload)) return
+            HingeProtocol.fileChunk -> if (handleIncomingChunk(connection, frame.payload)) return
+            HingeProtocol.fileComplete -> if (handleIncomingComplete(connection, frame.payload)) return
         }
         HingeNativeConnectionEvents.emit(
             mapOf(
@@ -859,12 +919,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
         )
     }
 
-    /**
-     * When no Flutter engine is attached, the service finishes incoming file
-     * transfers itself instead of retaining hundreds of large raw frames in
-     * an EventChannel queue. With the UI attached, the existing Dart transfer
-     * manager remains the visible/interactive path.
-     */
+    /** The service receives files directly and keeps bulk bytes off EventChannel. */
     private fun handleIncomingOffer(
         connection: NativeConnection,
         payload: ByteArray,
@@ -877,10 +932,21 @@ class HingeNativeConnectionBroker(private val context: Context) {
             .ifEmpty { "接收文件" }
         if (transferId.isEmpty()) return false
         val size = json.optLong("fileSize", 0L).coerceAtLeast(0L)
-        val directory = receiveDirectory(
-            json.optString("mimeType"),
-            fileName,
-        )
+        val mimeType = json.optString("mimeType")
+        val directory = resolveIncomingDirectory(
+            destinationPath = json.optString("destinationPath"),
+            mimeType = mimeType,
+            fileName = fileName,
+        ) ?: run {
+            connection.sendJson(
+                HingeProtocol.fileReject,
+                JSONObject().apply {
+                    put("transferId", transferId)
+                    put("reason", "目标保存目录无效")
+                },
+            )
+            return true
+        }
         return try {
             directory.mkdirs()
             val finalFile = File(directory, fileName)
@@ -891,6 +957,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 existing = 0L
             }
             val transfer = NativeIncomingTransfer(
+                connectionId = connection.connectionId,
                 transferId = transferId,
                 fileName = fileName,
                 fileSize = size,
@@ -898,6 +965,14 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 tempFile = tempFile,
                 finalFile = finalFile,
                 output = java.io.FileOutputStream(tempFile, true),
+                hash = if (existing == 0L) {
+                    MessageDigest.getInstance("SHA-256")
+                } else {
+                    null
+                },
+                hashIsContiguous = true,
+                startedAtMs = SystemClock.elapsedRealtime(),
+                startOffset = existing,
                 bytesReceived = existing,
             )
             incomingTransfers[transferId]?.let { runCatching { it.output.close() } }
@@ -910,7 +985,20 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     put("offset", existing)
                 },
             )
-            diagnostics.log("incoming_transfer_accepted", mapOf("task" to transferId, "bytes" to size))
+            diagnostics.log(
+                "incoming_transfer_accepted",
+                mapOf("task" to transferId, "bytes" to size, "offset" to existing),
+            )
+            HingeNativeConnectionEvents.emit(
+                mapOf(
+                    "event" to "file_transfer_started",
+                    "connectionId" to connection.connectionId,
+                    "transferId" to transferId,
+                    "name" to fileName,
+                    "bytesTransferred" to existing,
+                    "totalBytes" to size,
+                ),
+            )
             true
         } catch (error: Exception) {
             connection.sendJson(
@@ -933,13 +1021,45 @@ class HingeNativeConnectionBroker(private val context: Context) {
         val transferId = uuidString(payload.copyOfRange(0, 16))
         val transfer = incomingTransfers[transferId] ?: return false
         return try {
+            val chunkOffset = ByteBuffer.wrap(payload, 20, 8)
+                .order(ByteOrder.BIG_ENDIAN)
+                .long
+            if (chunkOffset != transfer.bytesReceived) {
+                transfer.hashIsContiguous = false
+            }
+            val writeStarted = SystemClock.elapsedRealtimeNanos()
             transfer.output.write(payload, 28, payload.size - 28)
+            transfer.writeElapsedNs += SystemClock.elapsedRealtimeNanos() - writeStarted
+            val hashStarted = SystemClock.elapsedRealtimeNanos()
+            if (transfer.hash != null && transfer.hashIsContiguous) {
+                transfer.hash?.update(payload, 28, payload.size - 28)
+            }
+            transfer.hashElapsedNs += SystemClock.elapsedRealtimeNanos() - hashStarted
             transfer.bytesReceived += payload.size - 28L
+            if (transfer.bytesReceived >= transfer.nextDiagnosticByte) {
+                logIncomingTransferTiming(transfer, "in_progress")
+                transfer.nextDiagnosticByte = transfer.bytesReceived + 16L * 1024 * 1024
+            }
+            val now = SystemClock.elapsedRealtime()
+            if (now - transfer.lastProgressAtMs >= 100L || transfer.bytesReceived >= transfer.fileSize) {
+                transfer.lastProgressAtMs = now
+                HingeNativeConnectionEvents.emit(
+                    mapOf(
+                        "event" to "file_transfer_progress",
+                        "connectionId" to connection.connectionId,
+                        "transferId" to transferId,
+                        "name" to transfer.fileName,
+                        "bytesTransferred" to transfer.bytesReceived,
+                        "totalBytes" to transfer.fileSize,
+                    ),
+                )
+            }
             true
         } catch (error: Exception) {
             diagnostics.log("incoming_transfer_write_failed", mapOf("reason" to error.javaClass.simpleName))
             runCatching { transfer.output.close() }
             incomingTransfers.remove(transferId)
+            emitIncomingTransferFailed(connection, transfer, "文件写入失败")
             true
         }
     }
@@ -955,17 +1075,32 @@ class HingeNativeConnectionBroker(private val context: Context) {
             transfer.output.flush()
             transfer.output.close()
             val expected = json.optString("sha256").ifEmpty { transfer.expectedHash }
-            val actual = sha256(transfer.tempFile)
+            val actual = if (transfer.hash != null && transfer.hashIsContiguous) {
+                transfer.hash!!.digest().joinToString("") { "%02x".format(it) }
+            } else {
+                sha256(transfer.tempFile)
+            }
             if (expected.isNotEmpty() && !expected.equals(actual, ignoreCase = true)) {
                 transfer.tempFile.delete()
                 diagnostics.log("incoming_transfer_hash_failed", mapOf("task" to transferId))
+                logIncomingTransferTiming(transfer, "hash_failed")
+                emitIncomingTransferFailed(connection, transfer, "文件校验失败")
                 return true
             }
             if (transfer.finalFile.exists()) transfer.finalFile.delete()
             transfer.tempFile.renameTo(transfer.finalFile)
+            logIncomingTransferTiming(transfer, "completed")
             diagnostics.log(
                 "incoming_transfer_completed",
-                mapOf("task" to transferId, "bytes" to transfer.bytesReceived),
+                mapOf(
+                    "task" to transferId,
+                    "bytes" to transfer.bytesReceived,
+                    "elapsedMs" to (SystemClock.elapsedRealtime() - transfer.startedAtMs),
+                    "bytesPerSecond" to bytesPerSecond(
+                        transfer.bytesReceived,
+                        SystemClock.elapsedRealtime() - transfer.startedAtMs,
+                    ),
+                ),
             )
             HingeNativeConnectionEvents.emit(
                 mapOf(
@@ -973,6 +1108,9 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     "connectionId" to connection.connectionId,
                     "path" to transfer.finalFile.absolutePath,
                     "name" to transfer.fileName,
+                    "transferId" to transfer.transferId,
+                    "bytesTransferred" to transfer.fileSize,
+                    "totalBytes" to transfer.fileSize,
                 ),
             )
             true
@@ -980,8 +1118,95 @@ class HingeNativeConnectionBroker(private val context: Context) {
             runCatching { transfer.output.close() }
             runCatching { transfer.tempFile.delete() }
             diagnostics.log("incoming_transfer_complete_failed", mapOf("reason" to error.javaClass.simpleName))
+            emitIncomingTransferFailed(connection, transfer, "文件保存失败")
             true
         }
+    }
+
+    private fun emitIncomingTransferFailed(
+        connection: NativeConnection,
+        transfer: NativeIncomingTransfer,
+        reason: String,
+    ) {
+        HingeNativeConnectionEvents.emit(
+            mapOf(
+                "event" to "file_transfer_failed",
+                "connectionId" to connection.connectionId,
+                "transferId" to transfer.transferId,
+                "name" to transfer.fileName,
+                "bytesTransferred" to transfer.bytesReceived,
+                "totalBytes" to transfer.fileSize,
+                "reason" to reason,
+            ),
+        )
+    }
+
+    private fun logIncomingTransferTiming(
+        transfer: NativeIncomingTransfer,
+        state: String,
+    ) {
+        val elapsedMs = (SystemClock.elapsedRealtime() - transfer.startedAtMs)
+            .coerceAtLeast(1L)
+        diagnostics.log(
+            "incoming_transfer_timing",
+            mapOf(
+                "task" to transfer.transferId,
+                "state" to state,
+                "bytes" to transfer.bytesReceived,
+                "offset" to transfer.startOffset,
+                "totalBytes" to transfer.fileSize,
+                "elapsedMs" to elapsedMs,
+                "readMs" to transfer.readElapsedNs / 1_000_000L,
+                "writeMs" to transfer.writeElapsedNs / 1_000_000L,
+                "hashMs" to transfer.hashElapsedNs / 1_000_000L,
+                "bytesPerSecond" to bytesPerSecond(
+                    transfer.bytesReceived - transfer.startOffset,
+                    elapsedMs,
+                ),
+            ),
+        )
+    }
+
+    private fun resolveIncomingDirectory(
+        destinationPath: String,
+        mimeType: String,
+        fileName: String,
+    ): File? {
+        val raw = destinationPath.trim()
+        if (raw.isEmpty()) return receiveDirectory(mimeType, fileName)
+
+        var normalized = raw.replace('\\', '/').trim().trimStart('/')
+        val sharedRootPrefix = "storage/emulated/0/"
+        if (normalized.startsWith(sharedRootPrefix, ignoreCase = true)) {
+            normalized = normalized.substring(sharedRootPrefix.length)
+        }
+        val segments = normalized.split('/')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        if (
+            segments.isEmpty() ||
+            segments.any { it == "." || it == ".." || ':' in it || '\u0000' in it }
+        ) {
+            return null
+        }
+
+        if (segments.size == 2 &&
+            segments[0].equals("Download", ignoreCase = true) &&
+            segments[1].equals("Hinge", ignoreCase = true)
+        ) {
+            val category = when {
+                mimeType.lowercase().startsWith("image/") ||
+                    hasExtension(fileName, IMAGE_EXTENSIONS) -> "图片"
+                mimeType.lowercase().startsWith("video/") ||
+                    hasExtension(fileName, VIDEO_EXTENSIONS) -> "视频"
+                else -> "文件"
+            }
+            return File(
+                Environment.getExternalStorageDirectory(),
+                "Download/Hinge/$category",
+            )
+        }
+        return File(Environment.getExternalStorageDirectory(), segments.joinToString("/"))
     }
 
     private fun receiveDirectory(mimeType: String, fileName: String): File {
@@ -1035,9 +1260,15 @@ class HingeNativeConnectionBroker(private val context: Context) {
 
     private fun transferTask(task: PendingTransferTask, connection: NativeConnection) {
         val file = File(task.path)
+        var producer: Future<*>? = null
         try {
             if (!file.isFile) throw IllegalStateException("source_unavailable")
-            val hash = sha256(file)
+            val fileLength = file.length()
+            val startedAtMs = SystemClock.elapsedRealtime()
+            val canStreamHash = connection.peer?.capabilities?.contains(
+                HingeProtocol.streamingFileHashCapability,
+            ) == true
+            var hash = if (canStreamHash) "" else sha256(file)
             val waiter = CompletableFuture<TransferResponse>()
             transferWaiters["${connection.connectionId}:${task.id}"] = waiter
             connection.sendJson(
@@ -1045,7 +1276,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 JSONObject().apply {
                     put("transferId", task.id)
                     put("fileName", task.name)
-                    put("fileSize", file.length())
+                    put("fileSize", fileLength)
                     put("mimeType", task.mimeType)
                     put("modifiedTime", file.lastModified() / 1000L)
                     put("sha256", hash)
@@ -1055,34 +1286,86 @@ class HingeNativeConnectionBroker(private val context: Context) {
             if (!response.accepted) throw IllegalStateException(
                 response.reason.ifEmpty { "peer_rejected" },
             )
-            val offset = response.offset.coerceIn(0L, file.length())
-            FileInputStream(file).use { input ->
-                skipFully(input, offset)
-                // Match the Windows sender's bulk-transfer frame size. The
-                // receiver remains compatible with older smaller chunks.
-                val buffer = ByteArray(2 * 1024 * 1024)
-                var bytesSent = offset
+            val offset = response.offset.coerceIn(0L, fileLength)
+            if (hash.isEmpty() && offset > 0L) {
+                // A resumed transfer still needs a digest for the complete
+                // file, while a fresh transfer hashes in the read pipeline.
+                hash = sha256(file)
+            }
+
+            val digest = if (hash.isEmpty()) MessageDigest.getInstance("SHA-256") else null
+            val chunkQueue = ArrayBlockingQueue<NativeOutgoingChunk>(3)
+            val freeBuffers = ArrayBlockingQueue<ByteArray>(3)
+            repeat(3) { freeBuffers.put(ByteArray(2 * 1024 * 1024)) }
+            val endChunk = NativeOutgoingChunk(ByteArray(0), -1, 0L, 0, end = true)
+
+            // Read ahead a small, bounded number of chunks so storage latency
+            // can overlap with the serialized socket write. The queue is
+            // deliberately bounded to keep background memory predictable.
+            producer = executor.submit {
+                var readOffset = offset
                 var chunkIndex = 0
-                while (bytesSent < file.length()) {
+                try {
+                    FileInputStream(file).use { input ->
+                        skipFully(input, offset)
+                        while (readOffset < fileLength) {
+                            val buffer = freeBuffers.take()
+                            var handedOff = false
+                            try {
+                                val count = input.read(buffer)
+                                if (count <= 0) break
+                                digest?.update(buffer, 0, count)
+                                chunkQueue.put(
+                                    NativeOutgoingChunk(
+                                        buffer = buffer,
+                                        count = count,
+                                        offset = readOffset,
+                                        index = chunkIndex++,
+                                    ),
+                                )
+                                handedOff = true
+                                readOffset += count
+                            } finally {
+                                if (!handedOff) freeBuffers.offer(buffer)
+                            }
+                        }
+                    }
+                } finally {
+                    runCatching { chunkQueue.put(endChunk) }
+                }
+            }
+
+            var bytesSent = offset
+            val transferUuid = uuidBytes(task.id)
+            while (true) {
+                val chunk = chunkQueue.take()
+                if (chunk.end) break
+                try {
                     if (!connection.isReady) throw IllegalStateException("connection_lost")
-                    val count = input.read(buffer)
-                    if (count <= 0) break
-                    val payload = ByteBuffer.allocate(28 + count).order(ByteOrder.BIG_ENDIAN)
-                    payload.put(uuidBytes(task.id))
-                    payload.putInt(chunkIndex++)
-                    payload.putLong(bytesSent)
-                    payload.put(buffer, 0, count)
-                    connection.sendFrame(HingeProtocol.fileChunk, payload.array())
-                    bytesSent += count
+                    connection.sendFileChunk(
+                        transferId = transferUuid,
+                        chunkIndex = chunk.index,
+                        offset = chunk.offset,
+                        data = chunk.buffer,
+                        count = chunk.count,
+                    )
+                    if (!connection.isReady) throw IllegalStateException("connection_lost")
+                    bytesSent += chunk.count
                     HingeNativeConnectionEvents.emit(
                         mapOf(
                             "event" to "transfer_progress",
                             "taskId" to task.id,
                             "bytes" to bytesSent,
-                            "totalBytes" to file.length(),
+                            "totalBytes" to fileLength,
                         ),
                     )
+                } finally {
+                    freeBuffers.put(chunk.buffer)
                 }
+            }
+            producer.get()
+            if (digest != null) {
+                hash = digest.digest().joinToString("") { "%02x".format(it) }
             }
             connection.sendJson(
                 HingeProtocol.fileComplete,
@@ -1095,7 +1378,16 @@ class HingeNativeConnectionBroker(private val context: Context) {
             queuedTasks.remove(task.id)
             runCatching { task.taskFile.delete() }
             if (task.deleteAfter) runCatching { file.delete() }
-            diagnostics.log("transfer_completed", mapOf("task" to task.id, "bytes" to file.length()))
+            val elapsedMs = SystemClock.elapsedRealtime() - startedAtMs
+            diagnostics.log(
+                "transfer_completed",
+                mapOf(
+                    "task" to task.id,
+                    "bytes" to fileLength,
+                    "elapsedMs" to elapsedMs,
+                    "bytesPerSecond" to bytesPerSecond(fileLength, elapsedMs),
+                ),
+            )
             HingeNativeConnectionEvents.emit(
                 mapOf("event" to "transfer_completed", "taskId" to task.id),
             )
@@ -1117,6 +1409,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 dispatchPendingTasks()
             }, 5000L, TimeUnit.MILLISECONDS)
         } finally {
+            producer?.cancel(true)
             transferWaiters.remove("${connection.connectionId}:${task.id}")
             activeTasks.remove(task.id)
         }
@@ -1228,6 +1521,11 @@ class HingeNativeConnectionBroker(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun bytesPerSecond(bytes: Long, elapsedMs: Long): Long {
+        if (bytes <= 0L || elapsedMs <= 0L) return 0L
+        return (bytes * 1000L / elapsedMs).coerceAtLeast(0L)
+    }
+
     private fun skipFully(input: InputStream, target: Long) {
         var remaining = target
         while (remaining > 0) {
@@ -1322,8 +1620,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 } else {
                     Socket()
                 }
-                client.tcpNoDelay = true
-                client.keepAlive = true
+                tuneSocket(client)
                 client.connect(InetSocketAddress(address, port), 5000)
                 socket = client
                 runSession(client)
@@ -1392,7 +1689,15 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     break
                 }
                 val payload = ByteArray(payloadLength)
+                val readStarted = SystemClock.elapsedRealtimeNanos()
                 if (!readFully(input, payload)) break
+                if (type == HingeProtocol.fileChunk && payload.size >= 28) {
+                    val transferId = uuidString(payload.copyOfRange(0, 16))
+                    incomingTransfers[transferId]?.let { transfer ->
+                        transfer.readElapsedNs +=
+                            SystemClock.elapsedRealtimeNanos() - readStarted
+                    }
+                }
                 // Any valid protocol frame proves that the transport is
                 // alive. Do not require a PONG specifically: file traffic,
                 // session acknowledgements and control frames are equally
@@ -1415,6 +1720,43 @@ class HingeNativeConnectionBroker(private val context: Context) {
         fun sendFrame(type: Int, payload: ByteArray) {
             if (closed) return
             val frame = serializeFrame(type, payload)
+            sendSerializedFrame(type, frame)
+        }
+
+        /**
+         * Composes a FILE_CHUNK directly into its final frame buffer. This
+         * avoids allocating a 28-byte transfer header payload and copying it
+         * again when the protocol frame is serialized.
+         */
+        fun sendFileChunk(
+            transferId: ByteArray,
+            chunkIndex: Int,
+            offset: Long,
+            data: ByteArray,
+            count: Int,
+        ) {
+            if (closed) return
+            require(transferId.size == 16)
+            require(count in 0..data.size)
+            val payloadLength = 28 + count
+            require(payloadLength <= HingeProtocol.maxPayloadSize)
+            val frame = ByteBuffer.allocate(HingeProtocol.headerSize + payloadLength)
+                .order(ByteOrder.BIG_ENDIAN)
+            frame.put(HingeProtocol.magic)
+            frame.putShort(1)
+            frame.putShort(HingeProtocol.fileChunk.toShort())
+            frame.put(randomBytes(16))
+            frame.putLong(System.currentTimeMillis() / 1000L)
+            frame.put(sessionId)
+            frame.putInt(payloadLength)
+            frame.put(transferId)
+            frame.putInt(chunkIndex)
+            frame.putLong(offset)
+            frame.put(data, 0, count)
+            sendSerializedFrame(HingeProtocol.fileChunk, frame.array())
+        }
+
+        private fun sendSerializedFrame(type: Int, frame: ByteArray) {
             synchronized(writeLock) {
                 val stream = output
                 if (stream == null) {
@@ -1447,6 +1789,9 @@ class HingeNativeConnectionBroker(private val context: Context) {
             if (manual) manualClosed = true
             if (closed) return
             closed = true
+            incomingTransfers.values
+                .filter { it.connectionId == connectionId }
+                .forEach { logIncomingTransferTiming(it, "connection_closed") }
             reconnectSuppressed = !reconnect
             heartbeatFuture?.cancel(false)
             authFuture?.cancel(false)
@@ -1632,7 +1977,9 @@ class HingeNativeConnectionBroker(private val context: Context) {
 
         private fun identityPayload(ack: Boolean = false): JSONObject {
             val current = identity ?: NativeIdentity("", "Android 设备", "", "")
-            val capabilities = JSONArray().put(HingeProtocol.compressionCapability)
+            val capabilities = JSONArray()
+                .put(HingeProtocol.compressionCapability)
+                .put(HingeProtocol.streamingFileHashCapability)
             val proof = if (ack) createProof(remotePairingCode, peerChallenge) else ""
             if (peerPairingRequired && proof.isNotEmpty()) pairingProofSent = true
             return JSONObject().apply {

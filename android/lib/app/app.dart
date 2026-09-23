@@ -15,12 +15,14 @@ import 'personalization_screen.dart';
 import 'keep_alive_settings_screen.dart';
 import 'default_apps_screen.dart';
 import 'sms_relay_settings_screen.dart';
+import 'cloud_relay_settings_screen.dart';
 import 'notification_history_screen.dart';
 import 'navigation_components.dart';
 import 'page_components.dart';
 
 import '../core/clipboard_adapter.dart';
 import '../core/clipboard_manager.dart';
+import '../core/cloud_relay.dart';
 import '../core/constants.dart';
 import '../core/device_identity_manager.dart';
 import '../core/device_model.dart';
@@ -81,6 +83,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   late final WorkspaceDataService _dataService;
   late final WorkspaceCommandRouter _commandRouter;
   StreamSubscription<void>? _networkPolicySubscription;
+  StreamSubscription<Map<String, dynamic>>? _nativeFileTransferSubscription;
   bool _ownsDiscovery = false;
   bool _ownsTransfer = false;
   bool _ownsClipboard = false;
@@ -145,6 +148,8 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     if (Platform.isAndroid) {
       _networkPolicySubscription = _sessionManager.onNetworkPolicyChanged
           .listen((_) => unawaited(_discoveryService.refreshNetwork()));
+      _nativeFileTransferSubscription = _sessionManager.onNativeFileTransfer
+          .listen(_transferManager.handleNativeTransferEvent);
     }
     _dataService = WorkspaceDataService();
     WidgetsBinding.instance.pointerRouter.addGlobalRoute(_handleGlobalPointer);
@@ -205,6 +210,8 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     _commandRouter.dispose();
     _networkPolicySubscription?.cancel();
     _networkPolicySubscription = null;
+    _nativeFileTransferSubscription?.cancel();
+    _nativeFileTransferSubscription = null;
     if (_ownsSession) _sessionManager.dispose();
     if (_ownsDiscovery) _discoveryService.dispose();
     if (_ownsTransfer) _transferManager.dispose();
@@ -753,6 +760,8 @@ class _DevicesScreenState extends State<DevicesScreen>
   final Map<String, String> _remotePairingCodes = <String, String>{};
   final List<SharedFile> _pendingSharedFiles = <SharedFile>[];
   bool _sharedFileDispatchInFlight = false;
+  Timer? _cloudRelayPollTimer;
+  bool _cloudRelayPollInFlight = false;
 
   StorageInfo? _storage;
   bool _storageLoading = false;
@@ -889,6 +898,11 @@ class _DevicesScreenState extends State<DevicesScreen>
           );
         }
       });
+      _cloudRelayPollTimer ??= Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => unawaited(_pollCloudRelayInbox()),
+      );
+      unawaited(_pollCloudRelayInbox());
     });
     _listenerStatusTimer = Timer(const Duration(milliseconds: 800), () {
       if (mounted) setState(() {});
@@ -911,6 +925,8 @@ class _DevicesScreenState extends State<DevicesScreen>
     _listenerStatusTimer = null;
     _startupAutoConnectTimer?.cancel();
     _startupAutoConnectTimer = null;
+    _cloudRelayPollTimer?.cancel();
+    _cloudRelayPollTimer = null;
     _historicalReconnectTimer?.cancel();
     _historicalReconnectTimer = null;
     _backgroundReconnectWatchdog?.cancel();
@@ -937,6 +953,19 @@ class _DevicesScreenState extends State<DevicesScreen>
     unawaited(_enqueueSharedFilesAsync(files));
   }
 
+  bool _hasReadyShareConnection(String targetDeviceId) {
+    final active = _activeConnection;
+    if (active?.isReady == true &&
+        (targetDeviceId.isEmpty ||
+            active?.peerInfo?.deviceId == targetDeviceId ||
+            _activeDevice?.deviceId == targetDeviceId)) {
+      return true;
+    }
+    if (targetDeviceId.isEmpty) return false;
+    return widget.sessionManager.connectionForDevice(targetDeviceId)?.isReady ==
+        true;
+  }
+
   Future<void> _enqueueSharedFilesAsync(List<SharedFile> files) async {
     if (!mounted || files.isEmpty || _isDesktop) return;
 
@@ -946,27 +975,50 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (Platform.isAndroid) {
       final targetDeviceId =
           _activeDevice?.deviceId ?? _lastConnectedDevice?.deviceId ?? '';
+      if (!_hasReadyShareConnection(targetDeviceId)) {
+        final cloudSent = await _trySendSharedFilesViaCloud(
+          files,
+          targetDeviceId,
+        );
+        if (cloudSent != null) {
+          files = files
+              .where((file) => !cloudSent.contains(file.path))
+              .toList();
+          if (files.isEmpty) return;
+        }
+      }
+      var hasReadyConnection = _hasReadyShareConnection(targetDeviceId);
       var queuedCount = 0;
       final fallbackFiles = <SharedFile>[];
       for (final file in files) {
-        final queued = await widget.sessionManager.enqueueFileTransfer(
+        final enqueueResult = await widget.sessionManager.enqueueFileTransfer(
           path: file.path,
           name: file.name,
           mimeType: file.mimeType,
           targetDeviceId: targetDeviceId,
         );
-        if (queued) {
+        if (enqueueResult.accepted) {
           queuedCount++;
+          hasReadyConnection =
+              hasReadyConnection || enqueueResult.connectionReady;
         } else {
           fallbackFiles.add(file);
         }
       }
       if (queuedCount == files.length) {
-        _showMessage('已加入原生发送队列，连接恢复后自动发送');
+        _showMessage(
+          hasReadyConnection
+              ? '连接已就绪，正在发送${files.length == 1 ? ' ${files.first.name}' : ' $queuedCount 个文件'}'
+              : '已加入原生发送队列，连接恢复后自动发送',
+        );
         return;
       }
       if (queuedCount > 0 && mounted) {
-        _showMessage('部分文件已加入原生发送队列，其余文件暂存到页面队列');
+        _showMessage(
+          hasReadyConnection
+              ? '连接已就绪，正在发送 $queuedCount 个文件；其余文件暂存到页面队列'
+              : '部分文件已加入原生发送队列，其余文件暂存到页面队列',
+        );
       }
       files = fallbackFiles;
     }
@@ -974,6 +1026,108 @@ class _DevicesScreenState extends State<DevicesScreen>
     _pendingSharedFiles.addAll(files);
     if (mounted) _showMessage('已加入发送队列，连接设备后自动发送');
     unawaited(_dispatchPendingSharedFiles());
+  }
+
+  Future<Set<String>?> _trySendSharedFilesViaCloud(
+    List<SharedFile> files,
+    String targetDeviceId,
+  ) async {
+    final settings = _workspaceState.cloudRelaySettings;
+    if (!settings.isConfigured ||
+        targetDeviceId.isEmpty ||
+        !widget.trustStore.isTrusted(targetDeviceId)) {
+      return null;
+    }
+    final client = CloudRelayClient();
+    final uploadedPaths = <String>{};
+    try {
+      final available = await client.isPeerRegistered(
+        settings: settings,
+        localHingeDeviceId: widget.localIdentity.deviceId,
+        peerHingeDeviceId: targetDeviceId,
+      );
+      if (!available) return null;
+      final service = CloudRelayTransferService(client);
+      for (final file in files) {
+        await service.sendFile(
+          settings: settings,
+          localHingeDeviceId: widget.localIdentity.deviceId,
+          peerHingeDeviceId: targetDeviceId,
+          filePath: file.path,
+          fileName: file.name,
+          mimeType: file.mimeType,
+        );
+        uploadedPaths.add(file.path);
+        try {
+          final cachedFile = File(file.path);
+          if (cachedFile.existsSync()) await cachedFile.delete();
+        } catch (_) {}
+      }
+      if (mounted) {
+        _showMessage(
+          files.length == 1
+              ? '已上传 Cloud Relay，等待设备接收 ${files.first.name}'
+              : '已上传 Cloud Relay，等待设备接收 ${files.length} 个文件',
+        );
+      }
+      return uploadedPaths;
+    } catch (error) {
+      if (mounted) {
+        _showMessage(
+          uploadedPaths.isEmpty
+              ? 'Cloud Relay 暂时不可用，已回到局域网发送队列：$error'
+              : 'Cloud Relay 已上传 ${uploadedPaths.length} 个文件，其余文件回到局域网发送队列：$error',
+        );
+      }
+      return uploadedPaths.isEmpty ? null : uploadedPaths;
+    } finally {
+      client.dispose();
+    }
+  }
+
+  Future<void> _pollCloudRelayInbox() async {
+    if (!mounted || _cloudRelayPollInFlight) return;
+    final settings = _workspaceState.cloudRelaySettings;
+    if (!settings.isConfigured) return;
+    _cloudRelayPollInFlight = true;
+    final client = CloudRelayClient();
+    try {
+      final allowedSenderRelayIds = widget.trustStore
+          .getAllTrustedDevices()
+          .where((device) => device.trustState == DeviceTrustState.trusted)
+          .map(
+            (device) => CloudRelayCrypto.computeRelayDeviceId(
+              settings.relayEncryptionKey,
+              device.deviceId,
+            ),
+          )
+          .toSet();
+      final service = CloudRelayTransferService(client);
+      final paths = await service.receiveInbox(
+        settings: settings,
+        localHingeDeviceId: widget.localIdentity.deviceId,
+        downloadDirectory: widget.transferManager.downloadDirectory,
+        allowedSenderRelayDeviceIds: allowedSenderRelayIds,
+        onProgress: (_) {},
+      );
+      for (final path in paths) {
+        unawaited(widget.dataService.showFileReceivedNotification(path));
+        if (mounted) {
+          _showMessage(
+            'Cloud Relay 已收到文件：${path.split(Platform.pathSeparator).last}',
+          );
+        }
+      }
+    } catch (error) {
+      // Polling is best effort. Keep the manifest in the relay inbox so a
+      // transient network or verification failure can be retried next time.
+      if (error is! CloudRelayException && mounted) {
+        _showMessage('Cloud Relay 接收失败：$error');
+      }
+    } finally {
+      client.dispose();
+      _cloudRelayPollInFlight = false;
+    }
   }
 
   Future<void> _dispatchPendingSharedFiles() async {
@@ -4115,6 +4269,28 @@ class _DevicesScreenState extends State<DevicesScreen>
               const SizedBox(height: 16),
               Card(
                 child: ListTile(
+                  leading: Icon(Symbols.cloud_rounded, color: scheme.primary),
+                  title: const Text('Cloud Relay'),
+                  subtitle: Text(
+                    _workspaceState.cloudRelaySettings.isConfigured
+                        ? '已配置，可在局域网不可用时异步中转文件'
+                        : '可选的 Cloudflare Worker + R2 文件中转',
+                  ),
+                  trailing: const Icon(Symbols.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => CloudRelaySettingsScreen(
+                        workspaceState: _workspaceState,
+                        localIdentity: widget.localIdentity,
+                        clientVersion: AppConstants.appVersion,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
                   leading: Icon(Symbols.shield_rounded, color: scheme.primary),
                   title: const Text('保活设置'),
                   subtitle: const Text('通知、电池优化和厂商后台保护引导'),
@@ -5344,26 +5520,75 @@ class _DevicesScreenState extends State<DevicesScreen>
     BuildContext dialogContext,
   ) async {
     final connection = _activeConnection;
+    final targetDevice = _activeDevice ?? _lastConnectedDevice;
+    final cloudSettings = _workspaceState.cloudRelaySettings;
+    final canUseCloud =
+        !_isDesktop &&
+        connection == null &&
+        targetDevice?.platform == DevicePlatform.windows &&
+        targetDevice != null &&
+        widget.trustStore.isTrusted(targetDevice.deviceId) &&
+        cloudSettings.isConfigured;
     if (_isDesktop ||
-        connection == null ||
-        _activeDevice?.platform != DevicePlatform.windows) {
+        (connection == null && !canUseCloud) ||
+        (connection != null &&
+            _activeDevice?.platform != DevicePlatform.windows)) {
       _showMessage('请先在手机端连接 Windows 电脑');
       return;
     }
     Navigator.pop(dialogContext);
     _showMessage('正在发送 ${photo.name}…');
     try {
-      final bytes = await widget.dataService.loadPhotoBytes(photo.uri);
-      if (bytes == null || bytes.isEmpty) {
-        throw StateError('图片原图读取失败');
+      if (connection != null) {
+        final bytes = await widget.dataService.loadPhotoBytes(photo.uri);
+        if (bytes == null || bytes.isEmpty) {
+          throw StateError('图片原图读取失败');
+        }
+        await widget.transferManager.sendBytes(
+          connection,
+          fileName: photo.name,
+          bytes: bytes,
+          mimeType: 'image/${_photoExtension(photo.name)}',
+        );
+        if (mounted) _showMessage('已发送 ${photo.name}');
+        return;
       }
-      await widget.transferManager.sendBytes(
-        connection,
-        fileName: photo.name,
-        bytes: bytes,
-        mimeType: 'image/${_photoExtension(photo.name)}',
-      );
-      if (mounted) _showMessage('已发送 ${photo.name}');
+
+      final target = targetDevice!;
+      final client = CloudRelayClient();
+      String? cachedPath;
+      try {
+        final available = await client.isPeerRegistered(
+          settings: cloudSettings,
+          localHingeDeviceId: widget.localIdentity.deviceId,
+          peerHingeDeviceId: target.deviceId,
+        );
+        if (!available) throw StateError('目标设备尚未注册 Cloud Relay');
+        cachedPath = await widget.dataService.copyUriToCache(
+          photo.uri,
+          photo.name,
+        );
+        if (cachedPath == null || cachedPath.isEmpty) {
+          throw StateError('图片原图读取失败');
+        }
+        await CloudRelayTransferService(client).sendFile(
+          settings: cloudSettings,
+          localHingeDeviceId: widget.localIdentity.deviceId,
+          peerHingeDeviceId: target.deviceId,
+          filePath: cachedPath,
+          fileName: photo.name,
+          mimeType: 'image/${_photoExtension(photo.name)}',
+        );
+        if (mounted) _showMessage('已上传 Cloud Relay，等待 ${target.name} 接收');
+      } finally {
+        client.dispose();
+        if (cachedPath != null) {
+          try {
+            final cachedFile = File(cachedPath);
+            if (cachedFile.existsSync()) await cachedFile.delete();
+          } catch (_) {}
+        }
+      }
     } catch (error) {
       if (mounted) _showMessage('发送失败：$error');
     }

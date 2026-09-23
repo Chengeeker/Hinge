@@ -90,6 +90,49 @@ class ProtocolFrame {
     return buffer;
   }
 
+  /// Serializes a FILE_CHUNK directly into its final frame buffer. Bulk
+  /// callers avoid first allocating a 28-byte payload and then copying that
+  /// payload into another frame-sized buffer.
+  static Uint8List serializeFileChunk({
+    required Uint8List transferId,
+    required int chunkIndex,
+    required int offset,
+    required Uint8List data,
+    Uint8List? sessionId,
+  }) {
+    if (transferId.length != 16) {
+      throw ArgumentError('transferId must contain exactly 16 bytes.');
+    }
+    if (data.length + 28 > maxPayloadSize) {
+      throw ArgumentError('Payload exceeds the $maxPayloadSize byte limit.');
+    }
+
+    final payloadLength = 28 + data.length;
+    final buffer = Uint8List(headerSize + payloadLength);
+    final byteData = ByteData.sublistView(buffer);
+    final resolvedSessionId = sessionId ?? Uint8List(16);
+    if (resolvedSessionId.length != 16) {
+      throw ArgumentError('sessionId must contain exactly 16 bytes.');
+    }
+
+    buffer.setRange(0, 4, magicBytes);
+    byteData.setUint16(4, 1, Endian.big);
+    byteData.setUint16(6, MessageType.fileChunk.value, Endian.big);
+    buffer.setRange(8, 24, _generateUuidBytes());
+    byteData.setInt64(
+      24,
+      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      Endian.big,
+    );
+    buffer.setRange(32, 48, resolvedSessionId);
+    byteData.setUint32(48, payloadLength, Endian.big);
+    buffer.setRange(headerSize, headerSize + 16, transferId);
+    byteData.setUint32( headerSize + 16, chunkIndex, Endian.big);
+    byteData.setInt64(headerSize + 20, offset, Endian.big);
+    buffer.setRange(headerSize + 28, buffer.length, data);
+    return buffer;
+  }
+
   static ProtocolFrame? tryParse(Uint8List data) {
     if (data.length < headerSize) return null;
 

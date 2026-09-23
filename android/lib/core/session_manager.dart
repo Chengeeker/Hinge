@@ -49,6 +49,16 @@ class SessionPeerInfo {
   });
 }
 
+class FileEnqueueResult {
+  final bool accepted;
+  final bool connectionReady;
+
+  const FileEnqueueResult({
+    required this.accepted,
+    required this.connectionReady,
+  });
+}
+
 /// Transport-neutral session API shared by the ordinary Dart socket and the
 /// Android foreground-service transport. Keeping this surface stable lets the
 /// feature managers (files, clipboard, notifications and workspace commands)
@@ -84,6 +94,12 @@ abstract class SessionConnection {
 
   void start();
   void sendFrame(MessageType type, Uint8List payload);
+  void sendFileChunk({
+    required Uint8List transferId,
+    required int chunkIndex,
+    required int offset,
+    required Uint8List data,
+  });
   void sendJson(MessageType type, Map<String, dynamic> json);
 
   /// Closes this connection.
@@ -124,7 +140,7 @@ class _SocketSessionConnection extends SessionConnection {
   String _peerPairingChallenge = '';
   String? _pairingError;
   final bool startImmediately;
-  final List<int> _outgoingBuffer = [];
+  final List<Uint8List> _outgoingFrames = <Uint8List>[];
   bool _writeInProgress = false;
 
   @override
@@ -232,7 +248,7 @@ class _SocketSessionConnection extends SessionConnection {
           framePayload = compressed;
         }
       }
-      _outgoingBuffer.addAll(
+      _outgoingFrames.add(
         ProtocolFrame(type: frameType, payload: framePayload).serialize(),
       );
       _flushOutgoing();
@@ -242,18 +258,40 @@ class _SocketSessionConnection extends SessionConnection {
   }
 
   void _flushOutgoing() {
-    if (_writeInProgress || _disposed || _outgoingBuffer.isEmpty) return;
+    if (_writeInProgress || _disposed || _outgoingFrames.isEmpty) return;
     _writeInProgress = true;
-    final bytes = Uint8List.fromList(_outgoingBuffer);
-    _outgoingBuffer.clear();
+    final bytes = _outgoingFrames.removeAt(0);
     try {
       _socket.add(bytes);
       // Socket.add queues bytes directly; flushing every frame adds latency
       // to bulk FILE_CHUNK traffic without making a TCP socket more reliable.
       _writeInProgress = false;
-      if (_outgoingBuffer.isNotEmpty) _flushOutgoing();
+      if (_outgoingFrames.isNotEmpty) _flushOutgoing();
     } catch (_) {
       _writeInProgress = false;
+      _updateState(SessionState.disconnected);
+    }
+  }
+
+  @override
+  void sendFileChunk({
+    required Uint8List transferId,
+    required int chunkIndex,
+    required int offset,
+    required Uint8List data,
+  }) {
+    if (_disposed) return;
+    try {
+      _outgoingFrames.add(
+        ProtocolFrame.serializeFileChunk(
+          transferId: transferId,
+          chunkIndex: chunkIndex,
+          offset: offset,
+          data: data,
+        ),
+      );
+      _flushOutgoing();
+    } catch (_) {
       _updateState(SessionState.disconnected);
     }
   }
@@ -270,7 +308,10 @@ class _SocketSessionConnection extends SessionConnection {
       'manufacturer': _localIdentity.manufacturer,
       'model': _localIdentity.model,
       'platform': _platformName,
-      'capabilities': <String>[ProtocolCompression.capability],
+      'capabilities': <String>[
+        ProtocolCompression.capability,
+        ProtocolCapabilities.streamingFileHash,
+      ],
       'pairingRequired': _localPairingCode.isNotEmpty,
       'pairingChallenge': _localPairingChallenge,
       'pairingProof': '',
@@ -289,7 +330,10 @@ class _SocketSessionConnection extends SessionConnection {
       'manufacturer': _localIdentity.manufacturer,
       'model': _localIdentity.model,
       'platform': _platformName,
-      'capabilities': <String>[ProtocolCompression.capability],
+      'capabilities': <String>[
+        ProtocolCompression.capability,
+        ProtocolCapabilities.streamingFileHash,
+      ],
       'pairingRequired': _localPairingCode.isNotEmpty,
       'pairingChallenge': _localPairingChallenge,
       'pairingProof': proof,
@@ -559,7 +603,24 @@ class _NativeSessionBridge {
     });
   }
 
-  Future<bool> enqueueFile({
+  Future<void> sendFileChunk({
+    required String connectionId,
+    required Uint8List transferId,
+    required int chunkIndex,
+    required int offset,
+    required Uint8List data,
+  }) async {
+    await _methodChannel.invokeMethod<void>('nativeSendFileChunk', {
+      'connectionId': connectionId,
+      'transferId': transferId,
+      'chunkIndex': chunkIndex,
+      'offset': offset,
+      'data': data,
+      'count': data.length,
+    });
+  }
+
+  Future<FileEnqueueResult> enqueueFile({
     required String path,
     required String name,
     required String mimeType,
@@ -575,7 +636,16 @@ class _NativeSessionBridge {
         'deleteAfter': true,
       },
     );
-    return result == true;
+    if (result is Map) {
+      return FileEnqueueResult(
+        accepted: result['accepted'] == true,
+        connectionReady: result['connectionReady'] == true,
+      );
+    }
+    // Keep a conservative fallback for a service built before the status
+    // response was added: accepting the task is still safe, but readiness is
+    // unknown and must not be presented as an immediate send.
+    return FileEnqueueResult(accepted: result == true, connectionReady: false);
   }
 }
 
@@ -678,6 +748,25 @@ class _NativeSessionConnection extends SessionConnection {
       }
     }
     unawaited(_bridge.sendFrame(connectionId, frameType, framePayload));
+  }
+
+  @override
+  void sendFileChunk({
+    required Uint8List transferId,
+    required int chunkIndex,
+    required int offset,
+    required Uint8List data,
+  }) {
+    if (_disposed) return;
+    unawaited(
+      _bridge.sendFileChunk(
+        connectionId: connectionId,
+        transferId: transferId,
+        chunkIndex: chunkIndex,
+        offset: offset,
+        data: data,
+      ),
+    );
   }
 
   @override
@@ -846,6 +935,8 @@ class SessionManager {
       StreamController<SessionConnection>.broadcast();
   final StreamController<void> _networkPolicyController =
       StreamController<void>.broadcast();
+  final StreamController<Map<String, dynamic>> _nativeFileTransferController =
+      StreamController<Map<String, dynamic>>.broadcast();
   bool _isListening = false;
   String? _lastError;
 
@@ -854,6 +945,8 @@ class SessionManager {
   Stream<SessionConnection> get onConnectionCreated =>
       _connectionCreatedController.stream;
   Stream<void> get onNetworkPolicyChanged => _networkPolicyController.stream;
+  Stream<Map<String, dynamic>> get onNativeFileTransfer =>
+      _nativeFileTransferController.stream;
   bool get isListening => _isListening;
   String? get lastError => _lastError;
   int get listeningPort => _serverSocket?.port ?? _listenPort;
@@ -1081,6 +1174,15 @@ class SessionManager {
   void _handleNativeEvent(Map<String, dynamic> event) {
     final connectionId = '${event['connectionId'] ?? ''}'.trim();
     final eventType = '${event['event'] ?? ''}';
+    if (eventType == 'file_transfer_started' ||
+        eventType == 'file_transfer_progress' ||
+        eventType == 'file_transfer_failed' ||
+        eventType == 'file_received') {
+      if (!_nativeFileTransferController.isClosed) {
+        _nativeFileTransferController.add(event);
+      }
+      return;
+    }
     if (connectionId.isEmpty) {
       if (eventType == 'network_policy_changed' &&
           !_networkPolicyController.isClosed) {
@@ -1126,14 +1228,16 @@ class SessionManager {
       'flutter-${DateTime.now().microsecondsSinceEpoch}-'
       '${_connections.length}';
 
-  Future<bool> enqueueFileTransfer({
+  Future<FileEnqueueResult> enqueueFileTransfer({
     required String path,
     required String name,
     required String mimeType,
     String targetDeviceId = '',
   }) async {
     final bridge = _nativeBridge;
-    if (bridge == null) return false;
+    if (bridge == null) {
+      return const FileEnqueueResult(accepted: false, connectionReady: false);
+    }
     try {
       return await bridge.enqueueFile(
         path: path,
@@ -1142,7 +1246,7 @@ class SessionManager {
         targetDeviceId: targetDeviceId,
       );
     } catch (_) {
-      return false;
+      return const FileEnqueueResult(accepted: false, connectionReady: false);
     }
   }
 
@@ -1193,5 +1297,6 @@ class SessionManager {
     _connectionController.close();
     _connectionCreatedController.close();
     _networkPolicyController.close();
+    _nativeFileTransferController.close();
   }
 }

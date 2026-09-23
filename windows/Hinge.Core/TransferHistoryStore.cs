@@ -65,14 +65,15 @@ public sealed record TransferHistoryRecord
         State is TransferState.Offering or
             TransferState.WaitingAccept or
             TransferState.Transferring or
-            TransferState.Verifying;
+            TransferState.Verifying or
+            TransferState.AwaitingPickup;
 
     [JsonIgnore]
     public bool IsInProgress => State is
-        TransferState.Offering or
-        TransferState.WaitingAccept or
-        TransferState.Transferring or
-        TransferState.Verifying;
+            TransferState.Offering or
+            TransferState.WaitingAccept or
+            TransferState.Transferring or
+            TransferState.Verifying;
 
     [JsonIgnore]
     public bool CanDelete => !IsInProgress;
@@ -91,6 +92,7 @@ public sealed record TransferHistoryRecord
             $"正在发送 · {Math.Clamp((double)BytesTransferred / TotalBytes * 100, 0, 100):F0}%",
         TransferState.Transferring => "正在发送",
         TransferState.Verifying => "正在校验",
+        TransferState.AwaitingPickup => "已上传云中转 · 等待设备接收",
         TransferState.Completed => Direction == TransferDirection.Send ? "发送完成" : "接收完成",
         TransferState.Failed when !string.IsNullOrWhiteSpace(Error) => $"失败 · {Error}",
         TransferState.Failed => "失败",

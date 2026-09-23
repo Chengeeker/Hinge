@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -38,6 +40,9 @@ public class SessionMessageEventArgs : EventArgs
 
 public class SessionConnection : IDisposable
 {
+    // Keep enough in-flight data for the 2 MiB bulk frames on a Wi-Fi link.
+    // The OS may clamp or round this value; socket tuning remains best effort.
+    private const int BulkSocketBufferSize = 4 * 1024 * 1024;
     private static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AndroidHeartbeatInterval = TimeSpan.FromSeconds(20);
     private const int MaxMissedHeartbeats = 6;
@@ -90,6 +95,8 @@ public class SessionConnection : IDisposable
         try
         {
             _client.NoDelay = true;
+            _client.SendBufferSize = BulkSocketBufferSize;
+            _client.ReceiveBufferSize = BulkSocketBufferSize;
             _client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
         }
         catch
@@ -153,6 +160,55 @@ public class SessionConnection : IDisposable
         }
     }
 
+    /// <summary>
+    /// Sends a FILE_CHUNK without first creating a separate chunk payload.
+    /// The complete frame is rented from the shared array pool and returned
+    /// only after NetworkStream.WriteAsync has finished using it.
+    /// </summary>
+    public async Task SendFileChunkAsync(
+        Guid transferId,
+        uint chunkIndex,
+        long offset,
+        ReadOnlyMemory<byte> data,
+        CancellationToken cancellationToken = default,
+        Action<long, long, long>? timingCallback = null)
+    {
+        if (_disposed) throw new ObjectDisposedException(nameof(SessionConnection));
+
+        long frameStart = timingCallback == null ? 0 : Stopwatch.GetTimestamp();
+        int payloadLength = checked(28 + data.Length);
+        int frameLength = checked(ProtocolFrame.HeaderSize + payloadLength);
+        byte[] frame = ArrayPool<byte>.Shared.Rent(frameLength);
+        try
+        {
+            ProtocolFrame.WriteFileChunkFrame(
+                frame,
+                SessionId,
+                transferId,
+                chunkIndex,
+                offset,
+                data);
+
+            long lockStart = timingCallback == null ? 0 : Stopwatch.GetTimestamp();
+            await _sendLock.WaitAsync(cancellationToken);
+            try
+            {
+                long writeStart = timingCallback == null ? 0 : Stopwatch.GetTimestamp();
+                await _stream.WriteAsync(frame.AsMemory(0, frameLength), cancellationToken);
+                timingCallback?.Invoke(lockStart - frameStart, writeStart - lockStart,
+                    Stopwatch.GetTimestamp() - writeStart);
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(frame);
+        }
+    }
+
     public async Task SendJsonAsync<T>(MessageType type, T obj)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(obj));
@@ -166,7 +222,11 @@ public class SessionConnection : IDisposable
         manufacturer = string.Empty,
         model = string.Empty,
         platform = "windows",
-        capabilities = new[] { ProtocolCompression.Capability },
+        capabilities = new[]
+        {
+            ProtocolCompression.Capability,
+            ProtocolCompression.StreamingFileHashCapability
+        },
         pairingRequired = _localPairingCode.Length > 0,
         pairingChallenge = _localPairingChallenge,
         pairingProof = string.Empty
@@ -184,7 +244,11 @@ public class SessionConnection : IDisposable
             manufacturer = string.Empty,
             model = string.Empty,
             platform = "windows",
-            capabilities = new[] { ProtocolCompression.Capability },
+            capabilities = new[]
+            {
+                ProtocolCompression.Capability,
+                ProtocolCompression.StreamingFileHashCapability
+            },
             pairingRequired = _localPairingCode.Length > 0,
             pairingChallenge = _localPairingChallenge,
             pairingProof = proof
@@ -212,19 +276,17 @@ public class SessionConnection : IDisposable
                 if (payloadLength > ProtocolFrame.MaxPayloadSize) return;
 
                 int payloadLengthInt = (int)payloadLength;
-                byte[] fullBuffer = new byte[ProtocolFrame.HeaderSize + payloadLengthInt];
-                Buffer.BlockCopy(headerBuffer, 0, fullBuffer, 0, ProtocolFrame.HeaderSize);
-
+                byte[] payload = new byte[payloadLengthInt];
                 int payloadRead = 0;
                 while (payloadRead < payloadLengthInt)
                 {
                     int read = await _stream.ReadAsync(
-                        fullBuffer.AsMemory(ProtocolFrame.HeaderSize + payloadRead, payloadLengthInt - payloadRead), token);
+                        payload.AsMemory(payloadRead, payloadLengthInt - payloadRead), token);
                     if (read == 0) return;
                     payloadRead += read;
                 }
 
-                if (ProtocolFrame.TryParse(fullBuffer, out var frame) && frame != null)
+                if (ProtocolFrame.TryCreate(headerBuffer, payload, out var frame) && frame != null)
                 {
                     HandleIncomingFrame(frame);
                 }

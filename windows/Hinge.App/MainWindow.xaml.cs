@@ -58,6 +58,10 @@ public sealed partial class MainWindow : Window
     private const string UserSettingsRegistryPath = @"Software\Hinge";
     private const string ReceiveDirectorySettingName = "ReceiveDirectory";
     private const string PairingCodeSettingName = "PairingCode";
+    private const string CloudRelayEnabledSettingName = "CloudRelayEnabled";
+    private const string CloudRelayEndpointSettingName = "CloudRelayEndpoint";
+    private const string CloudRelayDeviceTokenSettingName = "CloudRelayDeviceToken";
+    private const string CloudRelayEncryptionKeySettingName = "CloudRelayEncryptionKey";
     private const string ShowTrayBackgroundNoticeSettingName = "ShowTrayBackgroundNotice";
     private const string StartupArgument = "--startup";
 
@@ -78,6 +82,8 @@ public sealed partial class MainWindow : Window
     private readonly BluetoothWakeAdvertiser _wakeAdvertiser;
     private readonly WorkspaceRemoteClient _workspaceRemoteClient;
     private readonly PreviewCache _previewCache;
+    private readonly CloudRelayClient _cloudRelayClient;
+    private readonly CloudRelayTransferService _cloudRelayTransferService;
     private const int InitialFileBatchSize = 200;
     private const int AdditionalFileBatchSize = 200;
     private const int ThumbnailBudgetPerBatch = 80;
@@ -117,6 +123,9 @@ public sealed partial class MainWindow : Window
     private bool _showTrayBackgroundNotice;
     private string _receiveDirectory;
     private string _localPairingCode;
+    private CloudRelaySettings _cloudRelaySettings;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _cloudRelayPollTimer;
+    private bool _cloudRelayPollInFlight;
     private readonly Dictionary<string, string> _remotePairingCodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _contentDialogGate = new(1, 1);
     private readonly SemaphoreSlim _remoteMediaReceiveGate = new(1, 1);
@@ -362,6 +371,7 @@ public sealed partial class MainWindow : Window
         _showTrayBackgroundNotice = LoadShowTrayBackgroundNotice();
         _receiveDirectory = LoadReceiveDirectory();
         _localPairingCode = LoadPairingCode();
+        _cloudRelaySettings = LoadCloudRelaySettings();
         AppNavigation.OpenPaneLength = 200;
         var initialWindowTheme = LoadWindowTheme();
         ApplyWindowTheme(initialWindowTheme);
@@ -406,6 +416,8 @@ public sealed partial class MainWindow : Window
         _wakeAdvertiser = new BluetoothWakeAdvertiser();
         _workspaceRemoteClient = new WorkspaceRemoteClient();
         _previewCache = new PreviewCache();
+        _cloudRelayClient = new CloudRelayClient();
+        _cloudRelayTransferService = new CloudRelayTransferService(_cloudRelayClient);
         App.LogLifecycle("main-window-services-created");
 
         SetHeroDevice(null);
@@ -475,6 +487,7 @@ public sealed partial class MainWindow : Window
         {
             HandleActivationArguments(arguments);
         });
+        StartCloudRelayPolling();
         App.LogLifecycle("main-window-constructor-complete");
     }
 
@@ -898,6 +911,19 @@ public sealed partial class MainWindow : Window
         page.StartWithWindows.Toggled += StartWithWindows_Toggled;
         page.SilentStartup.Toggled += SilentStartup_Toggled;
         page.StartBlePairing.Click += StartBlePairing_Click;
+        page.CloudRelayEnabled.IsOn = _cloudRelaySettings.Enabled;
+        page.CloudRelayEndpoint.Text = _cloudRelaySettings.Endpoint;
+        page.CloudRelayKey.Text = _cloudRelaySettings.RelayEncryptionKey;
+        page.CloudRelayAdminToken.Password = string.Empty;
+        page.CloudRelayStatus.Text = _cloudRelaySettings.IsConfigured
+            ? "已配置；局域网不可用时可使用异步中转。"
+            : "未配置 Cloud Relay";
+        page.CloudRelayEnabled.Toggled += CloudRelayEnabled_Toggled;
+        page.GenerateCloudRelayKey.Click += GenerateCloudRelayKey_Click;
+        page.CopyCloudRelayKey.Click += CopyCloudRelayKey_Click;
+        page.SaveCloudRelay.Click += SaveCloudRelay_Click;
+        page.RegisterCloudRelay.Click += RegisterCloudRelay_Click;
+        page.TestCloudRelay.Click += TestCloudRelay_Click;
     }
 
     private void StartBlePairing_Click(object sender, RoutedEventArgs e)
@@ -920,6 +946,127 @@ public sealed partial class MainWindow : Window
             published
                 ? "BLE 配对广播已结束；如果 Android 尚未完成绑定，请再次开启。"
                 : "Windows 未能开启 BLE 广播；仍可使用 Android 常驻通知作为手动唤醒入口。");
+    }
+
+    private void CloudRelayEnabled_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_settingsPage == null) return;
+        SaveCloudRelayFromPage();
+        _settingsPage.CloudRelayStatus.Text = _cloudRelaySettings.Enabled
+            ? "Cloud Relay 已开启；局域网连接仍然优先。"
+            : "Cloud Relay 已关闭，文件只走原有局域网与待发送队列。";
+    }
+
+    private void GenerateCloudRelayKey_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsPage == null) return;
+        _settingsPage.CloudRelayKey.Text = CloudRelayCrypto.GenerateEncryptionKey();
+        _settingsPage.CloudRelayStatus.Text = "已生成新密钥；请在另一台已信任设备导入同一密钥。";
+    }
+
+    private void CopyCloudRelayKey_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsPage == null || string.IsNullOrWhiteSpace(_settingsPage.CloudRelayKey.Text)) return;
+        var data = new DataPackage();
+        data.SetText(_settingsPage.CloudRelayKey.Text.Trim());
+        Clipboard.SetContent(data);
+        _settingsPage.CloudRelayStatus.Text = "Relay 密钥已复制到系统剪贴板。";
+    }
+
+    private void SaveCloudRelay_Click(object sender, RoutedEventArgs e)
+    {
+        SaveCloudRelayFromPage();
+        if (_settingsPage != null)
+        {
+            _settingsPage.CloudRelayStatus.Text = _cloudRelaySettings.IsConfigured
+                ? "Cloud Relay 配置已保存。"
+                : "配置已保存，但地址、设备 Token 或密钥仍不完整。";
+        }
+    }
+
+    private void SaveCloudRelayFromPage()
+    {
+        if (_settingsPage == null) return;
+        try
+        {
+            string key = _settingsPage.CloudRelayKey.Text.Trim();
+            if (key.Length > 0) CloudRelayCrypto.DecodeKey(key);
+            _cloudRelaySettings = new CloudRelaySettings
+            {
+                Enabled = _settingsPage.CloudRelayEnabled.IsOn,
+                Endpoint = _settingsPage.CloudRelayEndpoint.Text.Trim(),
+                DeviceToken = _cloudRelaySettings.DeviceToken,
+                RelayEncryptionKey = key
+            };
+            SaveCloudRelaySettings(_cloudRelaySettings);
+        }
+        catch (Exception exception)
+        {
+            _settingsPage.CloudRelayStatus.Text = $"Relay 密钥无效：{exception.Message}";
+        }
+    }
+
+    private async void RegisterCloudRelay_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsPage == null) return;
+        string endpoint = _settingsPage.CloudRelayEndpoint.Text.Trim();
+        string adminToken = _settingsPage.CloudRelayAdminToken.Password.Trim();
+        string key = _settingsPage.CloudRelayKey.Text.Trim();
+        if (endpoint.Length == 0 || adminToken.Length == 0 || key.Length == 0)
+        {
+            _settingsPage.CloudRelayStatus.Text = "注册前请填写 Worker 地址、部署 Token 和 Relay 密钥。";
+            return;
+        }
+
+        try
+        {
+            string relayDeviceId = CloudRelayCrypto.ComputeRelayDeviceId(key, _localIdentity.DeviceId);
+            _settingsPage.CloudRelayStatus.Text = "正在注册此设备…";
+            var credentials = await _cloudRelayClient.RegisterAsync(
+                endpoint,
+                adminToken,
+                relayDeviceId,
+                _localIdentity.Name,
+                "windows",
+                Constants.AppVersion);
+            _cloudRelaySettings = new CloudRelaySettings
+            {
+                Enabled = true,
+                Endpoint = endpoint,
+                DeviceToken = credentials.DeviceToken,
+                RelayEncryptionKey = key
+            };
+            SaveCloudRelaySettings(_cloudRelaySettings);
+            _settingsPage.CloudRelayEnabled.IsOn = true;
+            _settingsPage.CloudRelayAdminToken.Password = string.Empty;
+            _settingsPage.CloudRelayStatus.Text = "设备已注册；部署 Token 已从输入框清除。";
+        }
+        catch (Exception exception)
+        {
+            _settingsPage.CloudRelayStatus.Text = $"注册失败：{exception.Message}";
+        }
+    }
+
+    private async void TestCloudRelay_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsPage == null) return;
+        string endpoint = _settingsPage.CloudRelayEndpoint.Text.Trim();
+        if (endpoint.Length == 0)
+        {
+            _settingsPage.CloudRelayStatus.Text = "请先填写 Worker 地址。";
+            return;
+        }
+        try
+        {
+            bool healthy = await _cloudRelayClient.CheckHealthAsync(endpoint);
+            _settingsPage.CloudRelayStatus.Text = healthy
+                ? "Worker 可用。"
+                : "Worker 返回了非成功状态。";
+        }
+        catch (Exception exception)
+        {
+            _settingsPage.CloudRelayStatus.Text = $"测试失败：{exception.Message}";
+        }
     }
 
     private void ConfigurePersonalizationPage(PersonalizationPage page)
@@ -2526,6 +2673,35 @@ public sealed partial class MainWindow : Window
         WriteUserSetting(PairingCodeSettingName, normalized.Length == 0 ? null : normalized);
     }
 
+    private static CloudRelaySettings LoadCloudRelaySettings()
+    {
+        bool enabled = ReadUserSetting(CloudRelayEnabledSettingName) is int enabledValue && enabledValue != 0;
+        string endpoint = ReadUserSetting(CloudRelayEndpointSettingName) as string ?? string.Empty;
+        string deviceToken = ReadUserSetting(CloudRelayDeviceTokenSettingName) as string ?? string.Empty;
+        string encryptionKey = ReadUserSetting(CloudRelayEncryptionKeySettingName) as string ?? string.Empty;
+        return new CloudRelaySettings
+        {
+            Enabled = enabled,
+            Endpoint = endpoint.Trim(),
+            DeviceToken = deviceToken.Trim(),
+            RelayEncryptionKey = encryptionKey.Trim()
+        };
+    }
+
+    private static void SaveCloudRelaySettings(CloudRelaySettings settings)
+    {
+        WriteUserSetting(CloudRelayEnabledSettingName, settings.Enabled ? 1 : 0);
+        WriteUserSetting(
+            CloudRelayEndpointSettingName,
+            string.IsNullOrWhiteSpace(settings.Endpoint) ? null : settings.Endpoint.Trim());
+        WriteUserSetting(
+            CloudRelayDeviceTokenSettingName,
+            string.IsNullOrWhiteSpace(settings.DeviceToken) ? null : settings.DeviceToken.Trim());
+        WriteUserSetting(
+            CloudRelayEncryptionKeySettingName,
+            string.IsNullOrWhiteSpace(settings.RelayEncryptionKey) ? null : settings.RelayEncryptionKey.Trim());
+    }
+
     private static string LoadWindowTheme()
     {
         try
@@ -3072,7 +3248,11 @@ public sealed partial class MainWindow : Window
 
     private void OnTransferProgress(object? sender, TransferProgress progress)
     {
-        DispatcherQueue.TryEnqueue(() => StatusText.Text = $"正在传输：{progress.FileName} · {progress.Percentage:F0}%");
+        var rate = progress.BytesPerSecond > 0
+            ? $" · {FormatBytes((long)progress.BytesPerSecond)}/s"
+            : string.Empty;
+        DispatcherQueue.TryEnqueue(() =>
+            StatusText.Text = $"正在传输：{progress.FileName} · {progress.Percentage:F0}%{rate}");
     }
 
     private void OnFileReceived(object? sender, string path)
@@ -5967,9 +6147,10 @@ public sealed partial class MainWindow : Window
     private async Task PickAndSendFileAsync()
     {
         var connection = GetConnectedConnection();
-        if (connection == null)
+        var cloudDeviceId = connection?.RemoteDeviceId ?? GetPreferredTrustedDeviceId();
+        if (connection == null && cloudDeviceId == null)
         {
-            await ShowDialogAsync("无法发送文件", "请先在“附近设备”中连接一台设备。", false);
+            await ShowDialogAsync("无法发送文件", "请先连接或信任一台设备，并在设置中配置 Cloud Relay。", false);
             return;
         }
 
@@ -5981,15 +6162,26 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var result = await SendFilesToConnectionAsync(
-                connection,
-                new[] { file.Path },
-                string.Empty,
-                CancellationToken.None,
-                showFailureDialog: true);
+            var result = connection != null
+                ? await SendFilesToConnectionAsync(
+                    connection,
+                    new[] { file.Path },
+                    string.Empty,
+                    CancellationToken.None,
+                    showFailureDialog: true)
+                : await SendFilesViaCloudAsync(
+                    cloudDeviceId!,
+                    new[] { file.Path },
+                    CancellationToken.None);
             if (result is { Completed: > 0 })
             {
-                StatusText.Text = $"文件已发送：{file.Name}";
+                StatusText.Text = connection != null
+                    ? $"文件已发送：{file.Name}"
+                    : $"文件已上传 Cloud Relay，等待设备接收：{file.Name}";
+            }
+            else if (result == null)
+            {
+                await ShowDialogAsync("无法发送文件", "当前没有可用的局域网连接，且 Cloud Relay 尚未完成配置或目标设备未注册。", false);
             }
         }
         catch (Exception exception)
@@ -6034,19 +6226,25 @@ public sealed partial class MainWindow : Window
         CancellationToken cancellationToken)
     {
         var connection = GetConnectedConnection();
-        if (connection == null)
+        var cloudDeviceId = connection?.RemoteDeviceId ?? GetPreferredTrustedDeviceId();
+        if (connection == null && cloudDeviceId == null)
         {
-            await ShowDialogAsync("无法发送文件", "请先在首页连接一台 Android 设备。", false);
+            await ShowDialogAsync("无法发送文件", "请先连接或信任一台 Android 设备，并在设置中配置 Cloud Relay。", false);
             return;
         }
 
         var destination = args.DestinationPath.Trim('/');
-        var result = await SendFilesToConnectionAsync(
-            connection,
-            args.FilePaths,
-            destination,
-            cancellationToken,
-            showFailureDialog: true);
+        var result = connection != null
+            ? await SendFilesToConnectionAsync(
+                connection,
+                args.FilePaths,
+                destination,
+                cancellationToken,
+                showFailureDialog: true)
+            : await SendFilesViaCloudAsync(
+                cloudDeviceId!,
+                args.FilePaths,
+                cancellationToken);
 
         if (result != null && result.Completed > 0)
         {
@@ -6091,34 +6289,32 @@ public sealed partial class MainWindow : Window
             if (connection == null)
             {
                 connection = await TryWakeDeviceAsync(request.DeviceId, cancellation.Token);
-                if (connection == null)
-                {
-                    try
-                    {
-                        _trayManager.ShowNotification(
-                            "Hinge",
-                            "目标设备未在唤醒窗口内恢复连接，文件已加入待发送队列；请点击手机 Hinge 常驻通知，连接恢复后会自动发送。");
-                    }
-                    catch (ArgumentException exception)
-                    {
-                        _trayManager.ShowNotification("Hinge", exception.Message);
-                    }
-                    return;
-                }
             }
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(25));
-            var result = await SendFilesToConnectionAsync(
-                connection,
-                pending.FilePaths,
-                "Download/Hinge",
-                timeout.Token,
-                showFailureDialog: false,
-                pendingId: pending.Id);
+            var result = connection != null
+                ? await SendFilesToConnectionAsync(
+                    connection,
+                    pending.FilePaths,
+                    "Download/Hinge",
+                    timeout.Token,
+                    showFailureDialog: false,
+                    pendingId: pending.Id)
+                : await SendFilesViaCloudAsync(
+                    request.DeviceId,
+                    pending.FilePaths,
+                    timeout.Token,
+                    pending.Id);
             if (result == null)
             {
-                _pendingFileSendStore.Remove(pending.Id);
+                MarkPendingTransferHistoryWaiting(
+                    pending.Id,
+                    pending.FilePaths,
+                    "目标设备未连接，Cloud Relay 尚未配置或设备尚未注册。");
+                _trayManager.ShowNotification(
+                    "Hinge",
+                    "目标设备未恢复连接，文件已保留在待发送队列；可配置 Cloud Relay 进行离线中转。" );
                 return;
             }
 
@@ -6242,11 +6438,9 @@ public sealed partial class MainWindow : Window
                 var connection = _sessionManager.ConnectionForDevice(pending.DeviceId);
                 if (connection?.State == SessionState.Suspended)
                 {
-                    // A suspended mobile session is waiting for the next
-                    // wake window; do not consume the durable queue here.
-                    continue;
+                    connection = null;
                 }
-                if (connection == null) continue;
+                if (connection == null && !_cloudRelaySettings.IsConfigured) continue;
 
                 var existingPaths = pending.FilePaths
                     .Where(File.Exists)
@@ -6265,16 +6459,21 @@ public sealed partial class MainWindow : Window
                     _pendingSendCancellations[pending.Id] = cancellation;
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
                     timeout.CancelAfter(TimeSpan.FromSeconds(25));
-                    var result = await SendFilesToConnectionAsync(
-                        connection,
-                        existingPaths,
-                        "Download/Hinge",
-                        timeout.Token,
-                        showFailureDialog: false,
-                        pendingId: pending.Id);
+                    var result = connection != null
+                        ? await SendFilesToConnectionAsync(
+                            connection,
+                            existingPaths,
+                            "Download/Hinge",
+                            timeout.Token,
+                            showFailureDialog: false,
+                            pendingId: pending.Id)
+                        : await SendFilesViaCloudAsync(
+                            pending.DeviceId,
+                            existingPaths,
+                            timeout.Token,
+                            pending.Id);
                     if (result == null)
                     {
-                        _pendingFileSendStore.Remove(pending.Id);
                         continue;
                     }
 
@@ -6349,6 +6548,246 @@ public sealed partial class MainWindow : Window
         IReadOnlyList<string> Failures,
         string DestinationLabel,
         IReadOnlyList<string> CompletedPaths);
+
+    private void StartCloudRelayPolling()
+    {
+        _cloudRelayPollTimer = DispatcherQueue.CreateTimer();
+        _cloudRelayPollTimer.Interval = TimeSpan.FromSeconds(30);
+        _cloudRelayPollTimer.Tick += (_, _) => _ = PollCloudRelayAsync();
+        _cloudRelayPollTimer.Start();
+        _ = PollCloudRelayAsync();
+    }
+
+    private async Task PollCloudRelayAsync()
+    {
+        if (_cloudRelayPollInFlight || !_cloudRelaySettings.IsConfigured) return;
+        _cloudRelayPollInFlight = true;
+        try
+        {
+            var allowedSenderRelayIds = _trustStore.GetAllTrustedDevices()
+                .Where(device => device.TrustState == TrustState.Trusted)
+                .Select(device => CloudRelayCrypto.ComputeRelayDeviceId(
+                    _cloudRelaySettings.RelayEncryptionKey,
+                    device.DeviceId))
+                .ToHashSet(StringComparer.Ordinal);
+            var received = await _cloudRelayTransferService.ReceiveInboxAsync(
+                _cloudRelaySettings,
+                _localIdentity.DeviceId,
+                _receiveDirectory,
+                cancellationToken: CancellationToken.None,
+                allowedSenderRelayDeviceIds: allowedSenderRelayIds);
+            foreach (var item in received)
+            {
+                string senderDeviceId = FindTrustedDeviceIdByRelayId(
+                    item.SenderRelayDeviceId) ?? string.Empty;
+                var trusted = string.IsNullOrWhiteSpace(senderDeviceId)
+                    ? null
+                    : _trustStore.GetDevice(senderDeviceId);
+                _transferHistoryStore.Upsert(new TransferHistoryRecord
+                {
+                    Id = $"cloud-receive-{item.TransferId}",
+                    TransferId = item.TransferId,
+                    DeviceId = senderDeviceId,
+                    DeviceName = trusted?.Name ?? "Cloud Relay 设备",
+                    FileName = item.FileName,
+                    FilePath = item.FilePath,
+                    Direction = TransferDirection.Receive,
+                    State = TransferState.Completed,
+                    BytesTransferred = item.FileSize,
+                    TotalBytes = item.FileSize,
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+                _trayManager.ShowNotification("Hinge", $"Cloud Relay 已收到文件：{item.FileName}");
+            }
+
+            var receipts = await _cloudRelayClient.GetReceiptsAsync(
+                _cloudRelaySettings,
+                _localIdentity.DeviceId);
+            foreach (var receipt in receipts)
+            {
+                var record = _transferHistoryStore.GetAll().FirstOrDefault(item =>
+                    string.Equals(item.TransferId, receipt.TransferId, StringComparison.OrdinalIgnoreCase));
+                if (record != null && record.State == TransferState.AwaitingPickup)
+                {
+                    _transferHistoryStore.Upsert(record with
+                    {
+                        State = TransferState.Completed,
+                        BytesTransferred = record.TotalBytes,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                        Error = string.Empty
+                    });
+                }
+                await _cloudRelayClient.DeleteReceiptAsync(
+                    _cloudRelaySettings,
+                    _localIdentity.DeviceId,
+                    receipt.TransferId);
+            }
+
+            if (received.Count > 0 || receipts.Count > 0)
+            {
+                DispatcherQueue.TryEnqueue(RefreshTransferHistory);
+            }
+        }
+        catch (CloudRelayException)
+        {
+            // The relay is optional and may be temporarily unreachable. Keep
+            // manifests/receipts on the server for the next poll.
+        }
+        catch
+        {
+            // A malformed or partially downloaded cloud item must not stop
+            // the WinUI connection and tray services.
+        }
+        finally
+        {
+            _cloudRelayPollInFlight = false;
+        }
+    }
+
+    private string? FindTrustedDeviceIdByRelayId(string? relayDeviceId)
+    {
+        if (string.IsNullOrWhiteSpace(relayDeviceId)) return null;
+        foreach (var trusted in _trustStore.GetAllTrustedDevices())
+        {
+            try
+            {
+                if (string.Equals(
+                        CloudRelayCrypto.ComputeRelayDeviceId(
+                            _cloudRelaySettings.RelayEncryptionKey,
+                            trusted.DeviceId),
+                        relayDeviceId,
+                        StringComparison.Ordinal))
+                {
+                    return trusted.DeviceId;
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private async Task<TransferBatchResult?> SendFilesViaCloudAsync(
+        string deviceId,
+        IEnumerable<string> filePaths,
+        CancellationToken cancellationToken,
+        string? pendingId = null)
+    {
+        if (!_cloudRelaySettings.IsConfigured || !_trustStore.IsTrusted(deviceId)) return null;
+        bool registered;
+        try
+        {
+            registered = await _cloudRelayClient.IsPeerRegisteredAsync(
+                _cloudRelaySettings,
+                _localIdentity.DeviceId,
+                deviceId,
+                cancellationToken);
+        }
+        catch
+        {
+            return null;
+        }
+        if (!registered) return null;
+
+        var paths = filePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (paths.Length == 0) return null;
+
+        var failures = new List<string>();
+        var completedPaths = new List<string>();
+        int completed = 0;
+        foreach (var path in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var fileInfo = new FileInfo(path);
+            var trusted = _trustStore.GetDevice(deviceId);
+            var history = FindTransferHistory(pendingId, path) ?? new TransferHistoryRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                DeviceId = deviceId,
+                DeviceName = trusted?.Name ?? "Cloud Relay 设备",
+                FileName = fileInfo.Name,
+                FilePath = path,
+                PendingId = pendingId ?? string.Empty,
+                Direction = TransferDirection.Send,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            history = history with
+            {
+                State = TransferState.Transferring,
+                BytesTransferred = 0,
+                TotalBytes = fileInfo.Length,
+                Error = string.Empty,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            _transferHistoryStore.Upsert(history);
+            RefreshTransferHistory();
+
+            var progressReporter = new Progress<TransferProgress>(progress =>
+            {
+                _transferHistoryStore.Upsert(history with
+                {
+                    TransferId = progress.TransferId,
+                    State = progress.State,
+                    BytesTransferred = progress.BytesTransferred,
+                    TotalBytes = progress.TotalBytes,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+                RefreshTransferHistory();
+            });
+            try
+            {
+                string transferId = await _cloudRelayTransferService.SendFileAsync(
+                    _cloudRelaySettings,
+                    _localIdentity.DeviceId,
+                    deviceId,
+                    path,
+                    progress: progressReporter,
+                    cancellationToken: cancellationToken);
+                _transferHistoryStore.Upsert(history with
+                {
+                    TransferId = transferId,
+                    State = TransferState.AwaitingPickup,
+                    BytesTransferred = fileInfo.Length,
+                    TotalBytes = fileInfo.Length,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+                RefreshTransferHistory();
+                completed++;
+                completedPaths.Add(path);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _transferHistoryStore.Upsert(history with
+                {
+                    State = TransferState.Cancelled,
+                    Error = "用户取消或发送超时",
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+                RefreshTransferHistory();
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _transferHistoryStore.Upsert(history with
+                {
+                    State = TransferState.Failed,
+                    Error = exception.Message,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                });
+                RefreshTransferHistory();
+                failures.Add($"{fileInfo.Name}：{exception.Message}");
+            }
+        }
+
+        return new TransferBatchResult(completed, failures, "Cloud Relay", completedPaths);
+    }
 
     private async Task<TransferBatchResult?> SendFilesToConnectionAsync(
         SessionConnection connection,
@@ -6675,6 +7114,17 @@ public sealed partial class MainWindow : Window
     private static string NormalizeExplorerDeviceName(string? name) =>
         string.IsNullOrWhiteSpace(name) ? "已配对设备" : name.Trim();
 
+    private string? GetPreferredTrustedDeviceId()
+    {
+        return _trustStore.GetAllTrustedDevices()
+            .Where(device => device.TrustState == TrustState.Trusted &&
+                !string.IsNullOrWhiteSpace(device.DeviceId))
+            .OrderByDescending(device => device.LastSeen)
+            .ThenByDescending(device => device.PairedAt)
+            .Select(device => device.DeviceId)
+            .FirstOrDefault();
+    }
+
     private SessionConnection? GetConnectedConnection()
     {
         if (_activeConnection?.IsSessionReady == true &&
@@ -6757,6 +7207,8 @@ public sealed partial class MainWindow : Window
         _discoveryService.Dispose();
         _sessionManager.Dispose();
         _transferManager.Dispose();
+        _cloudRelayPollTimer?.Stop();
+        _cloudRelayClient.Dispose();
         _clipboardManager.Dispose();
         _notificationManager.Dispose();
         _remoteInputManager.Dispose();

@@ -12,7 +12,7 @@ Hinge Protocol 采用分层解耦架构：
 ```text
 +-----------------------------------------------------------------+
 |                  应用层载荷 (Application Payload)                 |
-|   JSON 控制信令 / 16B 遥控事件 / 20B 视频流 / 28B 64KB 文件块     |
+|   JSON 控制信令 / 16B 遥控事件 / 20B 视频流 / 28B 2MiB 文件块    |
 +-----------------------------------------------------------------+
 |                  传输帧层 (Transport Frame Layer)                |
 |             严格 52 字节固定二进制帧头 (Fixed 52-Byte Header)     |
@@ -89,7 +89,7 @@ Hinge Protocol 采用分层解耦架构：
 | `0x0030` | `FILE_OFFER` | JSON | Transfer | 文件发送邀约与哈希元数据 |
 | `0x0031` | `FILE_ACCEPT` | JSON | Transfer | 接受文件邀约并指定断点 offset |
 | `0x0032` | `FILE_REJECT` | JSON | Transfer | 拒绝接收文件 |
-| `0x0033` | `FILE_CHUNK` | Binary | Transfer | 28B子头 + 64KB标准分块流 |
+| `0x0033` | `FILE_CHUNK` | Binary | Transfer | 28B子头 + 默认 2MiB 分块流；接收端兼容更小旧分块 |
 | `0x0034` | `FILE_COMPLETE` | JSON | Transfer | 文件传输完毕确认与哈希对齐 |
 | `0x0035` | `SYNC_MANIFEST_REQ` | JSON | Sync | 请求目录同步清单 |
 | `0x0036` | `SYNC_MANIFEST_RESP`| JSON | Sync | 应答目录同步清单 |
@@ -126,6 +126,20 @@ EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
 8 字节封装头确实小于原始载荷；文件分块、屏幕流、握手和心跳不走该路径。
 解压后的长度必须等于 `UncompressedLength`，并且不能超过 16 MiB。
 
+### 3.2.1 文件流式校验能力
+
+`SESSION_INIT` 和 `SESSION_ACK` 的 `capabilities` 数组可以声明
+`streaming-file-hash-v1`。双方都声明该能力时，新的、从 offset 0 开始的文件传输可以在
+`FILE_OFFER.sha256` 中发送空字符串，并在发送 `FILE_CHUNK` 的同时计算 SHA-256，最后由
+`FILE_COMPLETE.sha256` 提交完整文件摘要。接收端对连续到达的块也可以边写入边校验。
+
+如果任一端没有声明该能力，发送端必须在 `FILE_OFFER` 前计算并填写完整 SHA-256，保持旧版
+客户端的行为。续传（`FILE_ACCEPT.offset > 0`）仍需要完整文件摘要；接收端发现块 offset
+不连续时必须放弃增量摘要并回退到完整临时文件流式校验。
+
+该能力只改变摘要计算时机，不改变 `FILE_ACCEPT`、`FILE_CHUNK` 子头、`FILE_COMPLETE` 或
+旧版互操作语义；BLE 仍然只是唤醒通道，不能承载文件数据。
+
 ### 3.1 工作区工具命令 (`TOOL_COMMAND` / `TOOL_RESULT`)
 
 工作区数据读取和双端配对使用请求-响应 JSON，不新增传输层。请求格式：
@@ -159,11 +173,15 @@ EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
 ## 4. 专用二进制载荷子规范 (Sub-Payload Specifications)
 
 ### 4.1 文件传输分块 (`FILE_CHUNK`, `0x0033`)
-- **固定分块大小**：默认标准分块为 **64KB (65,536 Bytes)**。
+- **默认分块大小**：当前发送端默认使用 **2MiB (2,097,152 Bytes)**；协议最大 payload
+  为 16MiB，因此实现不得发送超过该上限的单帧。接收端必须按 payload length 接收，兼容
+  旧客户端的 64KiB、512KiB 等更小分块。
 - **28 字节二进制子头**：
   ```text
-  TransferId (16B UUID) + ChunkIndex (4B uint32) + Offset (8B uint64) + ChunkData (0~65536B)
+  TransferId (16B UUID) + ChunkIndex (4B uint32) + Offset (8B int64) + ChunkData (0~2MiB default)
   ```
+- 发送端可以使用有界 read-ahead，但不得因为网络慢而无限制缓存文件数据；当前 Windows 和
+  Android 原生发送端使用 3 个 2MiB 缓冲块。
 
 ### 4.2 无线遥控事件 (`REMOTE_INPUT`, `0x0050`)
 - **16 字节定长事件**：

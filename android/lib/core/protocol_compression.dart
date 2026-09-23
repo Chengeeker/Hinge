@@ -3,6 +3,10 @@ import 'dart:typed_data';
 
 import 'protocol_frame.dart';
 
+class ProtocolCapabilities {
+  static const String streamingFileHash = 'streaming-file-hash-v1';
+}
+
 /// Optional compression for large JSON/control payloads.
 ///
 /// The envelope matches windows/Hinge.Core/ProtocolCompression.cs:

@@ -3,16 +3,17 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前版本：`v1.2.0`（Android `1.2.0+79`，Windows `1.2.0.0`）
+- 当前版本：`v1.2.4`（Android `1.2.4+83`，Windows `1.2.4.0`）
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
 
-Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默认发生在同一局域网中：Windows 端负责桌面文件管理和系统集成，Android 端负责手机数据、后台连接与移动端工作区。
+Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件传输默认发生在同一局域网中；用户可以自行部署可选的 Cloud Relay，把已经信任的设备之间的文件异步放入自己的 Cloudflare Worker + R2。Windows 端负责桌面文件管理和系统集成，Android 端负责手机数据、后台连接与移动端工作区。
 
 项目的设计原则是：
 
 - LAN-first：局域网直连优先，不把用户数据上传到项目服务器；
+- 可选 Cloud Relay：只有用户主动配置并开启自己的 Worker 后，LAN 不可用时才上传加密文件；Hinge 不托管 Relay，也不支持互联网首次配对；
 - Native-first：Windows 使用 WinUI 3 / Windows App SDK，媒体文件交给 Windows 默认关联应用打开；Android 使用 Flutter UI 和 Android 原生桥接；
 - 事实优先：Mock、回环测试和真实手机验收分开记录，不把自动化测试当作所有机型都已验证。
 
@@ -24,7 +25,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - 已知设备快速重连、心跳和断线状态恢复；已经建立过会话且仍在信任库中的设备，在更新或短暂断线后重新上线时自动恢复连接，新设备仍需手动连接；
 - 文本、文件和剪贴板同步；
 - 前台服务、通知和厂商后台保活设置引导；
-- Android 支持低功耗待命，Windows 右键发送时可通过 BLE Companion presence 请求恢复局域网连接；BLE 只负责唤醒，不承载文件内容，自动唤醒不可用时由 Android 常驻通知作为人工兜底；
+- Android 支持低功耗待命，Windows 右键发送时可通过 BLE Companion presence 请求恢复局域网连接；BLE 只负责唤醒，不承载文件内容，自动唤醒不可用时由 Android 常驻通知作为人工兜底；Android 系统分享在已有会话可用时直接进入发送，断联时才显示待发送队列；
 - 统一的跨端协议、传输模型和测试基线。
 
 ### Android
@@ -51,6 +52,9 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - 文件管理支持最近文件、图片、视频、音频、文档、微信相册、QQ 相册和手机存储；
 - 文件分类不只依赖手机厂商返回的 MIME：对常见文档、压缩包、安装包和媒体扩展名做统一回退识别，未知类型在需要时再读取文件头；
 - 大型工作区/同步控制数据支持双方协商的 ZLIB 压缩，旧版本会自动回退到普通控制帧；
+- 文件传输沿用 LAN TCP 帧协议，双方支持时使用边读边校验的 SHA-256、3 个 2 MiB 缓冲块有限 read-ahead 和最终帧直写，减少传输前整文件预扫描、重复大块复制和磁盘/网络空转；旧版本对端自动回退到原有预校验路径；
+- Cloud Relay 可在设置中单独开启：使用用户自建的 Cloudflare Worker + 私有 R2 和独立的 [Hinge-Relay](https://github.com/Chengeeker/Hinge-Relay)，客户端在上传前用 AES-256-GCM 加密元数据和每个 8 MiB 文件分块；局域网恢复前，文件会显示为“等待设备接收”；
+- Windows 首页传输状态会显示测得的有效字节速率，Android 原生连接诊断会记录耗时、字节数和吞吐，方便区分 Wi-Fi、手机写盘与协议处理瓶颈；
 - 宫格/列表视图、类型筛选、排序、多选、保存、删除、目录进入/返回和分页加载；
 - 相册和图片缩略图按批次加载，首次只取前 200 项，继续滚动时再读取后续内容；
 - 双击媒体时按需读取图片尺寸、EXIF 相机信息，或音视频时长、分辨率、码率，并将结果反馈到 Windows 状态栏；
@@ -67,7 +71,7 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 - 手机投屏没有作为本版本的可用功能交付，Windows 端不会显示虚假的投屏画面；
 - 通知回复、真实屏幕编码/解码和 OCR 仍属于后续原生能力接入范围；
 - Android 厂商的省电、锁屏和后台回收策略无法由应用完全绕过，需要用户按系统引导放行；
-- 不保证普通第三方 Android 应用在所有厂商设备上锁屏静置数小时仍保持同一条 TCP；BLE Companion 自动唤醒也受 Windows 蓝牙适配器、Android 系统关联和厂商后台策略影响；
+- 不保证普通第三方 Android 应用在所有厂商设备上锁屏静置数小时仍保持同一条 TCP；BLE Companion 自动唤醒也受 Windows 蓝牙适配器、Android 系统关联和厂商后台策略影响；Cloud Relay 也不保证 Android 被系统完全停止时立即下载；
 - 大型微信/QQ 媒体库、文档目录、多网卡、弱网和不同厂商后台策略仍需要更多真实设备验收。
 
 ## 安装
@@ -81,6 +85,12 @@ Hinge 不依赖账号和云端中转。设备发现、会话和文件传输默�
 推荐下载 `Hinge-Setup.exe`。这是自包含 EXE 安装器，安装时可以选择目标目录；为了注册 Windows 11 第一层资源管理器菜单，首次安装会请求一次管理员确认，仅把随安装器提供的 Hinge 公钥证书加入本机受信任人，签名私钥不会随包分发。
 
 若要启用右键发送时的 BLE 自动唤醒，请在 Hinge 设置中开始 BLE 配对广播，并在 Android“保活设置”中完成 Companion 关联。BLE 自动唤醒不是文件传输通道；Windows 和 Android 仍通过局域网 TCP 传输文件，BLE 不可用时可使用 Android 常驻通知作为兜底。
+
+### 可选 Cloud Relay
+
+Cloud Relay 不是 Hinge 官方服务。需要先把 [`Hinge-Relay`](https://github.com/Chengeeker/Hinge-Relay) 导入自己的 GitHub 仓库，在 Cloudflare Worker 中绑定私有 R2、设置 `RELAY_ADMIN_TOKEN` 后部署；再在 Windows 和 Android 的 Cloud Relay 设置中填写 Worker 地址、使用同一个 Relay 密钥，并分别注册两个已经在 Hinge 中信任的设备。Relay 密钥不会上传 Worker，文件名、大小和摘要也在客户端加密后才进入 R2。
+
+Cloud Relay 只做异步中转：当 LAN 会话可用时仍走原有 TCP；没有 LAN 时，发送端上传后等待接收端轮询，Android 被系统完全停止时不会承诺即时唤醒。部署、API、更新同步和密钥边界见独立项目的 [README](https://github.com/Chengeeker/Hinge-Relay#readme) 与 [协议说明](protocol/cloud-relay.md)。
 
 另外提供：
 
@@ -145,6 +155,8 @@ tests/                   跨模块测试资料
 - 开发文档：本机统一入口为 `D:\App\开发文档\Hinge.md`，不随仓库发布；
 - [第三方许可证登记](THIRD_PARTY_LICENSES.md)：实际随项目发布或参与构建的依赖清单；
 - [协议说明](protocol/protocol.md)：跨端帧和传输约定；
+- [Cloud Relay 协议说明](protocol/cloud-relay.md)：独立 Worker/R2 API、端到端加密格式和信任边界；
+- [Hinge-Relay 独立项目](https://github.com/Chengeeker/Hinge-Relay)：部署、GitHub 同步和 Cloudflare 配置；
 - [安全策略](SECURITY.md)：局域网边界、报告问题和敏感配置；
 - [更新日志](CHANGELOG.md)：面向用户的版本变更。
 

@@ -14,6 +14,13 @@ namespace Hinge.Core;
 public static class ProtocolCompression
 {
     public const string Capability = "control-compression-zlib-v1";
+    /// <summary>
+    /// The sender may omit the FILE_OFFER digest for a fresh transfer and
+    /// provide it in FILE_COMPLETE after hashing the bytes as they are read.
+    /// Older peers do not advertise this capability and keep the pre-scan
+    /// path for compatibility.
+    /// </summary>
+    public const string StreamingFileHashCapability = "streaming-file-hash-v1";
     public const byte EnvelopeVersion = 1;
     public const int EnvelopeHeaderSize = 8;
     private const int MinimumPayloadSize = 2048;

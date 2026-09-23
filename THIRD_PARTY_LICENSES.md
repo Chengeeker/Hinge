@@ -19,6 +19,7 @@
 | **Microsoft vscode-explorer-command** | Windows | 源码参考 / 部分改编 | 2026-09-13 获取的默认分支 | MIT | Windows 11 `IExplorerCommand` COM 激活框架；Hinge 自行实现动态设备子菜单和发送逻辑 | **已核验 (合规，保留版权头)** |
 | **Flutter SDK** | Android | 运行时 | 3.47.x | BSD-3-Clause | 跨平台 Material 3 响应式 UI 框架 | **已核验 (合规)** |
 | **crypto** | Android | 运行时 | ^3.0.7 | BSD-3-Clause | 官方标准库 SHA-256、HMAC 凭据派生与文件分块哈希校验 | **已核验 (合规)** |
+| **cryptography** | Android | 运行时 | ^2.7.0（解析为 2.9.0） | Apache-2.0 | Cloud Relay 的 AES-256-GCM 加解密 | **已核验 (合规)** |
 | **dynamic_color** | Android | 运行时 | ^1.9.0 | Apache-2.0 | Flutter 动态配色接口；Android 原生读取系统 Monet 角色 | **已核验 (合规)** |
 | **cupertino_icons** | Android | 运行时 | ^1.0.8 | MIT | 常用辅助矢量图标集 | **已核验 (合规)** |
 | **material_symbols_icons** | Android | 运行时 | 4.2960.0 | Apache-2.0 | Android 端 Material Symbols Rounded 图标字体 | **已核验 (合规)** |
@@ -53,7 +54,7 @@ Windows 首页的设备品牌标识采用 Wikimedia Commons 中对应品牌的 S
 - 图片尺寸和 EXIF：Android Framework `BitmapFactory` 与 `android.media.ExifInterface`；
 - Windows 默认应用和文件处理：WinRT / .NET BCL。
 
-所以本次改动新增的第三方运行时依赖为 **0**。如果未来改为直接使用上述任一项目，必须在引入同一提交中补充精确版本、许可证文本和对应 NOTICE，并同步修改 README。
+本次 Cloud Relay 接入新增的第三方运行时依赖为 **1 个**：Android `cryptography`（Apache-2.0）。独立的 `Hinge-Relay` Worker 依赖在其自己的 `package-lock.json` 和许可证文件中维护，不随 Hinge 客户端打包。若未来改为直接使用上述任一项目，必须在引入同一提交中补充精确版本、许可证文本和对应 NOTICE，并同步修改 README。
 
 ## Electron 托盘兼容参考
 

@@ -30,6 +30,9 @@ Generated\ Files/
 publish/
 tmp/
 
+# Legacy nested checkout only; the canonical Hinge Relay project is maintained at D:\App\Hinge Relay.
+Hinge-Relay/
+
 # Dart & Flutter
 .dart_tool/
 .flutter-plugins

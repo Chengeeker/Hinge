@@ -1,8 +1,11 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace Hinge.Core;
 
@@ -13,6 +16,9 @@ public class IncomingFileContext
     public string FinalFilePath { get; set; } = string.Empty;
     public FileStream? FileStream { get; set; }
     public long BytesReceived { get; set; }
+    public IncrementalHash? Hash { get; set; }
+    public bool HashIsContiguous { get; set; } = true;
+    public Stopwatch Timer { get; } = Stopwatch.StartNew();
 }
 
 public class TransferManager : IDisposable
@@ -21,11 +27,30 @@ public class TransferManager : IDisposable
     // long sequence of small socket writes. The protocol still accepts the
     // older smaller chunks, so this is a sender-side performance improvement.
     private const int FileChunkSize = 2 * 1024 * 1024;
+    private const int FileReadAheadDepth = 3;
     private string _downloadDirectory;
     private readonly ConcurrentDictionary<string, IncomingFileContext> _incomingTransfers = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _cancellations = new();
     private readonly ConcurrentDictionary<string, string> _incomingDirectories = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _incomingFrameGate = new(1, 1);
+
+    private sealed class PooledFileChunk
+    {
+        public byte[] Buffer { get; }
+        public int Count { get; }
+        public long Offset { get; }
+        public uint ChunkIndex { get; }
+
+        public PooledFileChunk(byte[] buffer, int count, long offset, uint chunkIndex)
+        {
+            Buffer = buffer;
+            Count = count;
+            Offset = offset;
+            ChunkIndex = chunkIndex;
+        }
+
+        public void Return() => ArrayPool<byte>.Shared.Return(Buffer);
+    }
 
     public event EventHandler<TextTransferMessage>? TextReceived;
     public event EventHandler<TransferProgress>? TransferProgressChanged;
@@ -114,12 +139,23 @@ public class TransferManager : IDisposable
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _cancellations[transferId] = cts;
 
-        // Calculate SHA-256
-        // Media preview can opt out of a complete pre-scan. The receiver will
-        // verify the digest carried by FILE_COMPLETE after the stream ends.
-        string sha256 = precomputeHash
-            ? await ComputeSha256Async(filePath, cts.Token)
-            : string.Empty;
+        // New peers can verify the digest carried by FILE_COMPLETE, allowing
+        // the sender to hash bytes while they are read for transmission. An
+        // older peer does not advertise this capability, so retain the
+        // pre-scan required by the original protocol behavior.
+        bool supportsStreamingHash = conn.PeerInfo?.Capabilities?.Contains(
+            ProtocolCompression.StreamingFileHashCapability,
+            StringComparer.Ordinal) == true;
+#if HINGE_TRANSFER_DIAGNOSTICS
+        var timing = new TransferSendTiming(transferId, fileInfo.Length, supportsStreamingHash);
+        long phaseStart = Stopwatch.GetTimestamp();
+#endif
+        string sha256 = supportsStreamingHash
+            ? string.Empty
+            : await ComputeSha256Async(filePath, cts.Token);
+#if HINGE_TRANSFER_DIAGNOSTICS
+        timing.PrehashTicks += Stopwatch.GetTimestamp() - phaseStart;
+#endif
 
         var offer = new FileOfferMessage
         {
@@ -151,9 +187,20 @@ public class TransferManager : IDisposable
 
         conn.FrameReceived += OnFrame;
 
+#if HINGE_TRANSFER_DIAGNOSTICS
+        bool sendCompleted = false;
+#endif
         try
         {
+#if HINGE_TRANSFER_DIAGNOSTICS
+            phaseStart = Stopwatch.GetTimestamp();
+#endif
             await conn.SendJsonAsync(MessageType.FileOffer, offer);
+#if HINGE_TRANSFER_DIAGNOSTICS
+            timing.OfferTicks += Stopwatch.GetTimestamp() - phaseStart;
+            timing.State = "waiting_accept";
+            phaseStart = Stopwatch.GetTimestamp();
+#endif
 
             // Wait for acceptance
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -161,71 +208,206 @@ public class TransferManager : IDisposable
             using (linked.Token.Register(() => acceptTcs.TrySetCanceled()))
             {
                 var accept = await acceptTcs.Task;
+#if HINGE_TRANSFER_DIAGNOSTICS
+                timing.AcceptWaitTicks += Stopwatch.GetTimestamp() - phaseStart;
+#endif
                 if (!accept.Accepted)
                 {
                     throw new InvalidOperationException($"File transfer rejected: {accept.Reason}");
                 }
 
                 // Begin chunk stream from accept.Offset
-                long offset = accept.Offset;
-                const int chunkSize = FileChunkSize;
-                byte[] chunkBuffer = new byte[chunkSize];
+                long offset = Math.Clamp(accept.Offset, 0, fileInfo.Length);
+#if HINGE_TRANSFER_DIAGNOSTICS
+                timing.StartOffset = offset;
+                timing.BytesSent = offset;
+                timing.State = "sending";
+#endif
                 if (string.IsNullOrEmpty(sha256))
                 {
                     // Resumed transfers need the complete digest before the
                     // remainder can be verified safely.
-                    sha256 = await ComputeSha256Async(filePath, cts.Token);
+                    if (offset > 0)
+                    {
+#if HINGE_TRANSFER_DIAGNOSTICS
+                        phaseStart = Stopwatch.GetTimestamp();
+#endif
+                        sha256 = await ComputeSha256Async(filePath, cts.Token);
+#if HINGE_TRANSFER_DIAGNOSTICS
+                        timing.PrehashTicks += Stopwatch.GetTimestamp() - phaseStart;
+#endif
+                    }
                 }
 
-                using (var fs = new FileStream(
-                    filePath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.Read,
-                    FileChunkSize,
-                    FileOptions.Asynchronous | FileOptions.SequentialScan))
+                Guid transferGuid = Guid.Parse(transferId);
+                var transferTimer = Stopwatch.StartNew();
+                IncrementalHash? streamingHash = string.IsNullOrEmpty(sha256)
+                    ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+                    : null;
+                string? completedStreamingHash = null;
+                using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                var channel = Channel.CreateBounded<PooledFileChunk>(
+                    new BoundedChannelOptions(FileReadAheadDepth)
+                    {
+                        SingleWriter = true,
+                        SingleReader = true,
+                        FullMode = BoundedChannelFullMode.Wait
+                    });
+
+                async Task ProduceChunksAsync()
                 {
-                    if (offset > 0 && offset < fs.Length)
+                    Exception? failure = null;
+                    try
                     {
-                        fs.Seek(offset, SeekOrigin.Begin);
-                    }
+                        await using var fs = new FileStream(
+                            filePath,
+                            FileMode.Open,
+                            FileAccess.Read,
+                            FileShare.Read,
+                            FileChunkSize,
+                            FileOptions.Asynchronous | FileOptions.SequentialScan);
+                        if (offset > 0) fs.Seek(offset, SeekOrigin.Begin);
 
-                    uint chunkIndex = 0;
-                    long bytesSent = offset;
-
-                    while (bytesSent < fs.Length)
-                    {
-                        cts.Token.ThrowIfCancellationRequested();
-
-                        int bytesRead = await fs.ReadAsync(chunkBuffer.AsMemory(0, chunkSize), cts.Token);
-                        if (bytesRead == 0) break;
-
-                        // Build chunk payload: 16B transferId + 4B chunkIndex + 8B offset + data
-                        byte[] payload = new byte[28 + bytesRead];
-                        ProtocolUuid.WriteNetworkBytes(Guid.Parse(transferId), payload.AsSpan(0, 16));
-                        BinaryPrimitives.WriteUInt32BigEndian(payload.AsSpan(16, 4), chunkIndex);
-                        BinaryPrimitives.WriteInt64BigEndian(payload.AsSpan(20, 8), bytesSent);
-                        Buffer.BlockCopy(chunkBuffer, 0, payload, 28, bytesRead);
-
-                        await conn.SendFrameAsync(MessageType.FileChunk, payload);
-
-                        bytesSent += bytesRead;
-                        chunkIndex++;
-
-                        var prog = new TransferProgress
+                        uint chunkIndex = 0;
+                        long readOffset = offset;
+                        while (readOffset < fileInfo.Length)
                         {
-                            TransferId = transferId,
-                            FileName = fileInfo.Name,
-                            BytesTransferred = bytesSent,
-                            TotalBytes = fs.Length,
-                            State = TransferState.Transferring
-                        };
-                        progress?.Report(prog);
-                        TransferProgressChanged?.Invoke(this, prog);
+                            pipelineCts.Token.ThrowIfCancellationRequested();
+                            byte[]? buffer = ArrayPool<byte>.Shared.Rent(FileChunkSize);
+                            try
+                            {
+#if HINGE_TRANSFER_DIAGNOSTICS
+                                long readStart = Stopwatch.GetTimestamp();
+#endif
+                                int bytesRead = await fs.ReadAsync(
+                                    buffer.AsMemory(0, FileChunkSize),
+                                    pipelineCts.Token);
+#if HINGE_TRANSFER_DIAGNOSTICS
+                                Interlocked.Add(ref timing.ReadTicks,
+                                    Stopwatch.GetTimestamp() - readStart);
+#endif
+                                if (bytesRead == 0) break;
+
+#if HINGE_TRANSFER_DIAGNOSTICS
+                                long hashStart = Stopwatch.GetTimestamp();
+#endif
+                                streamingHash?.AppendData(buffer.AsSpan(0, bytesRead));
+#if HINGE_TRANSFER_DIAGNOSTICS
+                                Interlocked.Add(ref timing.HashTicks,
+                                    Stopwatch.GetTimestamp() - hashStart);
+#endif
+                                var chunk = new PooledFileChunk(
+                                    buffer,
+                                    bytesRead,
+                                    readOffset,
+                                    chunkIndex++);
+                                buffer = null;
+#if HINGE_TRANSFER_DIAGNOSTICS
+                                long queueStart = Stopwatch.GetTimestamp();
+#endif
+                                await channel.Writer.WriteAsync(chunk, pipelineCts.Token);
+#if HINGE_TRANSFER_DIAGNOSTICS
+                                Interlocked.Add(ref timing.QueueWaitTicks,
+                                    Stopwatch.GetTimestamp() - queueStart);
+#endif
+                                readOffset += bytesRead;
+                            }
+                            finally
+                            {
+                                if (buffer != null)
+                                {
+                                    ArrayPool<byte>.Shared.Return(buffer);
+                                }
+                            }
+                        }
                     }
+                    catch (Exception exception)
+                    {
+                        failure = exception;
+                        throw;
+                    }
+                    finally
+                    {
+                        channel.Writer.TryComplete(failure);
+                    }
+                }
+
+                var producerTask = ProduceChunksAsync();
+                long bytesSent = offset;
+                try
+                {
+                    await foreach (var chunk in channel.Reader.ReadAllAsync(pipelineCts.Token))
+                    {
+                        try
+                        {
+                            pipelineCts.Token.ThrowIfCancellationRequested();
+                            await conn.SendFileChunkAsync(
+                                transferGuid,
+                                chunk.ChunkIndex,
+                                chunk.Offset,
+                                chunk.Buffer.AsMemory(0, chunk.Count),
+                                pipelineCts.Token
+#if HINGE_TRANSFER_DIAGNOSTICS
+                                , timing.AddSend
+#endif
+                                );
+                            bytesSent += chunk.Count;
+#if HINGE_TRANSFER_DIAGNOSTICS
+                            timing.BytesSent = bytesSent;
+                            timing.Checkpoint();
+#endif
+
+                            var prog = new TransferProgress
+                            {
+                                TransferId = transferId,
+                                FileName = fileInfo.Name,
+                                BytesTransferred = bytesSent,
+                                TotalBytes = fileInfo.Length,
+                                BytesPerSecond = bytesSent / Math.Max(transferTimer.Elapsed.TotalSeconds, 0.001),
+                                State = TransferState.Transferring
+                            };
+                            progress?.Report(prog);
+                            TransferProgressChanged?.Invoke(this, prog);
+                        }
+                        finally
+                        {
+                            chunk.Return();
+                        }
+                    }
+
+                    await producerTask;
+                }
+                catch
+                {
+                    pipelineCts.Cancel();
+                    try { await producerTask; } catch { }
+                    throw;
+                }
+                finally
+                {
+                    pipelineCts.Cancel();
+                    channel.Writer.TryComplete();
+                    while (channel.Reader.TryRead(out var pendingChunk))
+                    {
+                        pendingChunk.Return();
+                    }
+                    if (streamingHash != null)
+                    {
+                        completedStreamingHash = Convert.ToHexString(
+                            streamingHash.GetHashAndReset()).ToLowerInvariant();
+                        streamingHash.Dispose();
+                    }
+                }
+
+                if (string.IsNullOrEmpty(sha256) && completedStreamingHash != null)
+                {
+                    sha256 = completedStreamingHash;
                 }
 
                 // Send FILE_COMPLETE
+#if HINGE_TRANSFER_DIAGNOSTICS
+                phaseStart = Stopwatch.GetTimestamp();
+#endif
                 var completeMsg = new FileCompleteMessage
                 {
                     TransferId = transferId,
@@ -233,6 +415,9 @@ public class TransferManager : IDisposable
                     Success = true
                 };
                 await conn.SendJsonAsync(MessageType.FileComplete, completeMsg);
+#if HINGE_TRANSFER_DIAGNOSTICS
+                timing.CompleteTicks += Stopwatch.GetTimestamp() - phaseStart;
+#endif
 
                 var finalProg = new TransferProgress
                 {
@@ -240,16 +425,25 @@ public class TransferManager : IDisposable
                     FileName = fileInfo.Name,
                     BytesTransferred = fileInfo.Length,
                     TotalBytes = fileInfo.Length,
+                    BytesPerSecond = fileInfo.Length / Math.Max(transferTimer.Elapsed.TotalSeconds, 0.001),
                     State = TransferState.Completed
                 };
                 progress?.Report(finalProg);
                 TransferProgressChanged?.Invoke(this, finalProg);
 
+#if HINGE_TRANSFER_DIAGNOSTICS
+                sendCompleted = true;
+#endif
                 return transferId;
             }
         }
         finally
         {
+#if HINGE_TRANSFER_DIAGNOSTICS
+            timing.State = sendCompleted ? "completed" :
+                cts.IsCancellationRequested ? "cancelled" : "interrupted";
+            timing.Write("final");
+#endif
             conn.FrameReceived -= OnFrame;
             _cancellations.TryRemove(transferId, out _);
         }
@@ -345,7 +539,13 @@ public class TransferManager : IDisposable
             TempFilePath = tempPath,
             FinalFilePath = finalPath,
             FileStream = stream,
-            BytesReceived = existingBytes
+            BytesReceived = existingBytes,
+            // A new transfer can be verified incrementally as chunks arrive.
+            // Resumed partial files keep the conservative full-file fallback
+            // because the existing prefix has not been fed into this digest.
+            Hash = existingBytes == 0
+                ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+                : null
         };
         _incomingTransfers[offer.TransferId] = context;
 
@@ -375,9 +575,14 @@ public class TransferManager : IDisposable
         if (context.FileStream.Position != chunkOffset)
         {
             context.FileStream.Seek(chunkOffset, SeekOrigin.Begin);
+            context.HashIsContiguous = false;
         }
 
         await context.FileStream.WriteAsync(payload.AsMemory(28, dataLength));
+        if (context.Hash != null && context.HashIsContiguous)
+        {
+            context.Hash.AppendData(payload.AsSpan(28, dataLength));
+        }
         context.BytesReceived += dataLength;
 
         var prog = new TransferProgress
@@ -386,6 +591,7 @@ public class TransferManager : IDisposable
             FileName = context.Offer.FileName,
             BytesTransferred = context.BytesReceived,
             TotalBytes = context.Offer.FileSize,
+            BytesPerSecond = context.BytesReceived / Math.Max(context.Timer.Elapsed.TotalSeconds, 0.001),
             State = TransferState.Transferring
         };
         TransferProgressChanged?.Invoke(this, prog);
@@ -404,8 +610,20 @@ public class TransferManager : IDisposable
             await context.FileStream.DisposeAsync();
             context.FileStream = null;
 
-            // Verify SHA-256 only after all queued chunks have been serialized.
-            string localHash = await ComputeSha256Async(context.TempFilePath, CancellationToken.None);
+            // Verify SHA-256 without reading the completed file a second time
+            // when chunks arrived contiguously. Resumed or out-of-order files
+            // retain the full-file fallback for correctness.
+            string localHash;
+            if (context.Hash != null && context.HashIsContiguous)
+            {
+                localHash = Convert.ToHexString(context.Hash.GetHashAndReset()).ToLowerInvariant();
+            }
+            else
+            {
+                localHash = await ComputeSha256Async(context.TempFilePath, CancellationToken.None);
+            }
+            context.Hash?.Dispose();
+            context.Hash = null;
             string expectedHash = string.IsNullOrWhiteSpace(complete.Sha256)
                 ? context.Offer.Sha256
                 : complete.Sha256;
@@ -424,6 +642,7 @@ public class TransferManager : IDisposable
                     FileName = context.Offer.FileName,
                     BytesTransferred = context.Offer.FileSize,
                     TotalBytes = context.Offer.FileSize,
+                    BytesPerSecond = context.Offer.FileSize / Math.Max(context.Timer.Elapsed.TotalSeconds, 0.001),
                     State = TransferState.Completed
                 };
                 TransferProgressChanged?.Invoke(this, prog);
@@ -442,6 +661,8 @@ public class TransferManager : IDisposable
         {
             context.FileStream?.Dispose();
             context.FileStream = null;
+            context.Hash?.Dispose();
+            context.Hash = null;
             DeleteFileIfExists(context.TempFilePath);
             ReportTransferFailure(context, exception.Message, complete.TransferId);
         }
@@ -504,6 +725,8 @@ public class TransferManager : IDisposable
         if (!_incomingTransfers.TryRemove(transferId, out var context)) return;
         context.FileStream?.Dispose();
         context.FileStream = null;
+        context.Hash?.Dispose();
+        context.Hash = null;
         DeleteFileIfExists(context.TempFilePath);
         ReportTransferFailure(context, error, transferId);
     }
@@ -606,6 +829,7 @@ public class TransferManager : IDisposable
         foreach (var ctx in _incomingTransfers.Values)
         {
             try { ctx.FileStream?.Dispose(); } catch { }
+            try { ctx.Hash?.Dispose(); } catch { }
         }
         _incomingTransfers.Clear();
         _incomingDirectories.Clear();

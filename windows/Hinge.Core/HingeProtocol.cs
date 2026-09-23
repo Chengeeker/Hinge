@@ -51,22 +51,159 @@ public class ProtocolFrame
         }
 
         byte[] buffer = new byte[HeaderSize + Payload.Length];
-        Span<byte> span = buffer.AsSpan();
-
-        MagicBytes.CopyTo(span.Slice(0, 4));
-        BinaryPrimitives.WriteUInt16BigEndian(span.Slice(4, 2), Version);
-        BinaryPrimitives.WriteUInt16BigEndian(span.Slice(6, 2), (ushort)Type);
-        ProtocolUuid.WriteNetworkBytes(MessageId, span.Slice(8, 16));
-        BinaryPrimitives.WriteInt64BigEndian(span.Slice(24, 8), Timestamp);
-        ProtocolUuid.WriteNetworkBytes(SessionId, span.Slice(32, 16));
-        BinaryPrimitives.WriteUInt32BigEndian(span.Slice(48, 4), (uint)Payload.Length);
+        WriteHeader(
+            buffer.AsSpan(0, HeaderSize),
+            Version,
+            Type,
+            MessageId,
+            Timestamp,
+            SessionId,
+            Payload.Length);
 
         if (Payload.Length > 0)
         {
-            Payload.CopyTo(span.Slice(HeaderSize, Payload.Length));
+            Payload.CopyTo(buffer.AsSpan(HeaderSize, Payload.Length));
         }
 
         return buffer;
+    }
+
+    /// <summary>
+    /// Writes only the fixed-size protocol header. Bulk senders use this to
+    /// compose a pooled frame directly, avoiding a temporary FILE_CHUNK
+    /// payload followed by a second full-frame allocation.
+    /// </summary>
+    public static void WriteHeader(
+        Span<byte> destination,
+        ushort version,
+        MessageType type,
+        Guid messageId,
+        long timestamp,
+        Guid sessionId,
+        int payloadLength)
+    {
+        if (destination.Length < HeaderSize)
+        {
+            throw new ArgumentException($"Protocol header must be at least {HeaderSize} bytes.", nameof(destination));
+        }
+        if (payloadLength < 0 || payloadLength > MaxPayloadSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(payloadLength));
+        }
+
+        Span<byte> span = destination[..HeaderSize];
+        MagicBytes.CopyTo(span[..4]);
+        BinaryPrimitives.WriteUInt16BigEndian(span.Slice(4, 2), version);
+        BinaryPrimitives.WriteUInt16BigEndian(span.Slice(6, 2), (ushort)type);
+        ProtocolUuid.WriteNetworkBytes(messageId, span.Slice(8, 16));
+        BinaryPrimitives.WriteInt64BigEndian(span.Slice(24, 8), timestamp);
+        ProtocolUuid.WriteNetworkBytes(sessionId, span.Slice(32, 16));
+        BinaryPrimitives.WriteUInt32BigEndian(span.Slice(48, 4), (uint)payloadLength);
+    }
+
+    /// <summary>
+    /// Builds a FILE_CHUNK frame in one allocation. The caller owns the
+    /// returned frame and can send it without first allocating a 28-byte
+    /// transfer header plus a second frame-sized array.
+    /// </summary>
+    public static byte[] SerializeFileChunk(
+        Guid sessionId,
+        Guid transferId,
+        uint chunkIndex,
+        long offset,
+        ReadOnlySpan<byte> data)
+    {
+        int payloadLength = checked(28 + data.Length);
+        if (payloadLength > MaxPayloadSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(data), $"Payload exceeds the {MaxPayloadSize} byte limit.");
+        }
+
+        byte[] frame = new byte[HeaderSize + payloadLength];
+        WriteFileChunkFrameCore(frame, sessionId, transferId, chunkIndex, offset, data);
+        return frame;
+    }
+
+    /// <summary>
+    /// Fills a caller-owned frame buffer with a FILE_CHUNK. Keeping the span
+    /// work in this synchronous helper lets async send methods remain on the
+    /// stable C# language surface supported by the project.
+    /// </summary>
+    public static void WriteFileChunkFrame(
+        byte[] frame,
+        Guid sessionId,
+        Guid transferId,
+        uint chunkIndex,
+        long offset,
+        ReadOnlyMemory<byte> data)
+    {
+        WriteFileChunkFrameCore(frame, sessionId, transferId, chunkIndex, offset, data.Span);
+    }
+
+    private static void WriteFileChunkFrameCore(
+        byte[] frame,
+        Guid sessionId,
+        Guid transferId,
+        uint chunkIndex,
+        long offset,
+        ReadOnlySpan<byte> data)
+    {
+        int payloadLength = checked(28 + data.Length);
+        int frameLength = checked(HeaderSize + payloadLength);
+        if (frame.Length < frameLength)
+        {
+            throw new ArgumentException("Destination frame is too small.", nameof(frame));
+        }
+        WriteHeader(
+            frame.AsSpan(0, HeaderSize),
+            version: 1,
+            type: MessageType.FileChunk,
+            messageId: Guid.NewGuid(),
+            timestamp: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            sessionId: sessionId,
+            payloadLength: payloadLength);
+
+        Span<byte> payload = frame.AsSpan(HeaderSize, payloadLength);
+        ProtocolUuid.WriteNetworkBytes(transferId, payload[..16]);
+        BinaryPrimitives.WriteUInt32BigEndian(payload.Slice(16, 4), chunkIndex);
+        BinaryPrimitives.WriteInt64BigEndian(payload.Slice(20, 8), offset);
+        data.CopyTo(payload[28..]);
+    }
+
+    /// <summary>
+    /// Creates a frame from separately read header and payload buffers. The
+    /// payload is intentionally reused; the socket read loop owns it until
+    /// all frame subscribers finish processing, so no 2 MiB clone is needed.
+    /// </summary>
+    public static bool TryCreate(
+        ReadOnlySpan<byte> header,
+        byte[] payload,
+        out ProtocolFrame? frame)
+    {
+        frame = null;
+        if (header.Length < HeaderSize) return false;
+        if (header[0] != MagicBytes[0] || header[1] != MagicBytes[1] ||
+            header[2] != MagicBytes[2] || header[3] != MagicBytes[3])
+        {
+            return false;
+        }
+
+        uint payloadLength = BinaryPrimitives.ReadUInt32BigEndian(header.Slice(48, 4));
+        if (payloadLength > MaxPayloadSize || payloadLength != payload.Length)
+        {
+            return false;
+        }
+
+        frame = new ProtocolFrame
+        {
+            Version = BinaryPrimitives.ReadUInt16BigEndian(header.Slice(4, 2)),
+            Type = (MessageType)BinaryPrimitives.ReadUInt16BigEndian(header.Slice(6, 2)),
+            MessageId = ProtocolUuid.ReadNetworkBytes(header.Slice(8, 16)),
+            Timestamp = BinaryPrimitives.ReadInt64BigEndian(header.Slice(24, 8)),
+            SessionId = ProtocolUuid.ReadNetworkBytes(header.Slice(32, 16)),
+            Payload = payload
+        };
+        return true;
     }
 
     public static bool TryParse(ReadOnlySpan<byte> data, out ProtocolFrame? frame)

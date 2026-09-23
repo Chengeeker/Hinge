@@ -556,6 +556,7 @@ class MainActivity : FlutterActivity() {
             "nativeConnect" -> nativeConnect(call, result)
             "nativeDisconnect" -> nativeDisconnect(call, result)
             "nativeSendFrame" -> nativeSendFrame(call, result)
+            "nativeSendFileChunk" -> nativeSendFileChunk(call, result)
             "nativeEnqueueFile" -> nativeEnqueueFile(call, result)
             "readConnectionDiagnostics" -> result.success(
                 HingeForegroundService.current?.connectionBroker()?.readDiagnostics() ?: "",
@@ -716,6 +717,22 @@ class MainActivity : FlutterActivity() {
             connectionId = call.argument<String>("connectionId").orEmpty(),
             type = call.argument<Int>("type") ?: 0,
             payload = payload,
+        )
+        result.success(true)
+    }
+
+    private fun nativeSendFileChunk(call: MethodCall, result: MethodChannel.Result) {
+        val transferId = call.argument<ByteArray>("transferId") ?: ByteArray(0)
+        val data = call.argument<ByteArray>("data") ?: ByteArray(0)
+        val count = (call.argument<Number>("count")?.toInt() ?: data.size)
+            .coerceIn(0, data.size)
+        HingeForegroundService.current?.connectionBroker()?.sendFileChunk(
+            connectionId = call.argument<String>("connectionId").orEmpty(),
+            transferId = transferId,
+            chunkIndex = call.argument<Number>("chunkIndex")?.toInt() ?: 0,
+            offset = call.argument<Number>("offset")?.toLong() ?: 0L,
+            data = data,
+            count = count,
         )
         result.success(true)
     }

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import 'protocol_compression.dart';
 import 'protocol_frame.dart';
 import 'session_manager.dart';
 import 'transfer_model.dart';
@@ -48,6 +49,34 @@ class TransferManager {
   Stream<TextTransferMessage> get textStream => _textController.stream;
   Stream<TransferProgress> get progressStream => _progressController.stream;
   Stream<String> get fileReceivedStream => _fileReceivedController.stream;
+
+  void handleNativeTransferEvent(Map<String, dynamic> event) {
+    final eventType = '${event['event'] ?? ''}';
+    final transferId = '${event['transferId'] ?? ''}'.trim();
+    final fileName = '${event['name'] ?? '接收文件'}';
+    final bytesTransferred = (event['bytesTransferred'] as num?)?.toInt() ?? 0;
+    final totalBytes = (event['totalBytes'] as num?)?.toInt() ?? 0;
+    if (transferId.isNotEmpty) {
+      final state = switch (eventType) {
+        'file_received' => TransferState.completed,
+        'file_transfer_failed' => TransferState.failed,
+        _ => TransferState.transferring,
+      };
+      _progressController.add(
+        TransferProgress(
+          transferId: transferId,
+          fileName: fileName,
+          bytesTransferred: bytesTransferred,
+          totalBytes: totalBytes,
+          state: state,
+        ),
+      );
+    }
+    if (eventType == 'file_received') {
+      final path = '${event['path'] ?? ''}'.trim();
+      if (path.isNotEmpty) _fileReceivedController.add(path);
+    }
+  }
 
   TransferManager([String? downloadDirectory])
     : _defaultDirectory = downloadDirectory ?? _getDefaultDownloadDir(),
@@ -120,9 +149,17 @@ class TransferManager {
 
     // Compute SHA-256 incrementally so opening a large video does not load the
     // whole file into the Dart heap or destabilize the session connection.
-    var sha256Hash = precomputeHash
-        ? (await sha256.bind(file.openRead()).first).toString()
-        : '';
+    final supportsStreamingHash =
+        conn.peerInfo?.capabilities.contains(
+          ProtocolCapabilities.streamingFileHash,
+        ) ==
+        true;
+    // A peer advertising streaming-file-hash-v1 verifies the digest from
+    // FILE_COMPLETE, so the offer no longer needs a full pre-scan. Older
+    // peers retain the original precomputed FILE_OFFER digest.
+    var sha256Hash = supportsStreamingHash
+        ? ''
+        : (await sha256.bind(file.openRead()).first).toString();
 
     final offer = FileOfferMessage(
       transferId: transferId,
@@ -170,7 +207,7 @@ class TransferManager {
       if (sha256Hash.isEmpty && offset > 0) {
         sha256Hash = (await sha256.bind(file.openRead()).first).toString();
       }
-      final digestController = sha256Hash.isEmpty
+      final digestController = sha256Hash.isEmpty && offset == 0
           ? StreamController<Digest>(sync: true)
           : null;
       final digestFuture = digestController?.stream.first;
@@ -190,17 +227,14 @@ class TransferManager {
         final chunkData = await raf.read(chunkSize);
         if (chunkData.isEmpty) break;
 
-        final payload = Uint8List(28 + chunkData.length);
-        final byteData = ByteData.sublistView(payload);
-
-        payload.setRange(0, 16, transferIdBytes);
-        byteData.setUint32(16, chunkIndex, Endian.big);
-        byteData.setInt64(20, bytesSent, Endian.big);
-        payload.setRange(28, payload.length, chunkData);
-
         hashSink?.add(chunkData);
 
-        conn.sendFrame(MessageType.fileChunk, payload);
+        conn.sendFileChunk(
+          transferId: transferIdBytes,
+          chunkIndex: chunkIndex,
+          offset: bytesSent,
+          data: chunkData,
+        );
 
         bytesSent += chunkData.length;
         chunkIndex++;
@@ -351,13 +385,14 @@ class TransferManager {
     }
 
     final raf = await tempFile.open(mode: FileMode.append);
-    _incomingTransfers[offer.transferId] = _IncomingFileContext(
+    final context = _IncomingFileContext(
       offer: offer,
       tempFilePath: tempPath,
       finalFilePath: finalPath,
       file: raf,
       bytesReceived: existingBytes,
     );
+    _incomingTransfers[offer.transferId] = context;
 
     final accept = FileAcceptMessage(
       transferId: offer.transferId,
@@ -377,15 +412,15 @@ class TransferManager {
     if (context == null || context.file == null) return;
 
     final dataLength = payload.length - 28;
-    final chunkData = Uint8List.fromList(payload.sublist(28));
     context.writeQueue = context.writeQueue.then((_) async {
       if (context.file != null) {
-        await context.file!.writeFrom(chunkData);
+        // RandomAccessFile can write directly from the protocol payload;
+        // sublisting here would allocate and copy every 2 MiB chunk again.
+        await context.file!.writeFrom(payload, 28, payload.length);
+        context.bytesReceived += dataLength;
       }
     });
     await context.writeQueue;
-
-    context.bytesReceived += dataLength;
 
     final prog = TransferProgress(
       transferId: transferId,
@@ -411,10 +446,11 @@ class TransferManager {
       context.file = null;
     }
 
-    // Verify SHA-256
+    // Verify SHA-256 after the network/write path has completed. Keeping this
+    // off the per-chunk receive callback avoids blocking large EventChannel
+    // payloads on the Flutter isolate.
     final tempFile = File(context.tempFilePath);
-    final fileBytes = await tempFile.readAsBytes();
-    final localHash = sha256.convert(fileBytes).toString();
+    final localHash = (await sha256.bind(tempFile.openRead()).first).toString();
 
     final expectedHash = complete.sha256.trim().isNotEmpty
         ? complete.sha256

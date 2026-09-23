@@ -9,6 +9,14 @@
 - **防重放与消息防伪**：所有协议数据包包含唯一 messageId、时间戳及会话签名校验。
 - **传输防溢出与边界保护**：流式接收文件时强制执行路径遍历防御（Path Traversal Prevention）、磁盘剩余空间预检及 SHA-256 完整性校验。
 
-## 2. 漏洞报告
+## 2. Cloud Relay 安全边界
+
+- Cloud Relay 默认关闭，不是 Hinge 官方服务；用户必须自行部署 Worker + 私有 R2，并且只能为已经在 Hinge 中信任的设备注册 Relay 身份。
+- Hinge 在上传前使用 AES-256-GCM 加密文件元数据和每个文件分块。Worker 只能看到 opaque Relay ID、加密尺寸、时间和 R2 ETag，不能读取文件名、文件内容或明文 SHA-256。
+- 管理员 Token 只用于注册设备，不能提交到 Git 或写入 Hinge 日志；设备 Token 和 Relay 密钥会保存到用户自己的 Hinge 设置中。当前实现使用既有用户设置存储，尚未接入 DPAPI/Android Keystore，因此用户仍需保护本机用户配置和 Cloudflare 账户。
+- Relay 密钥泄露会让攻击者能够派生 Relay ID 和解密同一密钥范围内的 transfer；发生泄露时应在两台设备上生成新密钥、重新注册设备，并在 Cloudflare 中轮换管理员 Token。
+- Worker 收到 ACK 前不会删除接收 blob；接收端只有在 GCM 标签、文件大小和明文 SHA-256 均通过后才 ACK。Android 被系统完全停止时不承诺即时下载。
+
+## 3. 漏洞报告
 
 若发现潜在的安全漏洞，请勿直接公开创建公共 Issue。请通过安全联系方式或邮件向维护团队提交详细复现步骤与 PoC，我们将优先排查并快速发布修复版本。

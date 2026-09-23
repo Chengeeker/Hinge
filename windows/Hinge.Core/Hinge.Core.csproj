@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(HingeTransferDiagnostics)' == 'true'">
+    <DefineConstants>$(DefineConstants);HINGE_TRANSFER_DIAGNOSTICS</DefineConstants>
+  </PropertyGroup>
+
 </Project>

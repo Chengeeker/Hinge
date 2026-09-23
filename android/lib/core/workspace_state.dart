@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'pairing_manager.dart';
+import 'cloud_relay.dart';
 
 enum AppThemePreference { system, light, dark }
 
@@ -34,6 +35,7 @@ class WorkspaceState extends ChangeNotifier {
   String _videoStoragePath = '';
   String _fileStoragePath = '';
   String _localPairingCode = '';
+  CloudRelaySettings _cloudRelaySettings = const CloudRelaySettings();
   bool _loaded = false;
   bool _disposed = false;
 
@@ -54,6 +56,7 @@ class WorkspaceState extends ChangeNotifier {
   String get videoStoragePath => _videoStoragePath;
   String get fileStoragePath => _fileStoragePath;
   String get localPairingCode => _localPairingCode;
+  CloudRelaySettings get cloudRelaySettings => _cloudRelaySettings;
   bool get loaded => _loaded;
 
   int get fontWeightDelta =>
@@ -178,6 +181,15 @@ class WorkspaceState extends ChangeNotifier {
     _changed();
   }
 
+  void setCloudRelaySettings(CloudRelaySettings settings) {
+    if (jsonEncode(_cloudRelaySettings.toJson()) ==
+        jsonEncode(settings.toJson())) {
+      return;
+    }
+    _cloudRelaySettings = settings;
+    _changed();
+  }
+
   void cycleThemePreference() {
     switch (_themePreference) {
       case AppThemePreference.system:
@@ -210,6 +222,7 @@ class WorkspaceState extends ChangeNotifier {
     'videoStoragePath': _videoStoragePath,
     'fileStoragePath': _fileStoragePath,
     'localPairingCode': _localPairingCode,
+    'cloudRelay': _cloudRelaySettings.toJson(),
   };
 
   void _apply(Map<String, dynamic> values) {
@@ -241,6 +254,10 @@ class WorkspaceState extends ChangeNotifier {
     _localPairingCode = PairingManager.normalizePairingCode(
       '${values['localPairingCode'] ?? ''}',
     );
+    final relay = values['cloudRelay'];
+    _cloudRelaySettings = relay is Map
+        ? CloudRelaySettings.fromJson(relay)
+        : const CloudRelaySettings();
   }
 
   Future<void> _persist() async {

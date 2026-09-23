@@ -4,6 +4,7 @@ enum TransferState {
   waitingAccept,
   transferring,
   verifying,
+  awaitingPickup,
   completed,
   failed,
   cancelled,

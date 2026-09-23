@@ -1,11 +1,14 @@
+param([switch]$TransferDiagnostics)
+
+$diagnosticBuild = [bool]$TransferDiagnostics
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$publishDir = Join-Path $repoRoot 'publish\windows'
-$bundleDir = Join-Path $repoRoot 'tmp\Hinge-win-bundle'
-$nativeOutput = Join-Path $repoRoot 'tmp\Hinge-winui-publish'
-$shellOutput = Join-Path $repoRoot 'tmp\Hinge-shell-publish'
-$sparseStage = Join-Path $repoRoot 'tmp\Hinge-sparse-package'
+$publishDir = Join-Path $repoRoot $(if ($diagnosticBuild) { 'publish\windows\diagnostics' } else { 'publish\windows' })
+$bundleDir = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-win-bundle-diagnostics' } else { 'tmp\Hinge-win-bundle' })
+$nativeOutput = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-winui-publish-diagnostics' } else { 'tmp\Hinge-winui-publish' })
+$shellOutput = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-shell-publish-diagnostics' } else { 'tmp\Hinge-shell-publish' })
+$sparseStage = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-sparse-package-diagnostics' } else { 'tmp\Hinge-sparse-package' })
 
 Write-Host '=== Building Hinge WinUI 3 Windows Release Bundle ===' -ForegroundColor Cyan
 
@@ -58,6 +61,9 @@ $publishArgs = @(
     '-p:WindowsPackageType=None',
     '-p:PublishSingleFile=false'
 )
+if ($diagnosticBuild) {
+    $publishArgs += '-p:HingeTransferDiagnostics=true'
+}
 & dotnet @publishArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Error 'WinUI 3 Windows 发布失败。请确认已安装 .NET 8 SDK、Windows App SDK 和 Windows 11 SDK。'
@@ -101,7 +107,7 @@ if (-not (Test-Path -LiteralPath $executablePath)) {
     exit 1
 }
 
-$artifactSuffix = ''
+$artifactSuffix = $(if ($diagnosticBuild) { '-AB-send-timing' } else { '' })
 if (Test-Path -LiteralPath $publishDir) {
     try {
         Remove-Item -LiteralPath $publishDir -Recurse -Force -ErrorAction Stop
@@ -244,7 +250,7 @@ Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $zipPath -For
 # self-contained and carries the runnable ZIP as an appended payload. It asks
 # for the destination folder at install time, so it is not tied to MSIX/AppX
 # deployment rules or the system C: drive.
-$installerOutput = Join-Path $repoRoot 'tmp\Hinge-setup-publish'
+$installerOutput = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-setup-publish-diagnostics' } else { 'tmp\Hinge-setup-publish' })
 $installerProject = Join-Path $repoRoot 'installer\Hinge.Setup.csproj'
 $setupPath = Join-Path $publishDir ("Hinge-Setup$artifactSuffix.exe")
 if (Test-Path -LiteralPath $installerOutput) {

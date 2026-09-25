@@ -3,6 +3,7 @@ param(
     [string]$KeyAlias = '',
     [string]$StorePassword = '',
     [string]$KeyPassword = '',
+    [string]$OutputPath = '',
     [switch]$SkipFlutterBuild
 )
 
@@ -296,21 +297,32 @@ finally {
 }
 
 $publishDir = Join-Path $repoRoot 'publish'
-if (-not (Test-Path $publishDir)) {
-    New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+$useCanonicalOutput = [string]::IsNullOrWhiteSpace($OutputPath)
+if ($useCanonicalOutput) {
+    $publishApkPath = Join-Path $publishDir 'Hinge.apk'
+} elseif ([System.IO.Path]::IsPathRooted($OutputPath)) {
+    $publishApkPath = [System.IO.Path]::GetFullPath($OutputPath)
+} else {
+    $publishApkPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutputPath))
 }
-$publishApkPath = Join-Path $publishDir 'Hinge.apk'
+$publishApkDirectory = Split-Path -Parent $publishApkPath
+if (-not (Test-Path -LiteralPath $publishApkDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $publishApkDirectory -Force | Out-Null
+}
 Copy-Item -Path $signedApkPath -Destination $publishApkPath -Force
 
-# Remove only the known legacy Android output after the new signed artifact
-# has been copied successfully. Never remove it before the replacement exists.
-$legacyPublishDir = Join-Path $publishDir 'android'
-$legacyApkPath = Join-Path $legacyPublishDir 'Hinge.apk'
-if (Test-Path -LiteralPath $legacyApkPath -PathType Leaf) {
-    Remove-Item -LiteralPath $legacyApkPath -Force
-    if ((Test-Path -LiteralPath $legacyPublishDir -PathType Container) -and
-        (-not (Get-ChildItem -LiteralPath $legacyPublishDir -Force))) {
-        Remove-Item -LiteralPath $legacyPublishDir -Force
+# Keep test builds isolated from the canonical release artifact and legacy cleanup.
+if ($useCanonicalOutput) {
+    # Remove only the known legacy Android output after the new signed artifact
+    # has been copied successfully. Never remove it before the replacement exists.
+    $legacyPublishDir = Join-Path $publishDir 'android'
+    $legacyApkPath = Join-Path $legacyPublishDir 'Hinge.apk'
+    if (Test-Path -LiteralPath $legacyApkPath -PathType Leaf) {
+        Remove-Item -LiteralPath $legacyApkPath -Force
+        if ((Test-Path -LiteralPath $legacyPublishDir -PathType Container) -and
+            (-not (Get-ChildItem -LiteralPath $legacyPublishDir -Force))) {
+            Remove-Item -LiteralPath $legacyPublishDir -Force
+        }
     }
 }
 

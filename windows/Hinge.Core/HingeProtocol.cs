@@ -20,7 +20,7 @@ public enum MessageType : ushort
     SyncManifestRequest  = 0x0035,
     SyncManifestResponse = 0x0036,
     SyncPullRequest      = 0x0037,
-    ClipboardEvent  = 0x0040,
+    // 0x0040 was the removed clipboard-sync frame; kept reserved for v1 compatibility.
     RemoteInput     = 0x0050,
     ScreenStream    = 0x0060,
     NotificationEvent  = 0x0070,

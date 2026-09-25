@@ -93,15 +93,6 @@
 
             <Border Style="{StaticResource HingeCardStyle}">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="剪贴板同步" Style="{StaticResource HingeSectionTitleStyle}" />
-                    <TextBlock Text="接收到的文本会写入本机系统剪贴板。" Style="{StaticResource HingeCaptionStyle}" />
-                    <TextBlock x:Name="ClipboardStatusText" Text="等待设备连接" Style="{StaticResource HingeCaptionStyle}" />
-                    <Button x:Name="ClipboardButton" Content="切换剪贴板同步" HorizontalAlignment="Left" />
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource HingeCardStyle}">
-                <StackPanel Spacing="10">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />

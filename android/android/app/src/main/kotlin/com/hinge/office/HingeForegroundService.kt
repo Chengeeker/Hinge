@@ -791,7 +791,6 @@ class HingeForegroundService : Service() {
 
         val capabilities = JSONArray().apply {
             put("file_transfer")
-            put("clipboard")
             put("remote_control")
             put("backup")
         }

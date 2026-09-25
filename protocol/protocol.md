@@ -94,7 +94,7 @@ Hinge Protocol 采用分层解耦架构：
 | `0x0035` | `SYNC_MANIFEST_REQ` | JSON | Sync | 请求目录同步清单 |
 | `0x0036` | `SYNC_MANIFEST_RESP`| JSON | Sync | 应答目录同步清单 |
 | `0x0037` | `SYNC_PULL_REQ` | JSON | Sync | 差量文件拉取请求 |
-| `0x0040` | `CLIPBOARD_EVENT` | JSON | Clipboard | 防环路剪贴板数据同步 |
+| `0x0040` | 已废弃（保留编号） | — | — | 旧剪贴板同步帧；不得用于新功能 |
 | `0x0050` | `REMOTE_INPUT` | Binary | Remote | 16B 定长遥控键鼠事件 |
 | `0x0060` | `SCREEN_STREAM` | Binary | Mirror | 20B 流子头 + 裸 NALU / 信令 |
 | `0x0070` | `NOTIFICATION_EVENT` | JSON | Tools | 移动端通知事件广播 |
@@ -122,7 +122,7 @@ EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
 + UncompressedLength (4B, big-endian) + ZLIB payload
 ```
 
-当前只对工作区、同步、剪贴板、通知和文本等 JSON 控制消息启用，并要求压缩后连同
+当前只对工作区、同步、通知和文本等 JSON 控制消息启用，并要求压缩后连同
 8 字节封装头确实小于原始载荷；文件分块、屏幕流、握手和心跳不走该路径。
 解压后的长度必须等于 `UncompressedLength`，并且不能超过 16 MiB。
 

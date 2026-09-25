@@ -19,9 +19,9 @@ import 'cloud_relay_settings_screen.dart';
 import 'notification_history_screen.dart';
 import 'navigation_components.dart';
 import 'page_components.dart';
+import 'app_message_snackbar.dart';
+import 'transfer_history_screen.dart';
 
-import '../core/clipboard_adapter.dart';
-import '../core/clipboard_manager.dart';
 import '../core/cloud_relay.dart';
 import '../core/constants.dart';
 import '../core/device_identity_manager.dart';
@@ -33,6 +33,7 @@ import '../core/notification_manager.dart';
 import '../core/session_manager.dart';
 import '../core/sms_relay_manager.dart';
 import '../core/transfer_manager.dart';
+import '../core/transfer_history.dart';
 import '../core/transfer_model.dart';
 import '../core/trust_store.dart';
 import '../core/workspace_data_service.dart';
@@ -47,7 +48,6 @@ class HingeApp extends StatefulWidget {
   final String? persistentDataDirectory;
   final TrustStore? trustStore;
   final TransferManager? transferManager;
-  final ClipboardManager? clipboardManager;
   final WorkspaceState? workspaceState;
   final SessionManager? sessionManager;
 
@@ -61,7 +61,6 @@ class HingeApp extends StatefulWidget {
     this.persistentDataDirectory,
     this.trustStore,
     this.transferManager,
-    this.clipboardManager,
     this.workspaceState,
     this.sessionManager,
   });
@@ -77,7 +76,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   late final TrustStore _trustStore;
   late final PairingManager _pairingManager;
   late final TransferManager _transferManager;
-  late final ClipboardManager _clipboardManager;
+  late final TransferHistoryStore _transferHistoryStore;
   late final WorkspaceState _workspaceState;
   late final SessionManager _sessionManager;
   late final WorkspaceDataService _dataService;
@@ -86,7 +85,6 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _nativeFileTransferSubscription;
   bool _ownsDiscovery = false;
   bool _ownsTransfer = false;
-  bool _ownsClipboard = false;
   bool _ownsWorkspace = false;
   bool _ownsSession = false;
   bool _hapticFeedbackEnabled = true;
@@ -110,6 +108,9 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
         );
     _transferManager = widget.transferManager ?? TransferManager();
     _ownsTransfer = widget.transferManager == null;
+    _transferHistoryStore = TransferHistoryStore(
+      _persistentPath('transfer_history.json'),
+    );
 
     if (widget.discoveryService != null && widget.identity != null) {
       _identity = widget.identity!;
@@ -163,17 +164,6 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     );
     _loadNativeDynamicColors();
 
-    _clipboardManager =
-        widget.clipboardManager ??
-        ClipboardManager(
-          localIdentity: _identity,
-          adapter: Platform.environment.containsKey('FLUTTER_TEST')
-              ? MockClipboardAdapter()
-              : FlutterClipboardAdapter(),
-        );
-    _ownsClipboard = widget.clipboardManager == null;
-    _clipboardManager.adapter.startMonitoring();
-
     if (!Platform.environment.containsKey('FLUTTER_TEST')) {
       unawaited(_startNetworkServices());
     }
@@ -215,7 +205,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     if (_ownsSession) _sessionManager.dispose();
     if (_ownsDiscovery) _discoveryService.dispose();
     if (_ownsTransfer) _transferManager.dispose();
-    if (_ownsClipboard) _clipboardManager.dispose();
+    _transferHistoryStore.dispose();
     if (_ownsWorkspace) _workspaceState.dispose();
     super.dispose();
   }
@@ -277,7 +267,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
           trustStore: _trustStore,
           pairingManager: _pairingManager,
           transferManager: _transferManager,
-          clipboardManager: _clipboardManager,
+          transferHistoryStore: _transferHistoryStore,
           workspaceState: _workspaceState,
           sessionManager: _sessionManager,
           dataService: _dataService,
@@ -439,7 +429,9 @@ ThemeData _hingeTheme(
       ColorScheme.fromSeed(
         seedColor: Color(state.seedColor),
         brightness: brightness,
-        dynamicSchemeVariant: DynamicSchemeVariant.expressive,
+        // Preset seed colors use the standard Material 3 tonal-spot palette,
+        // not the more varied Material 3 Expressive palette.
+        dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot,
       );
   if (brightness == Brightness.light &&
       dynamicScheme == null &&
@@ -709,7 +701,7 @@ class DevicesScreen extends StatefulWidget {
   final TrustStore trustStore;
   final PairingManager pairingManager;
   final TransferManager transferManager;
-  final ClipboardManager clipboardManager;
+  final TransferHistoryStore transferHistoryStore;
   final WorkspaceState? workspaceState;
   final SessionManager sessionManager;
   final WorkspaceDataService dataService;
@@ -722,7 +714,7 @@ class DevicesScreen extends StatefulWidget {
     required this.trustStore,
     required this.pairingManager,
     required this.transferManager,
-    required this.clipboardManager,
+    required this.transferHistoryStore,
     required this.sessionManager,
     required this.dataService,
     this.workspaceState,
@@ -743,14 +735,16 @@ class _DevicesScreenState extends State<DevicesScreen>
   StreamSubscription<List<Device>>? _deviceSubscription;
   StreamSubscription<SessionState>? _connectionSubscription;
   StreamSubscription<SessionConnection>? _incomingConnectionSubscription;
+  StreamSubscription<SessionConnection>? _createdConnectionSubscription;
   StreamSubscription<DiscoveryConnectionRequest>?
   _connectionRequestSubscription;
   StreamSubscription<String>? _fileReceivedSubscription;
+  StreamSubscription<TransferProgress>? _transferProgressSubscription;
+  StreamSubscription<Map<String, dynamic>>? _nativeQueueHistorySubscription;
   StreamSubscription<List<SharedFile>>? _sharedFileSubscription;
   final List<StreamSubscription<dynamic>> _incomingPeerSubscriptions = [];
   final Set<SessionConnection> _watchedConnections = <SessionConnection>{};
-  StreamSubscription? _clipboardSubscription;
-  StreamSubscription? _urlSubscription;
+  final Map<String, DateTime> _lastTransferHistoryProgressAt = {};
   late final NotificationManager _notificationManager;
   late final SmsRelayManager _smsRelayManager;
   SessionConnection? _activeConnection;
@@ -832,7 +826,6 @@ class _DevicesScreenState extends State<DevicesScreen>
       notificationManager: _notificationManager,
     );
     _configureTransferStorage();
-    widget.clipboardManager.autoSync = _workspaceState.clipboardSyncEnabled;
     _registryDevices = widget.discoveryService.registry.devices;
     _deviceSubscription = widget.discoveryService.registry.devicesStream.listen(
       (devices) {
@@ -846,21 +839,18 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
     _incomingConnectionSubscription = widget.sessionManager.onClientConnected
         .listen(_watchIncomingConnection);
+    _createdConnectionSubscription = widget.sessionManager.onConnectionCreated
+        .listen(_watchConnectionData);
+    // The native service can restore a socket before this page subscribes.
+    // Attach feature consumers to sessions that were restored before the page subscribed.
+    for (final connection in widget.sessionManager.activeConnections) {
+      _watchConnectionData(connection);
+    }
     _connectionRequestSubscription = widget.discoveryService.connectionRequests
         .listen((request) {
           unawaited(_handleReverseConnectionRequest(request));
         });
     _workspaceState.addListener(_onWorkspaceChanged);
-    _clipboardSubscription = widget.clipboardManager.clipboardStream.listen((
-      message,
-    ) {
-      if (!mounted) return;
-      _showMessage('剪贴板已同步：${_shorten(message.content, 36)}');
-    });
-    _urlSubscription = widget.clipboardManager.urlHandoffStream.listen((url) {
-      if (!mounted) return;
-      _showMessage('收到链接：$url');
-    });
     _fileReceivedSubscription = widget.transferManager.fileReceivedStream
         .listen((path) {
           if (_isDesktop) return;
@@ -870,7 +860,13 @@ class _DevicesScreenState extends State<DevicesScreen>
             _showMessage('已收到文件：$name');
           }
         });
+    _transferProgressSubscription = widget.transferManager.progressStream
+        .listen(_recordTransferProgress);
     if (Platform.isAndroid) {
+      _nativeQueueHistorySubscription = widget
+          .sessionManager
+          .onNativeFileTransfer
+          .listen(_recordNativeQueuedTransferEvent);
       _sharedFileSubscription = widget.dataService.sharedFilesStream.listen(
         _enqueueSharedFiles,
         onError: (Object error, StackTrace stackTrace) {
@@ -918,8 +914,11 @@ class _DevicesScreenState extends State<DevicesScreen>
     _deviceSubscription?.cancel();
     _connectionSubscription?.cancel();
     _incomingConnectionSubscription?.cancel();
+    _createdConnectionSubscription?.cancel();
     _connectionRequestSubscription?.cancel();
     _fileReceivedSubscription?.cancel();
+    _transferProgressSubscription?.cancel();
+    _nativeQueueHistorySubscription?.cancel();
     _sharedFileSubscription?.cancel();
     _listenerStatusTimer?.cancel();
     _listenerStatusTimer = null;
@@ -935,8 +934,6 @@ class _DevicesScreenState extends State<DevicesScreen>
       subscription.cancel();
     }
     _incomingPeerSubscriptions.clear();
-    _clipboardSubscription?.cancel();
-    _urlSubscription?.cancel();
     unawaited(_smsRelayManager.dispose());
     _notificationManager.dispose();
     // Only a native transport can outlive this Flutter state. The stable Dart
@@ -1001,6 +998,28 @@ class _DevicesScreenState extends State<DevicesScreen>
           queuedCount++;
           hasReadyConnection =
               hasReadyConnection || enqueueResult.connectionReady;
+          final taskId = enqueueResult.taskId;
+          if (taskId != null) {
+            final now = DateTime.now();
+            int totalBytes = 0;
+            try {
+              totalBytes = File(file.path).lengthSync();
+            } catch (_) {}
+            widget.transferHistoryStore.upsert(
+              TransferHistoryRecord(
+                id: 'native-$taskId',
+                transferId: taskId,
+                deviceId: targetDeviceId,
+                deviceName: _transferDeviceName(targetDeviceId),
+                fileName: file.name,
+                direction: TransferHistoryDirection.send,
+                status: TransferHistoryStatus.queued,
+                totalBytes: totalBytes,
+                createdAt: now,
+                updatedAt: now,
+              ),
+            );
+          }
         } else {
           fallbackFiles.add(file);
         }
@@ -1040,6 +1059,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
     final client = CloudRelayClient();
     final uploadedPaths = <String>{};
+    CloudRelayProgress? activeProgress;
     try {
       final available = await client.isPeerRegistered(
         settings: settings,
@@ -1049,14 +1069,37 @@ class _DevicesScreenState extends State<DevicesScreen>
       if (!available) return null;
       final service = CloudRelayTransferService(client);
       for (final file in files) {
-        await service.sendFile(
+        activeProgress = null;
+        final transferId = await service.sendFile(
           settings: settings,
           localHingeDeviceId: widget.localIdentity.deviceId,
           peerHingeDeviceId: targetDeviceId,
           filePath: file.path,
           fileName: file.name,
           mimeType: file.mimeType,
+          onProgress: (progress) {
+            activeProgress = progress;
+            _onCloudRelayTransferProgress(progress, direction: 'upload');
+          },
         );
+        int fileSize = 0;
+        try {
+          fileSize = File(file.path).lengthSync();
+        } catch (_) {}
+        _recordCloudRelayUploadStored(
+          transferId: transferId,
+          fileName: file.name,
+          totalBytes: fileSize,
+          deviceId: targetDeviceId,
+          deviceName: _transferDeviceName(targetDeviceId),
+        );
+        await _finishCloudRelayTransferNotification(
+          transferId: transferId,
+          fileName: file.name,
+          direction: 'upload',
+          succeeded: true,
+        );
+        activeProgress = null;
         uploadedPaths.add(file.path);
         try {
           final cachedFile = File(file.path);
@@ -1072,6 +1115,20 @@ class _DevicesScreenState extends State<DevicesScreen>
       }
       return uploadedPaths;
     } catch (error) {
+      final progress = activeProgress;
+      if (progress != null) {
+        _markCloudRelayTransferFailed(
+          progress,
+          direction: 'upload',
+          error: error,
+        );
+        await _finishCloudRelayTransferNotification(
+          transferId: progress.transferId,
+          fileName: progress.fileName,
+          direction: 'upload',
+          succeeded: false,
+        );
+      }
       if (mounted) {
         _showMessage(
           uploadedPaths.isEmpty
@@ -1091,6 +1148,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (!settings.isConfigured) return;
     _cloudRelayPollInFlight = true;
     final client = CloudRelayClient();
+    CloudRelayProgress? activeProgress;
     try {
       final allowedSenderRelayIds = widget.trustStore
           .getAllTrustedDevices()
@@ -1108,7 +1166,10 @@ class _DevicesScreenState extends State<DevicesScreen>
         localHingeDeviceId: widget.localIdentity.deviceId,
         downloadDirectory: widget.transferManager.downloadDirectory,
         allowedSenderRelayDeviceIds: allowedSenderRelayIds,
-        onProgress: (_) {},
+        onProgress: (progress) {
+          activeProgress = progress;
+          _onCloudRelayTransferProgress(progress, direction: 'download');
+        },
       );
       for (final path in paths) {
         unawaited(widget.dataService.showFileReceivedNotification(path));
@@ -1121,13 +1182,298 @@ class _DevicesScreenState extends State<DevicesScreen>
     } catch (error) {
       // Polling is best effort. Keep the manifest in the relay inbox so a
       // transient network or verification failure can be retried next time.
-      if (error is! CloudRelayException && mounted) {
-        _showMessage('Cloud Relay 接收失败：$error');
+      final progress = activeProgress;
+      if (progress != null &&
+          progress.stage != CloudRelayProgressStage.completed) {
+        _markCloudRelayTransferFailed(
+          progress,
+          direction: 'download',
+          error: error,
+        );
+        await _finishCloudRelayTransferNotification(
+          transferId: progress.transferId,
+          fileName: progress.fileName,
+          direction: 'download',
+          succeeded: false,
+        );
+      }
+      if (mounted) {
+        final status = error is CloudRelayException
+            ? '（HTTP ${error.statusCode}）'
+            : '：$error';
+        _showMessage('Cloud Relay 接收失败$status');
       }
     } finally {
       client.dispose();
       _cloudRelayPollInFlight = false;
     }
+  }
+
+  void _onCloudRelayTransferProgress(
+    CloudRelayProgress progress, {
+    required String direction,
+  }) {
+    if (!Platform.isAndroid) return;
+    _recordCloudRelayProgress(progress, direction: direction);
+    if (progress.stage == CloudRelayProgressStage.completed) {
+      unawaited(
+        _finishCloudRelayTransferNotification(
+          transferId: progress.transferId,
+          fileName: progress.fileName,
+          direction: direction,
+          succeeded: true,
+        ),
+      );
+      return;
+    }
+    unawaited(
+      widget.dataService.showCloudRelayTransferProgress(
+        progress,
+        direction: direction,
+      ),
+    );
+  }
+
+  void _recordTransferProgress(TransferProgress progress) {
+    final now = DateTime.now();
+    final id = 'lan-${progress.transferId}';
+    final existing = _findTransferHistory(id);
+    final status = switch (progress.state) {
+      TransferState.completed => TransferHistoryStatus.completed,
+      TransferState.failed => TransferHistoryStatus.failed,
+      TransferState.cancelled => TransferHistoryStatus.cancelled,
+      TransferState.awaitingPickup => TransferHistoryStatus.awaitingPickup,
+      TransferState.idle ||
+      TransferState.offering ||
+      TransferState.waitingAccept ||
+      TransferState.transferring ||
+      TransferState.verifying => TransferHistoryStatus.transferring,
+    };
+    if (status == TransferHistoryStatus.transferring &&
+        !_shouldPersistTransferProgress(
+          id,
+          now,
+          progress.bytesTransferred,
+          progress.totalBytes,
+          existing,
+        )) {
+      return;
+    }
+    widget.transferHistoryStore.upsert(
+      TransferHistoryRecord(
+        id: id,
+        transferId: progress.transferId,
+        deviceId: progress.deviceId.isNotEmpty
+            ? progress.deviceId
+            : existing?.deviceId ?? '',
+        deviceName: progress.deviceName.isNotEmpty
+            ? progress.deviceName
+            : existing?.deviceName ?? '',
+        fileName: progress.fileName,
+        direction: progress.direction == FileTransferDirection.send
+            ? TransferHistoryDirection.send
+            : TransferHistoryDirection.receive,
+        status: status,
+        bytesTransferred: progress.bytesTransferred,
+        totalBytes: progress.totalBytes,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        error: progress.error,
+      ),
+    );
+  }
+
+  void _recordNativeQueuedTransferEvent(Map<String, dynamic> event) {
+    final eventType = '${event['event'] ?? ''}';
+    if (!eventType.startsWith('transfer_')) return;
+    final taskId = '${event['taskId'] ?? ''}'.trim();
+    if (taskId.isEmpty) return;
+    final id = 'native-$taskId';
+    final existing = _findTransferHistory(id);
+    final fileName = '${event['name'] ?? existing?.fileName ?? ''}'.trim();
+    if (fileName.isEmpty) return;
+    final now = DateTime.now();
+    final targetDeviceId =
+        '${event['targetDeviceId'] ?? existing?.deviceId ?? ''}'.trim();
+    final bytes =
+        (event['bytesTransferred'] as num?)?.toInt() ??
+        (event['bytes'] as num?)?.toInt() ??
+        existing?.bytesTransferred ??
+        0;
+    final totalBytes =
+        (event['totalBytes'] as num?)?.toInt() ?? existing?.totalBytes ?? 0;
+    final state = switch (eventType) {
+      'transfer_progress' => TransferHistoryStatus.transferring,
+      'transfer_completed' => TransferHistoryStatus.completed,
+      // The native queue retries failed sends automatically. Keep the row
+      // active and make that retry visible instead of claiming it is terminal.
+      'transfer_failed' => TransferHistoryStatus.queued,
+      _ => existing?.status ?? TransferHistoryStatus.queued,
+    };
+    if (eventType == 'transfer_progress' &&
+        !_shouldPersistTransferProgress(id, now, bytes, totalBytes, existing)) {
+      return;
+    }
+    final reason = eventType == 'transfer_failed'
+        ? '${event['reason'] ?? '暂时失败'}，系统将自动重试'
+        : (state == TransferHistoryStatus.completed
+              ? ''
+              : existing?.error ?? '');
+    widget.transferHistoryStore.upsert(
+      TransferHistoryRecord(
+        id: id,
+        transferId: taskId,
+        deviceId: targetDeviceId,
+        deviceName: _transferDeviceName(targetDeviceId),
+        fileName: fileName,
+        direction: TransferHistoryDirection.send,
+        status: state,
+        bytesTransferred: state == TransferHistoryStatus.completed
+            ? (totalBytes > 0 ? totalBytes : bytes)
+            : bytes,
+        totalBytes: totalBytes,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        error: reason,
+      ),
+    );
+  }
+
+  void _recordCloudRelayProgress(
+    CloudRelayProgress progress, {
+    required String direction,
+  }) {
+    final isUpload = direction == 'upload';
+    final id = 'cloud-$direction-${progress.transferId}';
+    final existing = _findTransferHistory(id);
+    final now = DateTime.now();
+    final status = progress.stage == CloudRelayProgressStage.completed
+        ? (isUpload
+              ? TransferHistoryStatus.awaitingPickup
+              : TransferHistoryStatus.completed)
+        : TransferHistoryStatus.transferring;
+    final deviceId = isUpload
+        ? (_activeDevice?.deviceId ?? _lastConnectedDevice?.deviceId ?? '')
+        : '';
+    widget.transferHistoryStore.upsert(
+      TransferHistoryRecord(
+        id: id,
+        transferId: progress.transferId,
+        deviceId: deviceId.isNotEmpty ? deviceId : existing?.deviceId ?? '',
+        deviceName: isUpload
+            ? (_activeDevice?.name ??
+                  _lastConnectedDevice?.name ??
+                  'Cloud Relay 设备')
+            : 'Cloud Relay 设备',
+        fileName: progress.fileName,
+        direction: isUpload
+            ? TransferHistoryDirection.send
+            : TransferHistoryDirection.receive,
+        status: status,
+        bytesTransferred: progress.bytesTransferred,
+        totalBytes: progress.totalBytes,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      ),
+    );
+  }
+
+  void _recordCloudRelayUploadStored({
+    required String transferId,
+    required String fileName,
+    required int totalBytes,
+    required String deviceId,
+    required String deviceName,
+  }) {
+    final now = DateTime.now();
+    final id = 'cloud-upload-$transferId';
+    final existing = _findTransferHistory(id);
+    widget.transferHistoryStore.upsert(
+      TransferHistoryRecord(
+        id: id,
+        transferId: transferId,
+        deviceId: deviceId,
+        deviceName: deviceName,
+        fileName: fileName,
+        direction: TransferHistoryDirection.send,
+        status: TransferHistoryStatus.awaitingPickup,
+        bytesTransferred: totalBytes,
+        totalBytes: totalBytes,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      ),
+    );
+  }
+
+  void _markCloudRelayTransferFailed(
+    CloudRelayProgress progress, {
+    required String direction,
+    required Object error,
+  }) {
+    _recordCloudRelayProgress(progress, direction: direction);
+    final id = 'cloud-$direction-${progress.transferId}';
+    final existing = _findTransferHistory(id);
+    if (existing == null) return;
+    widget.transferHistoryStore.upsert(
+      existing.copyWith(
+        status: TransferHistoryStatus.failed,
+        error: error.toString(),
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  String _transferDeviceName(String deviceId) {
+    if (deviceId.isNotEmpty) {
+      for (final device in _allDevices) {
+        if (device.deviceId == deviceId) return device.name;
+      }
+    }
+    return deviceId.isEmpty ? '已连接设备' : '已配对设备';
+  }
+
+  TransferHistoryRecord? _findTransferHistory(String id) {
+    for (final record in widget.transferHistoryStore.records) {
+      if (record.id == id) return record;
+    }
+    return null;
+  }
+
+  bool _shouldPersistTransferProgress(
+    String id,
+    DateTime now,
+    int bytesTransferred,
+    int totalBytes,
+    TransferHistoryRecord? existing,
+  ) {
+    final previous = _lastTransferHistoryProgressAt[id];
+    final reachedEnd = totalBytes > 0 && bytesTransferred >= totalBytes;
+    final advancedChunk =
+        existing != null &&
+        bytesTransferred - existing.bytesTransferred >= 2 * 1024 * 1024;
+    if (previous != null &&
+        now.difference(previous) < const Duration(milliseconds: 500) &&
+        !reachedEnd &&
+        !advancedChunk) {
+      return false;
+    }
+    _lastTransferHistoryProgressAt[id] = now;
+    return true;
+  }
+
+  Future<void> _finishCloudRelayTransferNotification({
+    required String transferId,
+    required String fileName,
+    required String direction,
+    required bool succeeded,
+  }) async {
+    if (!Platform.isAndroid) return;
+    await widget.dataService.finishCloudRelayTransferNotification(
+      transferId: transferId,
+      fileName: fileName,
+      direction: direction,
+      succeeded: succeeded,
+    );
   }
 
   Future<void> _dispatchPendingSharedFiles() async {
@@ -1154,6 +1500,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           mimeType: file.mimeType,
           fileNameOverride: file.name,
           precomputeHash: false,
+          onProgress: _recordTransferProgress,
         );
         try {
           final cachedFile = File(file.path);
@@ -1444,7 +1791,6 @@ class _DevicesScreenState extends State<DevicesScreen>
   void _onWorkspaceChanged() {
     if (!mounted) return;
     _configureTransferStorage();
-    widget.clipboardManager.autoSync = _workspaceState.clipboardSyncEnabled;
     widget.sessionManager.localPairingCode = _workspaceState.localPairingCode;
     widget.discoveryService.pairingRequired =
         _workspaceState.localPairingCode.isNotEmpty;
@@ -1487,10 +1833,13 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   Device? get _selectedDevice {
     final devices = _allDevices;
-    if (_activeDevice != null) {
+    if (_activeDevice != null && _isSessionConnected(_activeDevice!)) {
       for (final device in devices) {
         if (device.deviceId == _activeDevice!.deviceId) return device;
       }
+    }
+    for (final device in devices) {
+      if (_isSessionConnected(device)) return device;
     }
     for (final device in devices) {
       if (device.trustState == DeviceTrustState.trusted &&
@@ -1635,13 +1984,6 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
   }
 
-  void _setClipboardSync(bool enabled) {
-    widget.clipboardManager.autoSync = enabled;
-    _workspaceState.setClipboardSync(enabled);
-    setState(() {});
-    _showMessage(enabled ? '剪贴板同步已开启' : '剪贴板同步已关闭');
-  }
-
   void _configureTransferStorage() {
     widget.transferManager.configureStorage(
       imagePath: _workspaceState.imageStoragePath,
@@ -1699,13 +2041,9 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _watchConnectionData(SessionConnection connection) {
     if (!_watchedConnections.add(connection)) return;
-    widget.clipboardManager.registerConnection(connection);
     _smsRelayManager.registerConnection(connection);
     _incomingPeerSubscriptions.add(
       connection.frames.listen((frame) {
-        unawaited(
-          widget.clipboardManager.handleIncomingFrame(connection, frame),
-        );
         unawaited(
           widget.transferManager.handleIncomingFrame(connection, frame),
         );
@@ -1715,7 +2053,6 @@ class _DevicesScreenState extends State<DevicesScreen>
       connection.stateStream.listen((state) {
         if (state == SessionState.disconnected) {
           _watchedConnections.remove(connection);
-          widget.clipboardManager.unregisterConnection(connection);
           _smsRelayManager.unregisterConnection(connection);
         }
       }),
@@ -1794,7 +2131,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
 
     // 用户已经主动建立了这条局域网会话，连接本身就是授权动作。保留
-    // TrustStore 作为底层兼容层，让通知、剪贴板等旧的信任检查继续工作，
+    // TrustStore 作为底层兼容层，让通知等现有信任检查继续工作，
     // 但不再要求用户额外完成一套“配对”流程。
     widget.pairingManager.saveTrustedPeer(peer.deviceId, peer.name);
     final existing = _allDevices.cast<Device?>().firstWhere(
@@ -1867,9 +2204,24 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _showMessage(String message) {
     if (!mounted) return;
+    final floatingCapsuleVisible =
+        _workspaceState.floatingCapsuleNavigation &&
+        (!_isDesktop ||
+            _workspaceState.navigationStyle == AppNavigationStyle.bottom) &&
+        MediaQuery.viewInsetsOf(context).bottom == 0;
+    final viewPaddingBottom = MediaQuery.viewPaddingOf(context).bottom;
+    final capsuleBottomMargin = viewPaddingBottom > 0
+        ? viewPaddingBottom + 8.0
+        : 16.0;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+      ..showSnackBar(
+        buildHingeMessageSnackBar(
+          message,
+          floatingCapsuleVisible: floatingCapsuleVisible,
+          capsuleBottomMargin: capsuleBottomMargin,
+        ),
+      );
   }
 
   Future<void> _refreshDiscovery() async {
@@ -2219,30 +2571,32 @@ class _DevicesScreenState extends State<DevicesScreen>
     return unique;
   }
 
-  void _disconnect() {
-    final name = _activeDevice?.name ?? '设备';
-    final deviceId =
-        _activeDevice?.deviceId ??
-        _activeConnection?.peerInfo?.deviceId ??
-        _lastConnectedDevice?.deviceId;
-    if (deviceId != null && deviceId.isNotEmpty) {
-      _manualDisconnectSuppressedDeviceIds.add(deviceId);
-    }
+  void _disconnect(Device device) {
+    final deviceId = device.deviceId;
+    _manualDisconnectSuppressedDeviceIds.add(deviceId);
     _connectionAttemptGeneration++;
     _cancelHistoricalReconnect();
-    _connectionSubscription?.cancel();
-    _connectionSubscription = null;
-    // This is an explicit user action, so it must reach the native foreground
-    // broker as a manual disconnect. Widget/engine teardown is the only path
-    // that leaves a native-owned session alive.
-    _activeConnection?.dispose();
-    _lastConnectedDevice = null;
+    final activeMatches =
+        _activeDevice?.deviceId == deviceId ||
+        _activeConnection?.peerInfo?.deviceId == deviceId;
+    if (activeMatches) {
+      _connectionSubscription?.cancel();
+      _connectionSubscription = null;
+    }
+    // A restored native session need not be the page's _activeConnection.
+    // Close every session for this device, not only the page's last pointer.
+    widget.sessionManager.disconnectDevice(deviceId);
+    if (_lastConnectedDevice?.deviceId == deviceId) {
+      _lastConnectedDevice = null;
+    }
     setState(() {
-      _activeConnection = null;
-      _activeDevice = null;
-      _storage = null;
+      if (activeMatches) {
+        _activeConnection = null;
+        _activeDevice = null;
+        _storage = null;
+      }
     });
-    _showMessage('已断开 $name');
+    _showMessage('已断开 ${device.name}');
   }
 
   void _showManualIpDialog() {
@@ -3225,13 +3579,7 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   Widget _buildMobileHomePage() {
     final selected = _selectedDevice;
-    final connectedCount = _allDevices
-        .where(
-          (device) =>
-              device.connectionState == DeviceConnectionState.connected ||
-              device.connectionState == DeviceConnectionState.suspended,
-        )
-        .length;
+    final connectedCount = _allDevices.where(_isSessionConnected).length;
     return _pageBody(
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3262,11 +3610,14 @@ class _DevicesScreenState extends State<DevicesScreen>
           if (selected != null) ...[
             const SizedBox(height: 16),
             _buildDeviceSummaryCard(selected),
-            const SizedBox(height: 16),
-            _buildSectionTitle('设备操作', '剪贴板和文件传输都从这里开始'),
-            const SizedBox(height: 10),
-            _buildOperationsCard(selected),
           ],
+          const SizedBox(height: 16),
+          _buildSectionTitle(
+            '设备操作',
+            selected == null ? '查看最近的文件收发记录' : '查看文件传输进度和历史记录',
+          ),
+          const SizedBox(height: 10),
+          _buildOperationsCard(),
         ],
       ),
     );
@@ -3384,7 +3735,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           const SizedBox(height: 20),
           _buildSectionTitle('设备操作', '只显示当前版本真正可用的入口'),
           const SizedBox(height: 10),
-          _buildOperationsCard(selected),
+          _buildOperationsCard(),
           const SizedBox(height: 20),
           _buildSectionTitle('工作区', '手机日程、笔记、待办和相册都从对应数据源读取'),
           const SizedBox(height: 10),
@@ -3534,7 +3885,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                 ),
                 if (online)
                   OutlinedButton.icon(
-                    onPressed: _disconnect,
+                    onPressed: () => _disconnect(selected),
                     icon: const Icon(Symbols.link_off_rounded),
                     label: const Text('断开连接'),
                   )
@@ -3612,8 +3963,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
   }
 
-  Widget _buildOperationsCard(Device? selected) {
-    final canUse = selected != null;
+  Widget _buildOperationsCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -3622,22 +3972,14 @@ class _DevicesScreenState extends State<DevicesScreen>
           runSpacing: 12,
           children: [
             ActionChip(
-              avatar: const Icon(Symbols.folder_rounded, size: 20),
-              label: const Text('文件管理'),
-              onPressed: canUse ? _refreshFiles : null,
-            ),
-            ActionChip(
-              avatar: Icon(
-                widget.clipboardManager.autoSync
-                    ? Symbols.content_copy_rounded
-                    : Symbols.content_paste_off_rounded,
-                size: 20,
+              avatar: const Icon(Icons.history_rounded, size: 20),
+              label: const Text('文件传输记录'),
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      TransferHistoryScreen(store: widget.transferHistoryStore),
+                ),
               ),
-              label: Text(
-                widget.clipboardManager.autoSync ? '剪贴板同步中' : '剪贴板同步已关闭',
-              ),
-              onPressed: () =>
-                  _setClipboardSync(!widget.clipboardManager.autoSync),
             ),
           ],
         ),
@@ -3820,14 +4162,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _buildConnectedModelsPage() {
-    final devices = _allDevices
-        .where(
-          (device) =>
-              device.connectionState == DeviceConnectionState.connected ||
-              device.connectionState == DeviceConnectionState.suspended ||
-              _isSessionConnected(device),
-        )
-        .toList();
+    final devices = _allDevices.where(_isSessionConnected).toList();
     return _pageBody(
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3879,7 +4214,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                 )
               : connected
               ? OutlinedButton(
-                  onPressed: _disconnect,
+                  onPressed: () => _disconnect(device),
                   child: const Text('断开连接'),
                 )
               : FilledButton(
@@ -4003,7 +4338,7 @@ class _DevicesScreenState extends State<DevicesScreen>
               ),
               connected
                   ? OutlinedButton(
-                      onPressed: _disconnect,
+                      onPressed: () => _disconnect(device),
                       child: const Text('断开连接'),
                     )
                   : FilledButton(
@@ -5538,6 +5873,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
     Navigator.pop(dialogContext);
     _showMessage('正在发送 ${photo.name}…');
+    CloudRelayProgress? cloudProgress;
     try {
       if (connection != null) {
         final bytes = await widget.dataService.loadPhotoBytes(photo.uri);
@@ -5549,6 +5885,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           fileName: photo.name,
           bytes: bytes,
           mimeType: 'image/${_photoExtension(photo.name)}',
+          onProgress: _recordTransferProgress,
         );
         if (mounted) _showMessage('已发送 ${photo.name}');
         return;
@@ -5571,14 +5908,32 @@ class _DevicesScreenState extends State<DevicesScreen>
         if (cachedPath == null || cachedPath.isEmpty) {
           throw StateError('图片原图读取失败');
         }
-        await CloudRelayTransferService(client).sendFile(
+        final transferId = await CloudRelayTransferService(client).sendFile(
           settings: cloudSettings,
           localHingeDeviceId: widget.localIdentity.deviceId,
           peerHingeDeviceId: target.deviceId,
           filePath: cachedPath,
           fileName: photo.name,
           mimeType: 'image/${_photoExtension(photo.name)}',
+          onProgress: (progress) {
+            cloudProgress = progress;
+            _onCloudRelayTransferProgress(progress, direction: 'upload');
+          },
         );
+        _recordCloudRelayUploadStored(
+          transferId: transferId,
+          fileName: photo.name,
+          totalBytes: await File(cachedPath).length(),
+          deviceId: target.deviceId,
+          deviceName: target.name,
+        );
+        await _finishCloudRelayTransferNotification(
+          transferId: transferId,
+          fileName: photo.name,
+          direction: 'upload',
+          succeeded: true,
+        );
+        cloudProgress = null;
         if (mounted) _showMessage('已上传 Cloud Relay，等待 ${target.name} 接收');
       } finally {
         client.dispose();
@@ -5590,6 +5945,20 @@ class _DevicesScreenState extends State<DevicesScreen>
         }
       }
     } catch (error) {
+      final progress = cloudProgress;
+      if (progress != null) {
+        _markCloudRelayTransferFailed(
+          progress,
+          direction: 'upload',
+          error: error,
+        );
+        await _finishCloudRelayTransferNotification(
+          transferId: progress.transferId,
+          fileName: progress.fileName,
+          direction: 'upload',
+          succeeded: false,
+        );
+      }
       if (mounted) _showMessage('发送失败：$error');
     }
   }
@@ -5833,13 +6202,6 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (millis <= 0) return '日期未知';
     final date = DateTime.fromMillisecondsSinceEpoch(millis);
     return '${date.year}/${date.month}/${date.day}';
-  }
-
-  String _shorten(String value, int maxLength) {
-    final compact = value.replaceAll('\n', ' ');
-    return compact.length <= maxLength
-        ? compact
-        : '${compact.substring(0, maxLength)}…';
   }
 }
 

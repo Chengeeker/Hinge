@@ -466,7 +466,6 @@ class DiscoveryService {
       discoveryPort: _socket?.port ?? _listenPort,
       capabilities: const [
         'file_transfer',
-        'clipboard',
         'remote_control',
         'backup',
       ],

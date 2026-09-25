@@ -577,7 +577,13 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 mapOf("task" to task.id, "bytes" to source.length()),
             )
             HingeNativeConnectionEvents.emit(
-                mapOf("event" to "transfer_queued", "taskId" to task.id),
+                mapOf(
+                    "event" to "transfer_queued",
+                    "taskId" to task.id,
+                    "name" to task.name,
+                    "targetDeviceId" to task.targetDeviceId,
+                    "totalBytes" to source.length(),
+                ),
             )
             val connectionReady = !lowPowerStandby && connections.values.any {
                 it.isReady &&
@@ -588,6 +594,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
             return mapOf(
                 "accepted" to true,
                 "connectionReady" to connectionReady,
+                "taskId" to task.id,
             )
         } catch (error: Exception) {
             diagnostics.log("transfer_enqueue_failed", mapOf("reason" to error.javaClass.simpleName))

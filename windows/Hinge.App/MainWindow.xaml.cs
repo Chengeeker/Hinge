@@ -69,7 +69,6 @@ public sealed partial class MainWindow : Window
     private readonly TrustStore _trustStore;
     private readonly TransferManager _transferManager;
     private readonly Win32ClipboardAdapter _clipboardAdapter;
-    private readonly ClipboardManager _clipboardManager;
     private readonly PairingManager _pairingManager;
     private readonly Win32InputInjector _inputInjector;
     private readonly RemoteInputManager _remoteInputManager;
@@ -347,7 +346,6 @@ public sealed partial class MainWindow : Window
     private ContentControl HeroDeviceLogo => Home.HeroDeviceLogoControl;
     private TextBlock LocalDeviceInfo => Home.LocalDeviceInfoText;
     private InfoBar ActivityInfoBar => Home.DiscoveryStatus;
-    private TextBlock ClipboardStatusText => Home.ClipboardStatus;
     private ListView FileCategoryList => _filePage?.Categories ?? throw new InvalidOperationException("文件管理页面尚未加载");
     private ListView FileListView => _filePage?.Files ?? throw new InvalidOperationException("文件管理页面尚未加载");
     private TextBlock FilePathText => _filePage?.PathText ?? throw new InvalidOperationException("文件管理页面尚未加载");
@@ -394,7 +392,6 @@ public sealed partial class MainWindow : Window
         _pairingManager = new PairingManager(_localIdentity, _trustStore);
         _transferManager = new TransferManager(_receiveDirectory);
         _clipboardAdapter = new Win32ClipboardAdapter();
-        _clipboardManager = new ClipboardManager(_localIdentity, _clipboardAdapter);
         _inputInjector = new Win32InputInjector();
         _remoteInputManager = new RemoteInputManager(_inputInjector, _trustStore);
         _notificationPresenter = new Win32NotificationPresenter(
@@ -430,8 +427,6 @@ public sealed partial class MainWindow : Window
         _transferManager.TransferProgressChanged += OnTransferProgress;
         _transferManager.FileReceived += OnFileReceived;
         _transferManager.TransferFailed += OnTransferFailed;
-        _clipboardManager.ClipboardReceived += OnClipboardReceived;
-        _clipboardManager.UrlHandoffReceived += OnUrlHandoffReceived;
         _notificationManager.NotificationReceived += OnNotificationReceived;
         Closed += OnClosed;
 
@@ -458,8 +453,6 @@ public sealed partial class MainWindow : Window
             // The tray is optional; the main WinUI window remains usable without it.
         }
 
-        _clipboardAdapter.StartMonitoring();
-        App.LogLifecycle("clipboard-monitor-started");
         _sessionManager.StartListener();
         App.LogLifecycle($"session-listener-started listening={_sessionManager.IsListening}");
         _discoveryService.Start();
@@ -748,7 +741,6 @@ public sealed partial class MainWindow : Window
         page.DeviceList.ItemClick += DeviceListView_ItemClick;
         page.Refresh.Click += BtnRefresh_Click;
         page.SendFile.Click += BtnFiles_Click;
-        page.ClipboardToggle.Click += BtnClipboard_Click;
         page.TransferCancelRequested += Home_TransferCancelRequested;
         page.TransferHistoryDeleteRequested += Home_TransferHistoryDeleteRequested;
         page.TransferHistoryClearRequested += Home_TransferHistoryClearRequested;
@@ -954,7 +946,7 @@ public sealed partial class MainWindow : Window
         SaveCloudRelayFromPage();
         _settingsPage.CloudRelayStatus.Text = _cloudRelaySettings.Enabled
             ? "Cloud Relay 已开启；局域网连接仍然优先。"
-            : "Cloud Relay 已关闭，文件只走原有局域网与待发送队列。";
+            : "Cloud Relay 已关闭，文件只走原有局域网路径。";
     }
 
     private void GenerateCloudRelayKey_Click(object sender, RoutedEventArgs e)
@@ -3232,7 +3224,6 @@ public sealed partial class MainWindow : Window
         try
         {
             await _transferManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
-            await _clipboardManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
             _remoteInputManager.HandleIncomingFrame(args.Connection, args.Frame);
             await _notificationManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
         }
@@ -3302,16 +3293,6 @@ public sealed partial class MainWindow : Window
             RefreshTransferHistory();
             StatusText.Text = $"文件接收失败：{failure.FileName} · {failure.Error}";
         });
-    }
-
-    private void OnClipboardReceived(object? sender, ClipboardEventMessage message)
-    {
-        DispatcherQueue.TryEnqueue(() => ClipboardStatusText.Text = $"已写入本机系统剪贴板：{Preview(message.Content)}");
-    }
-
-    private void OnUrlHandoffReceived(object? sender, string url)
-    {
-        DispatcherQueue.TryEnqueue(() => ClipboardStatusText.Text = $"已写入本机系统剪贴板：{Preview(url)}");
     }
 
     private void RefreshTransferHistory()
@@ -4076,13 +4057,6 @@ public sealed partial class MainWindow : Window
     private void BtnConnect_Click(object sender, RoutedEventArgs e) => _ = ShowManualConnectAsync();
     private void BtnFiles_Click(object sender, RoutedEventArgs e) => _ = PickAndSendFileAsync();
     private void BtnQuickTransfer_Click(object sender, RoutedEventArgs e) => _ = ShowQuickTransferAsync();
-    private void BtnClipboard_Click(object sender, RoutedEventArgs e)
-    {
-        _clipboardManager.AutoSync = !_clipboardManager.AutoSync;
-        ClipboardStatusText.Text = _clipboardManager.AutoSync ? "自动同步已开启" : "自动同步已暂停";
-        StatusText.Text = ClipboardStatusText.Text;
-    }
-
     private async Task ShowManualConnectAsync()
     {
         var input = new TextBox
@@ -4184,7 +4158,7 @@ public sealed partial class MainWindow : Window
                 ContentFrame.Navigate(typeof(NotificationHistoryPage));
                 break;
             case "设备操作":
-                NavigateToFeature("设备操作", "把常用的跨设备操作集中在这里，避免把剪贴板入口堆到标题栏。", "请选择一项操作", "\uE72D", "选择文件并发送", "发送文字或链接");
+                NavigateToFeature("设备操作", "把常用的跨设备操作集中在这里，避免把入口堆到标题栏。", "请选择一项操作", "\uE72D", "选择文件并发送", "发送文字或链接");
                 return;
         }
 
@@ -4199,7 +4173,6 @@ public sealed partial class MainWindow : Window
 
     private void AttachConnection(SessionConnection connection)
     {
-        _clipboardManager.RegisterConnection(connection);
         _notificationManager.RegisterConnection(connection);
         if (_observedConnections.Add(connection))
         {
@@ -4227,7 +4200,7 @@ public sealed partial class MainWindow : Window
         }
 
         // 用户主动建立的局域网连接即视为授权。保留 TrustStore 作为底层
-        // 兼容层，使通知、剪贴板等敏感通道继续沿用现有信任检查。
+        // 兼容层，使通知等现有敏感通道继续沿用信任检查。
         _pairingManager.SaveTrustedPeer(peer.DeviceId, peer.Name);
 
         string remoteAddress = connection.RemoteAddress?.ToString() ?? string.Empty;
@@ -4279,7 +4252,6 @@ public sealed partial class MainWindow : Window
             SetHeroDevice(device);
             HeaderStatusText.Text = $"已连接 {device.Name}";
             StatusText.Text = $"已建立局域网会话 · {DateTime.Now:HH:mm:ss}";
-            ClipboardStatusText.Text = "已连接设备，接收内容会写入系统剪贴板";
             ActivityInfoBar.Title = "设备连接正常";
             ActivityInfoBar.Message = $"已连接到 {device.Name}，双向身份握手已完成。";
             ActivityInfoBar.Severity = InfoBarSeverity.Success;
@@ -4393,7 +4365,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _clipboardManager.UnregisterConnection(connection);
         DispatcherQueue.TryEnqueue(RefreshExplorerSendMenu);
         if (ReferenceEquals(_activeConnection, connection))
         {
@@ -7209,7 +7180,6 @@ public sealed partial class MainWindow : Window
         _transferManager.Dispose();
         _cloudRelayPollTimer?.Stop();
         _cloudRelayClient.Dispose();
-        _clipboardManager.Dispose();
         _notificationManager.Dispose();
         _remoteInputManager.Dispose();
         _wakeAdvertiser.Dispose();

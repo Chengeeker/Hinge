@@ -52,16 +52,18 @@ class SessionPeerInfo {
 class FileEnqueueResult {
   final bool accepted;
   final bool connectionReady;
+  final String? taskId;
 
   const FileEnqueueResult({
     required this.accepted,
     required this.connectionReady,
+    this.taskId,
   });
 }
 
 /// Transport-neutral session API shared by the ordinary Dart socket and the
 /// Android foreground-service transport. Keeping this surface stable lets the
-/// feature managers (files, clipboard, notifications and workspace commands)
+/// feature managers (files, notifications and workspace commands)
 /// continue to consume protocol frames while the socket lifecycle moves out
 /// of the Android UI isolate.
 abstract class SessionConnection {
@@ -640,6 +642,9 @@ class _NativeSessionBridge {
       return FileEnqueueResult(
         accepted: result['accepted'] == true,
         connectionReady: result['connectionReady'] == true,
+        taskId: (result['taskId'] as String?)?.trim().isNotEmpty == true
+            ? (result['taskId'] as String).trim()
+            : null,
       );
     }
     // Keep a conservative fallback for a service built before the status
@@ -954,6 +959,9 @@ class SessionManager {
   TrustStore get trustStore => _trustStore;
   String get localPairingCode => _localPairingCode;
   bool get usesNativeTransport => _nativeBridge != null;
+  List<SessionConnection> get activeConnections => List.unmodifiable(
+    _connections.where((connection) => !connection.isDisposed),
+  );
 
   SessionManager({
     required this._localIdentity,
@@ -988,6 +996,21 @@ class SessionManager {
       }
     }
     return null;
+  }
+
+  int disconnectDevice(String deviceId) {
+    if (deviceId.isEmpty) return 0;
+    final matches = _connections
+        .where(
+          (connection) =>
+              !connection.isDisposed &&
+              connection.peerInfo?.deviceId == deviceId,
+        )
+        .toList();
+    for (final connection in matches) {
+      connection.dispose();
+    }
+    return matches.length;
   }
 
   Future<void> startListener() async {
@@ -1177,9 +1200,19 @@ class SessionManager {
     if (eventType == 'file_transfer_started' ||
         eventType == 'file_transfer_progress' ||
         eventType == 'file_transfer_failed' ||
-        eventType == 'file_received') {
+        eventType == 'file_received' ||
+        eventType == 'transfer_queued' ||
+        eventType == 'transfer_progress' ||
+        eventType == 'transfer_completed' ||
+        eventType == 'transfer_failed') {
       if (!_nativeFileTransferController.isClosed) {
-        _nativeFileTransferController.add(event);
+        final forwarded = Map<String, dynamic>.from(event);
+        final peer = _nativeConnections[connectionId]?.peerInfo;
+        if (peer != null) {
+          forwarded['deviceId'] = peer.deviceId;
+          forwarded['deviceName'] = peer.name;
+        }
+        _nativeFileTransferController.add(forwarded);
       }
       return;
     }

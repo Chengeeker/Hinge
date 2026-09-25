@@ -109,8 +109,8 @@
                     </StackPanel>
                     <StackPanel Spacing="8">
                         <TextBlock Text="Cloud Relay" FontSize="15" FontWeight="SemiBold" />
-                        <TextBlock Text="可选的用户自有 Cloudflare Worker + R2 异步文件中转。局域网连接仍然优先；两台已信任设备需要使用同一 Relay 密钥。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        <ToggleSwitch x:Name="CloudRelayEnabledToggle" Header="启用 Cloud Relay" OnContent="开启" OffContent="关闭" />
+                          <TextBlock Text="可选的用户自有 Cloudflare Worker + R2 异步文件中转。局域网连接仍然优先；两台已信任设备需要使用同一 Relay 密钥。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                          <ToggleSwitch x:Name="CloudRelayEnabledToggle" Header="启用 Cloud Relay" OnContent="开启" OffContent="关闭" />
                         <TextBox x:Name="CloudRelayEndpointTextBox" Header="Worker 地址" PlaceholderText="https://hinge-relay.example.workers.dev" />
                         <TextBox x:Name="CloudRelayKeyTextBox" Header="Relay 加密密钥" PlaceholderText="Base64URL 32 字节密钥" />
                         <PasswordBox x:Name="CloudRelayAdminTokenTextBox" Header="部署 Token（仅注册时使用）" />

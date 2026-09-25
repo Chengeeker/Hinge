@@ -18,7 +18,6 @@ enum MessageType {
   syncManifestRequest(0x0035),
   syncManifestResponse(0x0036),
   syncPullRequest(0x0037),
-  clipboardEvent(0x0040),
   remoteInput(0x0050),
   screenStream(0x0060),
   notificationEvent(0x0070),

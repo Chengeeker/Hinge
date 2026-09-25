@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hinge/app/app.dart';
+import 'package:hinge/app/app_message_snackbar.dart';
 import 'package:hinge/core/device_identity_manager.dart';
 import 'package:hinge/core/device_model.dart';
 import 'package:hinge/core/device_registry.dart';
@@ -85,7 +86,7 @@ void main() {
         platform: DevicePlatform.windows,
         appVersion: '1.0.0',
         protocolVersion: '0.1',
-        capabilities: ['file_transfer', 'clipboard'],
+        capabilities: ['file_transfer'],
         networkAddresses: ['192.168.1.100'],
         connectionState: DeviceConnectionState.connected,
         trustState: DeviceTrustState.trusted,
@@ -201,6 +202,25 @@ void main() {
                     const BoxConstraints.tightFor(width: 280, height: 64),
           );
           expect(capsuleFinder, findsOneWidget);
+
+          final messenger = tester.state<ScaffoldMessengerState>(
+            find.byType(ScaffoldMessenger),
+          );
+          messenger.showSnackBar(
+            buildHingeMessageSnackBar(
+              '连接失败：测试提示',
+              floatingCapsuleVisible: true,
+              capsuleBottomMargin: 16,
+            ),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          final snackBarTextFinder = find.text('连接失败：测试提示');
+          expect(snackBarTextFinder, findsOneWidget);
+          expect(
+            tester.getRect(snackBarTextFinder).bottom,
+            lessThan(tester.getRect(capsuleFinder).top),
+          );
 
           final indicatorFinder = find.byWidgetPredicate(
             (widget) =>

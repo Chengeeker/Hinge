@@ -10,6 +10,8 @@ enum TransferState {
   cancelled,
 }
 
+enum FileTransferDirection { send, receive }
+
 class TextTransferMessage {
   final String transferId;
   final String type; // "text" or "url"
@@ -148,6 +150,10 @@ class TransferProgress {
   final int bytesTransferred;
   final int totalBytes;
   final TransferState state;
+  final FileTransferDirection direction;
+  final String deviceId;
+  final String deviceName;
+  final String error;
 
   double get percentage =>
       totalBytes > 0 ? (bytesTransferred / totalBytes) * 100.0 : 0.0;
@@ -158,5 +164,9 @@ class TransferProgress {
     required this.bytesTransferred,
     required this.totalBytes,
     required this.state,
+    this.direction = FileTransferDirection.receive,
+    this.deviceId = '',
+    this.deviceName = '',
+    this.error = '',
   });
 }

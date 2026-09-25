@@ -43,7 +43,7 @@ public class DiscoveryTests
             Platform = "android",
             Port = 52831,
             DiscoveryPort = 52930,
-            Capabilities = new List<string> { "file_transfer", "clipboard" },
+            Capabilities = new List<string> { "file_transfer" },
             ConnectionRequested = true,
             AutomaticReconnect = true
         };
@@ -57,7 +57,8 @@ public class DiscoveryTests
         Assert.Equal("android", parsed.Platform);
         Assert.Equal(52831, parsed.Port);
         Assert.Equal(52930, parsed.DiscoveryPort);
-        Assert.Equal(2, parsed.Capabilities.Count);
+        Assert.Single(parsed.Capabilities);
+        Assert.DoesNotContain("clipboard", parsed.Capabilities);
         Assert.True(parsed.ConnectionRequested);
         Assert.True(parsed.AutomaticReconnect);
 
@@ -302,7 +303,6 @@ public class DiscoveryTests
           "port": 52831,
           "capabilities": [
             "file_transfer",
-            "clipboard",
             "remote_control",
             "screen_mirror"
           ],
@@ -316,8 +316,9 @@ public class DiscoveryTests
         Assert.Equal("c85d7b5f-519b-4e12-8e10-3b0222a7f05a", parsed.DeviceId);
         Assert.Equal("Pixel 9 Pro", parsed.Name);
         Assert.Equal("android", parsed.Platform);
-        Assert.Equal(4, parsed.Capabilities.Count);
+        Assert.Equal(3, parsed.Capabilities.Count);
         Assert.Contains("file_transfer", parsed.Capabilities);
+        Assert.DoesNotContain("clipboard", parsed.Capabilities);
     }
 
     [Fact]

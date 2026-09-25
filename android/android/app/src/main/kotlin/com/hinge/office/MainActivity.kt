@@ -52,7 +52,6 @@ import android.media.MediaMetadataRetriever
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.view.Display
-import android.view.WindowManager
 import android.graphics.PixelFormat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -588,6 +587,10 @@ class MainActivity : FlutterActivity() {
             "openBackgroundProtectionSettings" -> result.success(openBackgroundProtectionSettings())
             "moveTaskToBack" -> result.success(moveTaskToBack(true))
             "showFileReceivedNotification" -> showFileReceivedNotification(call, result)
+            "showCloudRelayTransferProgress" ->
+                showCloudRelayTransferProgress(call, result)
+            "finishCloudRelayTransferNotification" ->
+                finishCloudRelayTransferNotification(call, result)
             "defaultAppOptions" -> defaultAppOptions(call, result)
             "defaultApp" -> result.success(defaultApp(call))
             "setDefaultApp" -> setDefaultApp(call, result)
@@ -1547,7 +1550,6 @@ class MainActivity : FlutterActivity() {
         val preferences = getSharedPreferences("app_settings", MODE_PRIVATE)
         return mapOf(
             "themePreference" to preferences.getString("theme_preference", "system").orEmpty(),
-            "clipboardSyncEnabled" to preferences.getBoolean("clipboard_sync_enabled", true),
             "pureBlackDarkMode" to preferences.getBoolean("pure_black_dark_mode", false),
             // Monet is enabled by default. An explicit false remains false.
             "dynamicColorEnabled" to preferences.getBoolean("dynamic_color_enabled", true),
@@ -1559,6 +1561,12 @@ class MainActivity : FlutterActivity() {
             "videoStoragePath" to preferences.getString("video_storage_path", "").orEmpty(),
             "fileStoragePath" to preferences.getString("file_storage_path", "").orEmpty(),
             "localPairingCode" to preferences.getString("local_pairing_code", "").orEmpty(),
+            "cloudRelay" to mapOf(
+                "enabled" to preferences.getBoolean("cloud_relay_enabled", false),
+                "endpoint" to preferences.getString("cloud_relay_endpoint", "").orEmpty(),
+                "deviceToken" to preferences.getString("cloud_relay_device_token", "").orEmpty(),
+                "relayEncryptionKey" to preferences.getString("cloud_relay_encryption_key", "").orEmpty(),
+            ),
         )
     }
 
@@ -1568,10 +1576,9 @@ class MainActivity : FlutterActivity() {
             result.error("invalid_argument", "设置数据无效", null)
             return
         }
-        getSharedPreferences("app_settings", MODE_PRIVATE)
+        val editor = getSharedPreferences("app_settings", MODE_PRIVATE)
             .edit()
             .putString("theme_preference", values["themePreference"]?.toString() ?: "system")
-            .putBoolean("clipboard_sync_enabled", values["clipboardSyncEnabled"] as? Boolean ?: true)
             .putBoolean("pure_black_dark_mode", values["pureBlackDarkMode"] as? Boolean ?: false)
             .putBoolean("dynamic_color_enabled", values["dynamicColorEnabled"] as? Boolean ?: false)
             .putInt("font_weight_level", (values["fontWeightLevel"] as? Number)?.toInt() ?: 0)
@@ -1582,7 +1589,14 @@ class MainActivity : FlutterActivity() {
             .putString("video_storage_path", values["videoStoragePath"]?.toString() ?: "")
             .putString("file_storage_path", values["fileStoragePath"]?.toString() ?: "")
             .putString("local_pairing_code", values["localPairingCode"]?.toString() ?: "")
-            .apply()
+        val cloudRelay = values["cloudRelay"] as? Map<*, *>
+        if (cloudRelay != null) {
+            editor.putBoolean("cloud_relay_enabled", cloudRelay["enabled"] as? Boolean ?: false)
+                .putString("cloud_relay_endpoint", cloudRelay["endpoint"]?.toString() ?: "")
+                .putString("cloud_relay_device_token", cloudRelay["deviceToken"]?.toString() ?: "")
+                .putString("cloud_relay_encryption_key", cloudRelay["relayEncryptionKey"]?.toString() ?: "")
+        }
+        editor.apply()
         result.success(true)
     }
 
@@ -1940,6 +1954,154 @@ class MainActivity : FlutterActivity() {
         getSystemService(NotificationManager::class.java)
             .notify(path.hashCode(), notification)
         result.success(true)
+    }
+
+    private fun showCloudRelayTransferProgress(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        if (!hasNotificationPermission()) {
+            result.success(false)
+            return
+        }
+        val transferId = call.argument<String>("transferId")?.trim().orEmpty()
+        if (transferId.isEmpty()) {
+            result.success(false)
+            return
+        }
+        val fileName = call.argument<String>("fileName")
+            ?.replace(Regex("[\\r\\n\\u0000-\\u001f]"), " ")
+            ?.take(120)
+            .orEmpty()
+        val direction = call.argument<String>("direction") ?: "download"
+        val stage = call.argument<String>("stage") ?: "uploading"
+        val totalBytes = (call.argument<Number>("totalBytes")?.toLong() ?: 0L)
+            .coerceAtLeast(0L)
+        val bytesTransferred =
+            (call.argument<Number>("bytesTransferred")?.toLong() ?: 0L)
+                .coerceIn(0L, totalBytes)
+        val percentage = (call.argument<Number>("percentage")?.toInt() ?: 0)
+            .coerceIn(0, 100)
+        val isUpload = direction == "upload"
+        val indeterminate = stage == "preparing" ||
+            (totalBytes == 0L && stage != "verifying" && stage != "publishing")
+        val body = when (stage) {
+            "preparing" -> "$fileName · 正在准备并计算完整性校验"
+            "verifying" -> "$fileName · 正在校验文件完整性"
+            "publishing" -> "$fileName · 正在完成云端提交"
+            else -> {
+                val transferredText = android.text.format.Formatter
+                    .formatFileSize(this, bytesTransferred)
+                val totalText = android.text.format.Formatter
+                    .formatFileSize(this, totalBytes)
+                "$fileName · $transferredText / $totalText · $percentage%"
+            }
+        }
+        createFileNotificationChannel()
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, FILE_CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+        val notification = builder
+            .setSmallIcon(
+                if (isUpload) android.R.drawable.stat_sys_upload
+                else android.R.drawable.stat_sys_download,
+            )
+            .setContentTitle(
+                if (isUpload) "Cloud Relay 上传中" else "Cloud Relay 下载中",
+            )
+            .setContentText(body)
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setProgress(100, if (indeterminate) 0 else percentage, indeterminate)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setContentIntent(cloudRelayTransferIntent(transferId))
+            .build()
+        getSystemService(NotificationManager::class.java)
+            .notify(cloudRelayProgressNotificationId(transferId), notification)
+        result.success(true)
+    }
+
+    private fun finishCloudRelayTransferNotification(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val transferId = call.argument<String>("transferId")?.trim().orEmpty()
+        if (transferId.isEmpty()) {
+            result.success(false)
+            return
+        }
+        val notificationId = cloudRelayProgressNotificationId(transferId)
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        val succeeded = call.argument<Boolean>("succeeded") == true
+        val direction = call.argument<String>("direction") ?: "download"
+        if (!hasNotificationPermission()) {
+            notificationManager.cancel(notificationId)
+            result.success(false)
+            return
+        }
+        if (succeeded && direction != "upload") {
+            // The existing received-file notification replaces the download progress item.
+            notificationManager.cancel(notificationId)
+            result.success(true)
+            return
+        }
+
+        val fileName = call.argument<String>("fileName")
+            ?.replace(Regex("[\\r\\n\\u0000-\\u001f]"), " ")
+            ?.take(120)
+            .orEmpty()
+        val isUpload = direction == "upload"
+        createFileNotificationChannel()
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, FILE_CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+        val title = when {
+            succeeded -> "Cloud Relay 上传完成"
+            isUpload -> "Cloud Relay 上传失败"
+            else -> "Cloud Relay 下载失败"
+        }
+        val body = when {
+            succeeded -> "$fileName · 已上传，等待对方接收"
+            else -> "$fileName · 请打开 Hinge 查看状态并重试"
+        }
+        val notification = builder
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .setContentIntent(cloudRelayTransferIntent(transferId))
+            .build()
+        notificationManager.notify(notificationId, notification)
+        result.success(true)
+    }
+
+    private fun cloudRelayProgressNotificationId(transferId: String): Int =
+        (transferId.hashCode() and 0x3fffffff) or 0x40000000
+
+    private fun cloudRelayTransferIntent(transferId: String): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = "com.hinge.office.OPEN_CLOUD_RELAY_TRANSFER"
+            data = Uri.parse("hinge://cloud-relay/$transferId")
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
+        return PendingIntent.getActivity(
+            this,
+            cloudRelayProgressNotificationId(transferId),
+            intent,
+            flags,
+        )
     }
 
     private fun createFileNotificationChannel() {

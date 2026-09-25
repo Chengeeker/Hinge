@@ -38,7 +38,7 @@ void main() {
         platform: 'windows',
         port: 52831,
         discoveryPort: 52930,
-        capabilities: ['file_transfer', 'clipboard'],
+        capabilities: ['file_transfer'],
         timestamp: 1756992000,
         connectionRequested: true,
         automaticReconnect: true,
@@ -51,7 +51,7 @@ void main() {
       expect(parsed.platform, equals('windows'));
       expect(parsed.port, equals(52831));
       expect(parsed.discoveryPort, equals(52930));
-      expect(parsed.capabilities, contains('clipboard'));
+      expect(parsed.capabilities, isNot(contains('clipboard')));
       expect(parsed.timestamp, equals(1756992000));
       expect(parsed.connectionRequested, isTrue);
       expect(parsed.automaticReconnect, isTrue);

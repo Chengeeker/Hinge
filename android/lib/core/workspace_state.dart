@@ -22,7 +22,6 @@ class WorkspaceState extends ChangeNotifier {
   AppThemePreference _themePreference = AppThemePreference.system;
   static const int defaultSeedColor = 0xFF6750A4;
   int _currentTabIndex = 0;
-  bool _clipboardSyncEnabled = true;
   bool _pureBlackDarkMode = false;
   // Material You / Monet is the default on Android. An explicit user choice
   // is still persisted and can turn it off in personalization settings.
@@ -45,7 +44,6 @@ class WorkspaceState extends ChangeNotifier {
 
   AppThemePreference get themePreference => _themePreference;
   int get currentTabIndex => _currentTabIndex;
-  bool get clipboardSyncEnabled => _clipboardSyncEnabled;
   bool get pureBlackDarkMode => _pureBlackDarkMode;
   bool get dynamicColorEnabled => _dynamicColorEnabled;
   int get fontWeightLevel => _fontWeightLevel;
@@ -101,13 +99,6 @@ class WorkspaceState extends ChangeNotifier {
     if (_currentTabIndex != index) {
       _currentTabIndex = index;
       notifyListeners();
-    }
-  }
-
-  void setClipboardSync(bool enabled) {
-    if (_clipboardSyncEnabled != enabled) {
-      _clipboardSyncEnabled = enabled;
-      _changed();
     }
   }
 
@@ -211,7 +202,6 @@ class WorkspaceState extends ChangeNotifier {
 
   Map<String, dynamic> _toJson() => {
     'themePreference': _themePreference.name,
-    'clipboardSyncEnabled': _clipboardSyncEnabled,
     'pureBlackDarkMode': _pureBlackDarkMode,
     'dynamicColorEnabled': _dynamicColorEnabled,
     'fontWeightLevel': _fontWeightLevel,
@@ -231,7 +221,6 @@ class WorkspaceState extends ChangeNotifier {
       (item) => item.name == theme,
       orElse: () => AppThemePreference.system,
     );
-    _clipboardSyncEnabled = values['clipboardSyncEnabled'] != false;
     _pureBlackDarkMode = values['pureBlackDarkMode'] == true;
     // Missing legacy keys should follow the Android-native default instead of
     // silently disabling Monet after a fresh install or an update.

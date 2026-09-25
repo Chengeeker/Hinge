@@ -1,5 +1,136 @@
 # Changelog
 
+## [1.4.0] - 2026-09-25
+
+对照上一个公开稳定版 [`v1.2.4`](https://github.com/Chengeeker/Hinge/releases/tag/v1.2.4)。本版重点完善 Cloud Relay 文件中转的可观察性与 Android 传输记录。Cloud Relay 文件中转此前已存在，本次不是首次引入；局域网仍优先，Relay 仍为用户自建、默认关闭的可选能力。
+
+### Cloud Relay 文件传输
+
+- Android 云上传/下载现在会在通知中心显示实时进度和已传输字节数，并展示准备、传输、校验、云端提交等阶段；上传完成后通知会明确显示“等待设备接收”，下载完成由文件接收通知接替。通知需允许 Hinge 的系统通知权限。
+- 上传请求体与下载响应体按网络数据流更新进度，不再只在每个 8 MiB Relay 文件分块结束时跳变；异常时显示失败状态，客户端提示 HTTP 状态码，便于定位 Worker 响应问题。
+- 修复 Android Cloud Relay 的启用状态、Worker 地址、设备 Token 和 Relay 加密密钥在应用重启后丢失的问题；部署管理员 Token 仍只用于注册，不作为客户端持久配置保存。
+- Relay 仍使用用户自己的 Cloudflare Worker + 私有 R2；部署与网页版教程见 [Hinge-Relay 项目主页](https://github.com/Chengeeker/Hinge-Relay)。本版不提供 Hinge 托管云服务。
+
+### 传输记录与连接体验
+
+- Android 首页“设备操作”中的无效“文件管理”入口改为“文件传输记录”，本机持久保存最近 100 条 LAN/Cloud Relay 收发记录，展示方向、设备、状态、字节进度与时间；可删除已结束记录或批量清理，清理记录不会删除收到的文件。
+- Windows 右键发送和 Android 原生待发送队列的任务纳入 Android 记录；断线自动重试的任务会显示等待/重试状态。原生队列当前没有取消接口，因此记录页不显示虚假的取消按钮。
+- 修复 Android 断开设备时只关闭页面当前引用会话、遗漏已恢复会话的问题；断开操作现在关闭目标设备的所有活动会话。页面也会为进入前已恢复及之后新建的会话补挂传输事件。
+- Android 的连接失败提示在自定义悬浮导航胶囊可见时移至其上方，避免挡住导航操作。
+
+### Android 主题与剪贴板范围
+
+- 预置主题色板改为标准 Material 3 `tonalSpot`；Android 壁纸动态颜色和独立的 Expressive 胶囊导航不变。
+- 移除 Android/Windows 跨设备剪贴板同步、Shizuku 后台剪贴板监听，以及客户端 LAN/Cloud Relay 剪贴板同步路径。用户主动复制验证码、Relay 密钥等到本机系统剪贴板的功能仍保留。
+- Cloud Relay 仅中转文件；客户端不再调用 `/v1/clipboard`。已部署的 Worker 不会因客户端更新自动改变；如需同步移除服务端旧路由，应单独更新并重新部署 [Hinge-Relay](https://github.com/Chengeeker/Hinge-Relay)。
+
+### 版本、验证与限制
+
+- Android：`1.4.0+99`，`arm64-v8a`；Windows：`1.4.0.0`。
+- 发行资产：`Hinge.apk`、`Hinge-Setup.exe`、`Hinge-Windows.zip`。
+- 自动化构建/测试不等于真机验收；Android 不承诺应用被系统完全停止后立即轮询 Cloud Relay。详见 [发行说明](RELEASE_NOTES.md)。
+
+<details>
+<summary>未公开的历史测试候选（不属于 v1.4.0 发行内容）</summary>
+
+## [1.4.0] - 2026-09-24（Android 本地测试版）
+
+### v1.4.0+99 预置主题色板切换为标准 Material 3
+
+- 预置主题从 Material 3 Expressive 的 `expressive` 配色算法改用标准 Material 3 `tonalSpot`；Android 壁纸 Monet 动态颜色和独立的 Expressive 胶囊导航不变。
+- Android `versionCode` 提升到 99；已生成可覆盖安装 +98 的 arm64-v8a 稳定签名测试包，尚未发布 GitHub Release。
+
+### v1.4.0+98 移除跨设备剪贴板同步并增加 Android 文件传输记录
+
+- Android、Windows 客户端移除剪贴板监听、跨设备 LAN 同步 UI/协议路径和相关后台组件；保留复制验证码、Relay 密钥等写入本机系统剪贴板的普通功能。
+- Android 与 Windows 客户端移除 Cloud Relay 剪贴板信箱接口调用；独立 Hinge Relay Worker 源码同时移除 `/v1/clipboard` 新读写路由。已部署的 Worker 不会因本地改动自动更新，需用户之后重新部署当前仓库版本。
+- Android 首页“设备操作”将无效的“文件管理”入口改为“文件传输记录”；本地保存最近 100 条 LAN/Cloud Relay 收发记录，显示状态及进行中的进度，可删除/清理已结束记录。Android 原生发送队列仍自动重试，记录页如实显示等待重试，不提供当前底层不支持的取消按钮。
+- 文件传输、Cloud Relay 注册/R2 配置与上传下载流程保持保留；本次没有推送 GitHub 或部署 Worker。
+
+### v1.4.0+97 Stellar UserService 启动诊断与非阻塞绑定
+
+- Shizuku UserService 绑定请求移至后台线程，避免兼容层同步处理延迟时阻塞 Hinge 主界面及超时状态更新。
+- Stellar 绑定失败时，Hinge 使用 Stellar 保留的 Shizuku 进程接口，只读获取本次启动区间的 `StellarUserServiceStarter` 系统日志，并在设置页展示；诊断不读取或记录剪贴板正文。
+- 这是启动失败的诊断与响应性修复，不代表 Stellar 真机剪贴板同步已经恢复；需用手机确认是否显示“正在监听”并实际同步到电脑。
+
+### Android Shizuku 后台剪贴板读取
+
+- 新增默认关闭的 Shizuku 剪贴板读取选项；启用并授权后，由单独的 Shizuku UserService 监听系统纯文本剪贴板，再交给 Hinge 现有剪贴板去重、LAN 和 Cloud Relay 流程。
+- 不申请悬浮窗权限，也不创建抢焦点窗口；关闭选项、关闭 Hinge 剪贴板总开关或 Shizuku 服务停止时，监听会停止或等待恢复。
+- 需要 Android 10+ 与 Shizuku 11+；非 Root 无线调试启动的 Shizuku 通常需要在设备重启后重新启动。实际后台策略和剪贴板可读性仍需用户设备验收。
+
+### 版本与验证边界
+
+- Android 测试包版本：`1.4.0+90`，仅 arm64-v8a；Windows 客户端保持 `1.3.0.0`，本次没有修改跨端协议。
+- Android AIDL/Kotlin 编译通过；此记录不代表 vivo 等真实设备已完成 Shizuku 授权、锁屏读取、LAN/Cloud Relay 端到端验收。
+
+### v1.4.0+91 后台监听连接诊断
+
+- Stellar 使用其 Shizuku 兼容层时，Hinge 仍通过 Shizuku API 绑定 UserService；不依赖当前未随 Stellar API 1.0.3 发布的 UserService SDK 类。
+- 修复监听绑定或 `startWatching` 无回调时永久显示“正在连接”的状态问题：分别增加 15 秒超时、连接阶段状态和手动重连；真实手机端兼容性仍需测试。
+- 测试版本提升至 `1.4.0+91`；Windows 版本及跨端协议不变。
+
+### v1.4.0+92 Stellar UserService 连接兼容诊断
+
+- Stellar 未在首次 15 秒内回传 UserService Binder 时，Hinge 会用同一连接请求重试一次，以兼容服务已启动但首次回调未送达的情况；重复 Binder 回调不会误删仍在运行的服务。
+- 如果 Stellar 在 Binder 返回前报告服务退出，Hinge 会显示明确错误并停止自动重试风暴，提示检查 Stellar 服务日志；不会再把“兼容层已开启”当作唯一建议。
+- Android 测试版本提升至 `1.4.0+92`；Windows 版本、剪贴板协议和数据链路不变。真机是否恢复仍待验证。
+
+### v1.4.0+93 后台剪贴板状态持续刷新
+
+- 修复后台剪贴板设置页只等待/刷新 16 秒，短于 +92 最长绑定重试时间，导致页面一直显示旧的“正在重试”状态；现在每秒刷新状态，等待流程覆盖绑定重试及监听启动的完整超时周期。
+- 当原生连接阶段或错误状态发生变化时，清除过期的页面提示，防止旧提示遮住最终结果。
+- Android 测试版本提升至 `1.4.0+93`；Shizuku 服务及剪贴板传输协议不变，真机验收仍待用户完成。
+
+### v1.4.0+94 Stellar UserService 类加载兼容测试
+
+- 参考 GKD 的 Shizuku UserService 实现，为反射启动的剪贴板 UserService 添加 `@Keep`，让 Release APK 保留稳定类名，避免 R8 重命名动态入口类。
+- 这是针对 Stellar UserService 启动失败的低风险验证项；当前日志尚不能证明类名混淆就是根因，仍需在手机界面确认是否能进入“正在监听”。
+- Android 测试版本提升至 `1.4.0+94`；没有改剪贴板数据协议、Cloud Relay 或 Windows 客户端代码。
+
+### v1.4.0+95 Android 悬浮导航提示条避让
+
+- 修复连接失败等 SnackBar 覆盖自定义悬浮导航胶囊、导致提示显示期间导航无法点击的问题；胶囊可见时提示移至其上方并避让系统底部安全区。
+- 普通底部导航保持原布局；键盘弹出、胶囊隐藏时不额外预留空间。
+- Android 测试版本提升至 `1.4.0+95`；Windows 代码和跨端协议不变。
+
+### v1.4.0+96 Shizuku 后台剪贴板监听 Context 修复
+
+- 修复剪贴板 UserService 在已初始化的 Stellar/Shizuku UserService 进程内再次调用 `ActivityThread.systemMain()` 的问题；现在优先使用 Shizuku API 13 注入的 UserService Context，并包装为 shell 身份后获取 ClipboardManager。
+- 保留无 Context 构造器作为旧 Shizuku 后端兼容回退；监听启动失败时显示反射异常的根因及失败阶段，不再只显示 `InvocationTargetException`。
+- Android 测试版本提升至 `1.4.0+96`；Windows 和剪贴板传输协议不变。尚需用户在 Stellar 真机验证后台复制后是否到达电脑。
+
+## [1.3.0] - 2026-09-24
+
+### Android Cloud Relay 设置修复
+
+- 修复手机端 Worker 地址、启用开关、设备 Token 和加密密钥未写入原生设置、应用重启后变空的问题。部署 Token 仍仅在注册时使用，不会保存。
+
+### Android 会话状态与局域网剪贴板修复
+
+- “已连接的机型”数量和列表统一以实际可用会话为准；断开按钮现在按目标设备关闭全部会话，而不依赖页面记录的上一条连接。
+- 页面启动后会补接已存在的原生会话，并监听新建的双向会话，避免文件传输可用但剪贴板帧没有注册接收监听的情况。
+
+### Cloud Relay 剪贴板中转
+
+- 新增独立、默认关闭的“局域网不可用时中转剪贴板”选项；LAN 会话可用时继续走原有局域网同步，不影响文件传输路由。
+- 仅支持纯文本；客户端使用 HKDF-SHA256 派生密钥、AES-256-GCM 加密，事件最多 16 KiB，Worker 信箱事件有效期最长 1 小时。
+- Android 与 Windows 客户端均增加异步上传/轮询及确认路径；Android 的后台读取和轮询仍受系统生命周期、厂商省电策略限制，不能承诺应用被系统停止时即时同步。
+- 剪贴板中转要求自建 Hinge Relay Worker 提供 `/v1/clipboard` API；旧版 Worker 不支持该功能。LAN 文件传输及其 Cloud Relay API 保持不变。
+
+### Android Cloud Relay 传输状态
+
+- 文件上传和下载在 Android 通知栏显示持续进度，包括当前阶段、已传输字节和百分比；完成后上传显示等待接收状态，下载进度由现有“收到文件”通知接替。
+- 进度按 HTTP 分块流实时更新，不再只在每个 8 MiB 分块结束时跳变；通知权限关闭时传输仍继续，但系统不会显示进度通知。
+- Cloud Relay 剪贴板请求错误不再静默吞掉；HTTP 404 会提示当前 Worker 缺少 `/v1/clipboard` 接口。Android 后台剪贴板读取仍受系统前台焦点限制。
+
+### 版本
+
+- Android：`1.3.0+87`（arm64-v8a）。
+- Windows：`1.3.0.0`（安装器 + 便携 ZIP）。
+
+</details>
+
 ## [1.2.4] - 2026-09-22
 
 > 本版移除 Android 接收端逐块哈希这一项已观察到的吞吐负担。A/B 测试曾明显改善速度，但后续同体积 APK 复测仍出现快慢差异，因此本版属于性能缓解，不把它描述为全部根因已经解决。

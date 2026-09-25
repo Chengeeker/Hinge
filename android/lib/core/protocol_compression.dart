@@ -23,7 +23,6 @@ class ProtocolCompression {
     MessageType.syncManifestRequest,
     MessageType.syncManifestResponse,
     MessageType.syncPullRequest,
-    MessageType.clipboardEvent,
     MessageType.notificationEvent,
     MessageType.notificationAction,
     MessageType.toolCommand,

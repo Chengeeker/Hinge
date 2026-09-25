@@ -31,7 +31,6 @@ public static class ProtocolCompression
         MessageType.SyncManifestRequest,
         MessageType.SyncManifestResponse,
         MessageType.SyncPullRequest,
-        MessageType.ClipboardEvent,
         MessageType.NotificationEvent,
         MessageType.NotificationAction,
         MessageType.ToolCommand,

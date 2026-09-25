@@ -386,7 +386,7 @@ public class DiscoveryService : IDisposable
             Name = _localIdentity.Name,
             Platform = "windows",
             Port = GetSessionPort(),
-            Capabilities = new List<string> { "file_transfer", "clipboard", "remote_control", "backup" },
+            Capabilities = new List<string> { "file_transfer", "remote_control", "backup" },
             ProtocolVersion = Constants.ProtocolVersion,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             ConnectionRequested = connectionRequested,

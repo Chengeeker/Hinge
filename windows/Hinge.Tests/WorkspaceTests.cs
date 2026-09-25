@@ -16,7 +16,6 @@ public class WorkspaceTests
             ActiveConnectionsCount = 1,
             ActiveTransfersCount = 0,
             CompletedTransfersCount = 5,
-            ClipboardEventsSynced = 12,
             IsScreenMirroringActive = true,
             MirrorFps = 30.0,
             MirrorBitrateBps = 2_500_000,
@@ -30,7 +29,6 @@ public class WorkspaceTests
         Assert.Contains("42m", dashboard);
         Assert.Contains("3 total", dashboard);
         Assert.Contains("2 trusted", dashboard);
-        Assert.Contains("12 events synced", dashboard);
         Assert.Contains("ACTIVE (30.0 FPS", dashboard);
         Assert.Contains("4 relayed", dashboard);
     }

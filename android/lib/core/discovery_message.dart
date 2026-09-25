@@ -28,7 +28,6 @@ class DiscoveryMessage {
     this.discoveryPort = AppConstants.discoveryUdpPort,
     this.capabilities = const [
       'file_transfer',
-      'clipboard',
       'remote_control',
       'backup',
     ],

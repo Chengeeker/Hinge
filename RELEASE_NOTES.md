@@ -1,35 +1,39 @@
-# Hinge v1.1.6
+# Hinge v1.4.0
 
-这是 Hinge 的双端稳定版本，安装包运行版本为 Android `1.1.6+46`、Windows `1.1.6.0`。以下内容以 GitHub 上一版 `v1.0.38` 为基线，不重复列出此前已经发布的修复。
+本版以 GitHub 上一个公开稳定版 [`v1.2.4`](https://github.com/Chengeeker/Hinge/releases/tag/v1.2.4) 为对照。重点是让 Android 用户能看见 Cloud Relay 文件传输的实际进度，并在应用内追踪 LAN 与 Relay 文件收发记录。
 
-## 新增功能
+> Cloud Relay 文件中转并非本版从零新增：`v1.2.4` 源码已经包含可选的 Cloudflare Worker + R2 文件中转。本版新增/完善的是配置持久化、分段内实时进度、通知状态和 Android 传输历史。Relay 仍由用户自行部署，不是 Hinge 官方云服务。
 
-- Windows 11 EXE 安装版新增资源管理器第一层“通过 Hinge 发送到”菜单：悬停后直接选择已连接机型，支持多选文件，并发送到 Android `/storage/emulated/0/Download/Hinge/` 下的图片、视频或文件分类目录；
-- 便携版保留“显示更多选项”中的兼容菜单，不会为建立包身份而修改系统证书存储。
+## Cloud Relay 文件中转体验
 
-## 修复与改进
+- Android 上传和下载时，通知中心持续显示传输方向、当前阶段、已传输字节和百分比。进度涵盖准备、网络传输、完整性校验及云端提交，不再只在每个 8 MiB 文件分块完成时跳动。
+- 上传成功后通知明确显示“已上传，等待对方接收”；下载进度结束后交由现有“收到文件”通知提示。失败时保留可查看的状态并显示 HTTP 错误码（如适用）。需允许 Hinge 发送通知；系统彻底停止 Hinge 时，不保证立即轮询或下载。
+- 修复 Android 重启应用后 Cloud Relay 开关、Worker 地址、设备 Token 和 Relay 加密密钥恢复为空的问题。部署管理员 Token 只用于设备注册，不作为客户端保存项。
+- 使用自己的 Cloudflare Worker 与私有 R2；网页版部署教程、Worker 项目及后续更新入口见 [Hinge-Relay 项目主页](https://github.com/Chengeeker/Hinge-Relay)。客户端 LAN 会话可用时仍优先直连；Relay 只面向 Hinge 中已信任的设备。
 
-- 修复右键选择机型后只打开 Hinge、没有真正发送文件的问题；已运行的单实例现在通过当前用户专用命名管道接收目标设备和文件列表；
-- 修复通知历史验证码字段在 Android 到 Windows 同步时丢失的问题；只有严格识别出的验证码显示复制按钮，普通数字通知不会误触发；
-- 修复验证码托盘气泡点击后同时复制并打开 Hinge 窗口的问题；
-- 修复 Android 通知历史数据库升级、异常厂商通知和短信观察器关闭竞态导致的闪退；
-- 修复 Windows 任务栏灰色占位图标：安装器对齐稀疏包真实 AUMID，并提供符合 Windows 资源限定规则的完整小尺寸图标；
-- 修复资源管理器兼容菜单落入文件关联弹窗、设备快照暂时不可读时菜单消失，以及更新后 Explorer 没有及时重新加载扩展的问题；
-- Windows 设置新增“显示后台运行提示”开关，默认关闭。
+## 文件传输记录与连接状态
 
-## 安装与兼容性
+- Android “设备操作”中的“文件管理”现改为“文件传输记录”。本机保存最近 100 条 LAN/Cloud Relay 收发记录，包括方向、设备、状态、时间和活动传输进度；可单条删除或清理已结束记录，不会因此删除收到的实际文件。
+- Android 原生待发送队列的任务也会显示在历史中；自动重试会保留为等待/重试状态。当前原生队列没有取消接口，所以记录页不显示无法工作的取消按钮。
+- Android 断开设备时会关闭该设备的全部活动会话，包括页面启动前已恢复的会话；页面也会为已恢复和新建立的会话接入文件传输事件。
+- Android 连接失败提示不再遮住自定义悬浮导航胶囊，提示期间仍可操作导航。
 
-- Windows 只提供 `Hinge-Setup.exe` 和 `Hinge-Windows.zip`；第一层原生菜单需要使用 EXE 安装版，安装器会在首次建立稀疏包身份时请求一次管理员确认；
-- Android APK 仅包含 `arm64-v8a`，包名为 `com.hinge.office`；
-- 安装更新后，历史信任设备仍会自动尝试恢复连接。
+## Android 主题和剪贴板变更
 
-## 开源与合规
+- 预置颜色方案改为标准 Material 3 `tonalSpot`。Android 壁纸动态颜色（Monet）与独立的 Expressive 胶囊导航保留。
+- 移除 Android/Windows 跨设备剪贴板同步和 Android Shizuku 后台剪贴板监听，包括 LAN 帧与客户端 Cloud Relay 剪贴板调用。主动把验证码、Relay 密钥等复制到本机系统剪贴板仍可使用。
+- Cloud Relay 现仅用于文件中转。已部署的 Worker 独立于客户端发行，不会随本次 Hinge 更新自动部署；Worker 代码/已部署接口的变更需在 Relay 项目中单独更新和部署。
 
-- Windows 11 原生菜单的 COM 激活框架改编自 Microsoft `vscode-explorer-command`（MIT），保留上游版权声明；设备枚举、快照、单实例传输和文件分类由 Hinge 实现；
-- QQ/微信托盘唤醒仅参考 Electron（MIT）的公开消息约定，没有复制或打包 Electron 源码和运行时；
-- 完整依赖和商标资源说明见仓库中的 `THIRD_PARTY_LICENSES.md`。
+## 安装包与验证
 
-## 验证边界
+| 平台 | 资产 | 版本/架构 | 大小 | SHA-256 |
+| --- | --- | --- | ---: | --- |
+| Android | [`Hinge.apk`](https://github.com/Chengeeker/Hinge/releases/download/v1.4.0/Hinge.apk) | `1.4.0+99` · `arm64-v8a` | 21,159,073 bytes | `0C332B8DE685C0C20B8438F853CDFA5CF4BB1A33F6DEE28665FD22A004D42168` |
+| Windows | [`Hinge-Setup.exe`](https://github.com/Chengeeker/Hinge/releases/download/v1.4.0/Hinge-Setup.exe) | `1.4.0.0` | 198,105,656 bytes | `5942E3A7509D78CAB0741EBB9F8D9A2D0B45ED0174F6B63F3D47E31809FFEEF6` |
+| Windows | [`Hinge-Windows.zip`](https://github.com/Chengeeker/Hinge/releases/download/v1.4.0/Hinge-Windows.zip) | `1.4.0.0` | 129,723,669 bytes | `682842548F810449C2690E7838583EA2390CFC93DC1B7ABE195CF540EE1A827E` |
 
-- 自动化验证包括 Android 静态分析与 Flutter 测试、Android ARM64 Release 构建、Windows Release 构建与 .NET 测试；
-- 资源管理器第一层菜单、真实手机短信权限、通知访问权限和不同局域网环境仍受 Windows/Android 系统策略影响，需要在对应设备上进行最终验收。
+验证结果：Android `flutter analyze --no-pub` 无问题、Flutter 测试 62/62 通过；APK 包名 `com.hinge.office`、versionCode `99`、仅含 `arm64-v8a`，APK v2/v3 验签通过且稳定签名证书一致。Windows .NET 测试 94/94 通过，Release 安装器/ZIP 构建成功，安装器文件版本与 ZIP 内稀疏身份清单均为 `1.4.0.0`。Windows 测试期间 NuGet 漏洞索引返回 `NU1900` 网络警告，不影响构建和测试。
+
+尚未在用户 Android 真机上完成通知中心进度、跨网络 Cloud Relay 文件端到端收发或不同厂商后台策略验收。自动化分析、测试和构建结果不等于所有设备及 Cloudflare 部署均已实机验证。
+
+升级后 Cloud Relay 两端仍须使用相同 Relay 加密密钥，并分别完成设备注册。Hinge 不托管 Worker，也不会自动改动用户的 Cloudflare 配置或部署。

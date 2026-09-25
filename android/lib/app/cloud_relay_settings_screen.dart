@@ -156,7 +156,7 @@ class _CloudRelaySettingsScreenState extends State<CloudRelaySettingsScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            '局域网连接仍然优先。Cloud Relay 只对已经在 Hinge 中信任过的设备生效；Worker 和 R2 只保存加密文件。',
+            '局域网连接仍然优先。Cloud Relay 只对已经在 Hinge 中信任过的设备生效；Worker 和 R2 只保存加密内容。',
           ),
           const SizedBox(height: 16),
           Card(
@@ -234,10 +234,12 @@ class _CloudRelaySettingsScreenState extends State<CloudRelaySettingsScreen> {
                 child: const Text('测试 Worker'),
               ),
               OutlinedButton(
-                onPressed: _busy ? null : () {
-                  _save();
-                  setState(() => _status = 'Cloud Relay 配置已保存。');
-                },
+                onPressed: _busy
+                    ? null
+                    : () {
+                        _save();
+                        setState(() => _status = 'Cloud Relay 配置已保存。');
+                      },
                 child: const Text('保存配置'),
               ),
             ],

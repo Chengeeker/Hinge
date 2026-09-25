@@ -9,7 +9,6 @@ public class WorkspaceSnapshot
     public int ActiveConnectionsCount { get; set; }
     public int ActiveTransfersCount { get; set; }
     public int CompletedTransfersCount { get; set; }
-    public int ClipboardEventsSynced { get; set; }
     public bool IsScreenMirroringActive { get; set; }
     public double MirrorFps { get; set; }
     public double MirrorBitrateBps { get; set; }
@@ -25,7 +24,6 @@ public class WorkspaceSnapshot
         sb.AppendLine($"  Uptime               : {Uptime.Hours:D2}h {Uptime.Minutes:D2}m {Uptime.Seconds:D2}s");
         sb.AppendLine($"  Discovered Devices   : {DiscoveredDevicesCount} total ({TrustedDevicesCount} trusted, {ActiveConnectionsCount} connected)");
         sb.AppendLine($"  File Transfers       : {ActiveTransfersCount} in-progress, {CompletedTransfersCount} completed");
-        sb.AppendLine($"  Clipboard Sync       : {ClipboardEventsSynced} events synced (Anti-loop active)");
         string mirrorStatus = IsScreenMirroringActive
             ? $"ACTIVE ({MirrorFps:F1} FPS, {MirrorBitrateBps / 1_000_000:F2} Mbps)"
             : "INACTIVE";
@@ -42,12 +40,10 @@ public class WorkspaceMonitor : IDisposable
     private readonly TrustStore? _trustStore;
     private readonly SessionManager? _sessionManager;
     private readonly TransferManager? _transferManager;
-    private readonly ClipboardManager? _clipboardManager;
     private readonly ScreenStreamReceiver? _screenReceiver;
     private readonly NotificationManager? _notificationManager;
     private readonly DateTime _startTime = DateTime.UtcNow;
 
-    private int _clipboardSyncedCount;
     private int _completedTransfersCount;
     private int _notificationsCount;
 
@@ -58,7 +54,6 @@ public class WorkspaceMonitor : IDisposable
         TrustStore? trustStore = null,
         SessionManager? sessionManager = null,
         TransferManager? transferManager = null,
-        ClipboardManager? clipboardManager = null,
         ScreenStreamReceiver? screenReceiver = null,
         NotificationManager? notificationManager = null)
     {
@@ -66,18 +61,8 @@ public class WorkspaceMonitor : IDisposable
         _trustStore = trustStore;
         _sessionManager = sessionManager;
         _transferManager = transferManager;
-        _clipboardManager = clipboardManager;
         _screenReceiver = screenReceiver;
         _notificationManager = notificationManager;
-
-        if (_clipboardManager != null)
-        {
-            _clipboardManager.ClipboardReceived += (_, _) =>
-            {
-                Interlocked.Increment(ref _clipboardSyncedCount);
-                NotifyUpdate();
-            };
-        }
 
         if (_transferManager != null)
         {
@@ -116,7 +101,6 @@ public class WorkspaceMonitor : IDisposable
             ActiveConnectionsCount = _sessionManager?.ActiveConnections.Count ?? 0,
             ActiveTransfersCount = _transferManager?.ActiveTransfersCount ?? 0,
             CompletedTransfersCount = _completedTransfersCount,
-            ClipboardEventsSynced = _clipboardSyncedCount,
             IsScreenMirroringActive = isMirroring,
             MirrorFps = mirrorStats?.CurrentFps ?? 0,
             MirrorBitrateBps = mirrorStats?.CurrentBitrateBps ?? 0,

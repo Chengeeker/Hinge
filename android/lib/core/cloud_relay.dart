@@ -174,22 +174,33 @@ class CloudRelayReceipt {
   }
 }
 
+enum CloudRelayProgressStage {
+  preparing,
+  uploading,
+  downloading,
+  verifying,
+  publishing,
+  completed,
+}
+
 class CloudRelayProgress {
   final String transferId;
   final String fileName;
   final int bytesTransferred;
   final int totalBytes;
+  final CloudRelayProgressStage stage;
 
   const CloudRelayProgress({
     required this.transferId,
     required this.fileName,
     required this.bytesTransferred,
     required this.totalBytes,
+    this.stage = CloudRelayProgressStage.uploading,
   });
 
   double get percentage => totalBytes <= 0
       ? 0
-      : bytesTransferred / totalBytes * 100;
+      : (bytesTransferred / totalBytes * 100).clamp(0, 100).toDouble();
 }
 
 class CloudRelayCrypto {
@@ -197,18 +208,17 @@ class CloudRelayCrypto {
 
   static String generateEncryptionKey() {
     final random = Random.secure();
-    return _encodeBase64Url(
-      List<int>.generate(32, (_) => random.nextInt(256)),
-    );
+    return _encodeBase64Url(List<int>.generate(32, (_) => random.nextInt(256)));
   }
 
   static String computeRelayDeviceId(
     String relayEncryptionKey,
     String hingeDeviceId,
   ) {
-    final digest = crypto_lib.Hmac(crypto_lib.sha256, _decodeKey(relayEncryptionKey)).convert(
-      utf8.encode('Hinge-Relay-Device-v1|${hingeDeviceId.trim()}'),
-    );
+    final digest = crypto_lib.Hmac(
+      crypto_lib.sha256,
+      _decodeKey(relayEncryptionKey),
+    ).convert(utf8.encode('Hinge-Relay-Device-v1|${hingeDeviceId.trim()}'));
     return _encodeBase64Url(digest.bytes);
   }
 
@@ -258,7 +268,9 @@ class CloudRelayCrypto {
     required int plaintextLength,
   }) async {
     if (encrypted.length != plaintextLength + cloudRelayGcmTagSize) {
-      throw const FormatException('Cloud Relay encrypted part length is invalid.');
+      throw const FormatException(
+        'Cloud Relay encrypted part length is invalid.',
+      );
     }
     final box = SecretBox(
       encrypted.sublist(0, plaintextLength),
@@ -342,9 +354,9 @@ class CloudRelayCrypto {
   }
 
   static List<int> _metadataNonce(String transferId) {
-    final digest = crypto_lib.sha256.convert(
-      utf8.encode('Hinge-Cloud-Relay-v1|metadata|$transferId'),
-    ).bytes;
+    final digest = crypto_lib.sha256
+        .convert(utf8.encode('Hinge-Cloud-Relay-v1|metadata|$transferId'))
+        .bytes;
     return digest.sublist(0, cloudRelayGcmNonceSize);
   }
 
@@ -383,11 +395,10 @@ class CloudRelayCrypto {
     var previous = <int>[];
     var counter = 1;
     while (output.length < length) {
-      previous = crypto_lib.Hmac(crypto_lib.sha256, prk).convert([
-        ...previous,
-        ...info,
-        counter,
-      ]).bytes;
+      previous = crypto_lib.Hmac(
+        crypto_lib.sha256,
+        prk,
+      ).convert([...previous, ...info, counter]).bytes;
       output.addAll(previous);
       counter++;
     }
@@ -397,7 +408,9 @@ class CloudRelayCrypto {
   static List<int> _decodeKey(String value) {
     final key = _decodeBase64Url(value);
     if (key.length != 32) {
-      throw const FormatException('Relay encryption key must be exactly 32 bytes.');
+      throw const FormatException(
+        'Relay encryption key must be exactly 32 bytes.',
+      );
     }
     return key;
   }
@@ -523,6 +536,7 @@ class CloudRelayClient {
     required String uploadId,
     required int partNumber,
     required List<int> encryptedPart,
+    void Function(int bytesSent)? onProgress,
   }) async {
     final localRelay = CloudRelayCrypto.computeRelayDeviceId(
       settings.relayEncryptionKey,
@@ -532,10 +546,11 @@ class CloudRelayClient {
       'PUT',
       settings.endpoint,
       '/v1/transfers/${Uri.encodeComponent(transferId)}/parts/$partNumber'
-      '?uploadId=${Uri.encodeQueryComponent(uploadId)}',
+          '?uploadId=${Uri.encodeQueryComponent(uploadId)}',
       bearer: settings.deviceToken,
       relayDeviceId: localRelay,
       bodyBytes: encryptedPart,
+      onBodyBytesSent: onProgress,
       contentType: 'application/octet-stream',
     );
     return '${_decodeJson(response)['etag'] ?? ''}';
@@ -609,6 +624,7 @@ class CloudRelayClient {
     required String localHingeDeviceId,
     required String transferId,
     required int partNumber,
+    void Function(int bytesReceived)? onProgress,
   }) async {
     final localRelay = CloudRelayCrypto.computeRelayDeviceId(
       settings.relayEncryptionKey,
@@ -620,6 +636,7 @@ class CloudRelayClient {
       '/v1/transfers/${Uri.encodeComponent(transferId)}/parts/$partNumber',
       bearer: settings.deviceToken,
       relayDeviceId: localRelay,
+      onBodyBytesReceived: onProgress,
     );
     _ensureSuccess(response);
     return response.bytes;
@@ -694,10 +711,16 @@ class CloudRelayClient {
     String? body,
     List<int>? bodyBytes,
     String? contentType,
+    void Function(int bytesSent)? onBodyBytesSent,
+    void Function(int bytesReceived)? onBodyBytesReceived,
   }) async {
     final base = Uri.tryParse(endpoint.trim());
-    if (base == null || base.host.isEmpty || (base.scheme != 'https' && base.scheme != 'http')) {
-      throw const FormatException('Cloud Relay endpoint must be an HTTP(S) URL.');
+    if (base == null ||
+        base.host.isEmpty ||
+        (base.scheme != 'https' && base.scheme != 'http')) {
+      throw const FormatException(
+        'Cloud Relay endpoint must be an HTTP(S) URL.',
+      );
     }
     final uri = base.replace(
       path: '${base.path.replaceFirst(RegExp(r'\/$'), '')}$path',
@@ -706,7 +729,10 @@ class CloudRelayClient {
     final request = await _httpClient.openUrl(method, uri);
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     if (bearer != null && bearer.trim().isNotEmpty) {
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${bearer.trim()}');
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${bearer.trim()}',
+      );
     }
     if (relayDeviceId != null) {
       request.headers.set('X-Hinge-Relay-Device', relayDeviceId);
@@ -714,26 +740,54 @@ class CloudRelayClient {
     if (bodyBytes != null) {
       request.headers.contentType = ContentType(
         (contentType ?? 'application/octet-stream').split('/').first,
-        (contentType ?? 'application/octet-stream').split('/').skip(1).join('/'),
+        (contentType ?? 'application/octet-stream')
+            .split('/')
+            .skip(1)
+            .join('/'),
       );
       request.contentLength = bodyBytes.length;
-      request.add(bodyBytes);
+      if (onBodyBytesSent == null) {
+        request.add(bodyBytes);
+      } else {
+        await request.addStream(
+          _requestBodyChunks(bodyBytes, onBodyBytesSent),
+        );
+      }
     } else if (body != null) {
       request.headers.contentType = ContentType.json;
       request.write(body);
     }
     final response = await request.close();
+    var receivedBytes = 0;
     final bytes = await response.fold<List<int>>(<int>[], (buffer, chunk) {
+      receivedBytes += chunk.length;
+      onBodyBytesReceived?.call(receivedBytes);
       buffer.addAll(chunk);
       return buffer;
     });
     return _CloudRelayHttpResponse(response.statusCode, bytes);
   }
 
+  Stream<List<int>> _requestBodyChunks(
+    List<int> bytes,
+    void Function(int bytesSent) onProgress,
+  ) async* {
+    const progressChunkSize = 256 * 1024;
+    var offset = 0;
+    while (offset < bytes.length) {
+      final end = min(offset + progressChunkSize, bytes.length);
+      yield bytes.sublist(offset, end);
+      offset = end;
+      onProgress(offset);
+    }
+  }
+
   Map<String, dynamic> _decodeJson(_CloudRelayHttpResponse response) {
     _ensureSuccess(response);
     final decoded = jsonDecode(utf8.decode(response.bytes));
-    return decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+    return decoded is Map
+        ? Map<String, dynamic>.from(decoded)
+        : <String, dynamic>{};
   }
 
   void _ensureSuccess(_CloudRelayHttpResponse response) {
@@ -741,11 +795,15 @@ class CloudRelayClient {
     var message = utf8.decode(response.bytes, allowMalformed: true).trim();
     try {
       final decoded = jsonDecode(message);
-      if (decoded is Map && decoded['error'] != null) message = '${decoded['error']}';
+      if (decoded is Map && decoded['error'] != null) {
+        message = '${decoded['error']}';
+      }
     } catch (_) {}
     throw CloudRelayException(
       response.statusCode,
-      message.isEmpty ? 'Cloud Relay request failed.' : message.substring(0, min(400, message.length)),
+      message.isEmpty
+          ? 'Cloud Relay request failed.'
+          : message.substring(0, min(400, message.length)),
     );
   }
 
@@ -767,11 +825,25 @@ class CloudRelayTransferService {
     void Function(CloudRelayProgress progress)? onProgress,
   }) async {
     final file = File(filePath);
-    if (!file.existsSync()) throw FileSystemException('File not found', filePath);
-    if (!settings.isConfigured) throw const FormatException('Cloud Relay is not configured.');
+    if (!file.existsSync()) {
+      throw FileSystemException('File not found', filePath);
+    }
+    if (!settings.isConfigured) {
+      throw const FormatException('Cloud Relay is not configured.');
+    }
 
     final stat = await file.stat();
     final transferId = _newUuid();
+    final safeName = _safeFileName(fileName ?? file.uri.pathSegments.last);
+    onProgress?.call(
+      CloudRelayProgress(
+        transferId: transferId,
+        fileName: safeName,
+        bytesTransferred: 0,
+        totalBytes: stat.size,
+        stage: CloudRelayProgressStage.preparing,
+      ),
+    );
     final senderRelay = CloudRelayCrypto.computeRelayDeviceId(
       settings.relayEncryptionKey,
       localHingeDeviceId,
@@ -784,7 +856,8 @@ class CloudRelayTransferService {
       1,
       (stat.size + cloudRelayPartSize - 1) ~/ cloudRelayPartSize,
     );
-    final sha256Hash = (await crypto_lib.sha256.bind(file.openRead()).first).toString();
+    final sha256Hash = (await crypto_lib.sha256.bind(file.openRead()).first)
+        .toString();
     final transferKey = CloudRelayCrypto.deriveTransferKey(
       relayEncryptionKey: settings.relayEncryptionKey,
       transferId: transferId,
@@ -792,7 +865,7 @@ class CloudRelayTransferService {
       receiverRelayDeviceId: receiverRelay,
     );
     final metadata = CloudRelayFileMetadata(
-      fileName: _safeFileName(fileName ?? file.uri.pathSegments.last),
+      fileName: safeName,
       mimeType: mimeType ?? 'application/octet-stream',
       fileSize: stat.size,
       modifiedTime: stat.modified.millisecondsSinceEpoch ~/ 1000,
@@ -836,19 +909,49 @@ class CloudRelayTransferService {
           uploadId: session.uploadId,
           partNumber: partNumber,
           encryptedPart: encrypted,
+          onProgress: (bytesSent) {
+            final encryptedLength = encrypted.length;
+            final partBytesSent = encryptedLength <= 0
+                ? plaintext.length
+                : min(
+                    plaintext.length,
+                    (bytesSent * plaintext.length / encryptedLength).floor(),
+                  );
+            onProgress?.call(
+              CloudRelayProgress(
+                transferId: transferId,
+                fileName: metadata.fileName,
+                bytesTransferred: transferred + partBytesSent,
+                totalBytes: stat.size,
+                stage: CloudRelayProgressStage.uploading,
+              ),
+            );
+          },
         );
         parts.add((partNumber: partNumber, etag: etag));
         transferred += plaintext.length;
-        onProgress?.call(CloudRelayProgress(
-          transferId: transferId,
-          fileName: metadata.fileName,
-          bytesTransferred: transferred,
-          totalBytes: stat.size,
-        ));
+        onProgress?.call(
+          CloudRelayProgress(
+            transferId: transferId,
+            fileName: metadata.fileName,
+            bytesTransferred: transferred,
+            totalBytes: stat.size,
+            stage: CloudRelayProgressStage.uploading,
+          ),
+        );
       }
     } finally {
       await raf.close();
     }
+    onProgress?.call(
+      CloudRelayProgress(
+        transferId: transferId,
+        fileName: metadata.fileName,
+        bytesTransferred: stat.size,
+        totalBytes: stat.size,
+        stage: CloudRelayProgressStage.publishing,
+      ),
+    );
     await client.completeTransfer(
       settings: settings,
       localHingeDeviceId: localHingeDeviceId,
@@ -897,29 +1000,62 @@ class CloudRelayTransferService {
       if (metadata.fileSize < 0 || metadata.sha256.length != 64) {
         throw const FormatException('Cloud Relay file metadata is invalid.');
       }
-      final safeName = _safeFileName(metadata.fileName.isEmpty
-          ? 'Hinge-${manifest.transferId}.bin'
-          : metadata.fileName);
+      final safeName = _safeFileName(
+        metadata.fileName.isEmpty
+            ? 'Hinge-${manifest.transferId}.bin'
+            : metadata.fileName,
+      );
       final directory = Directory(downloadDirectory);
       await directory.create(recursive: true);
       final temporary = File('${directory.path}/.${manifest.transferId}.part');
       final raf = await temporary.open(mode: FileMode.writeOnly);
       var written = 0;
+      onProgress?.call(
+        CloudRelayProgress(
+          transferId: manifest.transferId,
+          fileName: safeName,
+          bytesTransferred: 0,
+          totalBytes: metadata.fileSize,
+          stage: CloudRelayProgressStage.downloading,
+        ),
+      );
       try {
-        for (var partNumber = 1; partNumber <= manifest.partCount; partNumber++) {
+        for (
+          var partNumber = 1;
+          partNumber <= manifest.partCount;
+          partNumber++
+        ) {
           final partLength = partNumber == manifest.partCount
               ? manifest.ciphertextSize -
-                    (partNumber - 1) * (manifest.partSize + cloudRelayGcmTagSize) -
+                    (partNumber - 1) *
+                        (manifest.partSize + cloudRelayGcmTagSize) -
                     cloudRelayGcmTagSize
               : manifest.partSize;
           if (partLength < 0 || partLength > cloudRelayPartSize) {
-            throw const FormatException('Cloud Relay manifest range is invalid.');
+            throw const FormatException(
+              'Cloud Relay manifest range is invalid.',
+            );
           }
           final encrypted = await client.downloadPart(
             settings: settings,
             localHingeDeviceId: localHingeDeviceId,
             transferId: manifest.transferId,
             partNumber: partNumber,
+            onProgress: (bytesReceived) {
+              final partBytesReceived = min(partLength, bytesReceived);
+              onProgress?.call(
+                CloudRelayProgress(
+                  transferId: manifest.transferId,
+                  fileName: safeName,
+                  bytesTransferred: min(
+                    metadata.fileSize,
+                    written + partBytesReceived,
+                  ),
+                  totalBytes: metadata.fileSize,
+                  stage: CloudRelayProgressStage.downloading,
+                ),
+              );
+            },
           );
           final key = CloudRelayCrypto.deriveTransferKey(
             relayEncryptionKey: settings.relayEncryptionKey,
@@ -938,22 +1074,38 @@ class CloudRelayTransferService {
           );
           await raf.writeFrom(plaintext);
           written += plaintext.length;
-          onProgress?.call(CloudRelayProgress(
-            transferId: manifest.transferId,
-            fileName: safeName,
-            bytesTransferred: written,
-            totalBytes: metadata.fileSize,
-          ));
+          onProgress?.call(
+            CloudRelayProgress(
+              transferId: manifest.transferId,
+              fileName: safeName,
+              bytesTransferred: written,
+              totalBytes: metadata.fileSize,
+              stage: CloudRelayProgressStage.downloading,
+            ),
+          );
         }
       } finally {
         await raf.close();
       }
-      final actualHash = (await crypto_lib.sha256.bind(temporary.openRead()).first).toString();
-      if (written != metadata.fileSize || actualHash.toLowerCase() != metadata.sha256.toLowerCase()) {
+      onProgress?.call(
+        CloudRelayProgress(
+          transferId: manifest.transferId,
+          fileName: safeName,
+          bytesTransferred: written,
+          totalBytes: metadata.fileSize,
+          stage: CloudRelayProgressStage.verifying,
+        ),
+      );
+      final actualHash =
+          (await crypto_lib.sha256.bind(temporary.openRead()).first).toString();
+      if (written != metadata.fileSize ||
+          actualHash.toLowerCase() != metadata.sha256.toLowerCase()) {
         try {
           await temporary.delete();
         } catch (_) {}
-        throw const FormatException('Cloud Relay plaintext SHA-256 verification failed.');
+        throw const FormatException(
+          'Cloud Relay plaintext SHA-256 verification failed.',
+        );
       }
       final destination = _uniquePath('${directory.path}/$safeName');
       await temporary.rename(destination);
@@ -963,13 +1115,24 @@ class CloudRelayTransferService {
         transferId: manifest.transferId,
       );
       paths.add(destination);
+      onProgress?.call(
+        CloudRelayProgress(
+          transferId: manifest.transferId,
+          fileName: safeName,
+          bytesTransferred: written,
+          totalBytes: metadata.fileSize,
+          stage: CloudRelayProgressStage.completed,
+        ),
+      );
     }
     return paths;
   }
 
   static String _safeFileName(String value) {
     final normalized = value.split(RegExp(r'[\\/]')).last.trim();
-    if (normalized.isEmpty || normalized == '.' || normalized == '..') return 'Hinge-file';
+    if (normalized.isEmpty || normalized == '.' || normalized == '..') {
+      return 'Hinge-file';
+    }
     final cleaned = normalized.replaceAll(RegExp(r'[\u0000-\u001f\u007f]'), '');
     if (cleaned.isEmpty) return 'Hinge-file';
     return cleaned.substring(0, min(160, cleaned.length));
@@ -978,8 +1141,12 @@ class CloudRelayTransferService {
   static String _uniquePath(String path) {
     final file = File(path);
     if (!file.existsSync()) return path;
-    final extension = path.contains('.') ? path.substring(path.lastIndexOf('.')) : '';
-    final base = extension.isEmpty ? path : path.substring(0, path.length - extension.length);
+    final extension = path.contains('.')
+        ? path.substring(path.lastIndexOf('.'))
+        : '';
+    final base = extension.isEmpty
+        ? path
+        : path.substring(0, path.length - extension.length);
     for (var index = 2; index < 10000; index++) {
       final candidate = '$base ($index)$extension';
       if (!File(candidate).existsSync()) return candidate;
@@ -991,7 +1158,9 @@ class CloudRelayTransferService {
     final bytes = List<int>.generate(16, (_) => Random.secure().nextInt(256));
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    final hex = bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    final hex = bytes
+        .map((value) => value.toRadixString(16).padLeft(2, '0'))
+        .join();
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-'
         '${hex.substring(16, 20)}-${hex.substring(20)}';
   }

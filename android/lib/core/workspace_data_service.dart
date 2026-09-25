@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import 'device_model.dart';
+import 'cloud_relay.dart';
 import 'protocol_frame.dart';
 import 'pairing_manager.dart';
 import 'session_manager.dart';
@@ -421,6 +422,9 @@ class WorkspaceDataService {
   static const EventChannel _sharedFileEvents = EventChannel(
     'hinge/share/events',
   );
+  final Map<String, DateTime> _cloudRelayProgressLastUpdate =
+      <String, DateTime>{};
+  final Map<String, String> _cloudRelayProgressLastStage = <String, String>{};
 
   Future<dynamic> _invoke(String method, [dynamic arguments]) async {
     try {
@@ -641,6 +645,60 @@ class WorkspaceDataService {
   Future<bool> showFileReceivedNotification(String path) async {
     final raw = await _invoke('showFileReceivedNotification', {'path': path});
     return raw == true;
+  }
+
+  Future<bool> showCloudRelayTransferProgress(
+    CloudRelayProgress progress, {
+    required String direction,
+  }) async {
+    final now = DateTime.now();
+    final stage = progress.stage.name;
+    final previousAt = _cloudRelayProgressLastUpdate[progress.transferId];
+    final previousStage = _cloudRelayProgressLastStage[progress.transferId];
+    if (previousAt != null &&
+        previousStage == stage &&
+        now.difference(previousAt) < const Duration(milliseconds: 450)) {
+      return true;
+    }
+    _cloudRelayProgressLastUpdate[progress.transferId] = now;
+    _cloudRelayProgressLastStage[progress.transferId] = stage;
+    try {
+      final raw = await _invoke('showCloudRelayTransferProgress', {
+        'transferId': progress.transferId,
+        'fileName': progress.fileName,
+        'direction': direction,
+        'stage': stage,
+        'bytesTransferred': progress.bytesTransferred,
+        'totalBytes': progress.totalBytes,
+        'percentage': progress.percentage.round(),
+      });
+      return raw == true;
+    } catch (_) {
+      // Notification failure must never interrupt a file transfer.
+      return false;
+    }
+  }
+
+  Future<bool> finishCloudRelayTransferNotification({
+    required String transferId,
+    required String fileName,
+    required String direction,
+    required bool succeeded,
+  }) async {
+    _cloudRelayProgressLastUpdate.remove(transferId);
+    _cloudRelayProgressLastStage.remove(transferId);
+    try {
+      final raw = await _invoke('finishCloudRelayTransferNotification', {
+        'transferId': transferId,
+        'fileName': fileName,
+        'direction': direction,
+        'succeeded': succeeded,
+      });
+      return raw == true;
+    } catch (_) {
+      // Notification failure must never interrupt a file transfer.
+      return false;
+    }
   }
 
   Future<List<Map<String, String>>> defaultAppOptions(String type) async {

@@ -227,6 +227,12 @@ void main() {
       expect(received.type, equals(MessageType.textMessage));
       expect(utf8.decode(received.payload), equals(msg));
 
+      expect(server.activeConnections, contains(incomingConnection));
+      expect(server.disconnectDevice('client-id'), equals(1));
+      expect(server.connectionForDevice('client-id'), isNull);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(clientConn.isReady, isFalse);
+
       await sub.cancel();
       client.dispose();
       server.dispose();

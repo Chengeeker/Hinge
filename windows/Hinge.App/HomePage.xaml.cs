@@ -13,11 +13,9 @@ public sealed partial class HomePage : Page
     public TextBlock DeviceCountTextBlock => DeviceCountText;
     public ListView DeviceList => DeviceListView;
     public InfoBar DiscoveryStatus => ActivityInfoBar;
-    public TextBlock ClipboardStatus => ClipboardStatusText;
     public TextBlock Status => StatusText;
     public Button Refresh => RefreshButton;
     public Button SendFile => SendFileButton;
-    public Button ClipboardToggle => ClipboardButton;
     public Button ClearTransferHistory => ClearTransferHistoryButton;
 
     public event EventHandler<TransferHistoryRecord>? TransferCancelRequested;

@@ -33,6 +33,8 @@ queued → transferring → awaitingPickup → completed
 Android/Windows 的轮询是尽力而为：Android 被系统完全停止时，不承诺即时唤醒；
 manifest 在 TTL 内保留，下一次 Hinge 启动或轮询时仍可下载。
 
+跨设备剪贴板同步已从 Hinge 客户端移除；当前 Relay API 仅支持文件传输与设备注册。旧版 Worker 需要重新部署当前 `Hinge-Relay` 源码后才会关闭历史 `/v1/clipboard` 路由。
+
 ## 2. 设备标识、信任与认证
 
 每台设备使用 Hinge 已有的长期 `DeviceId`。用户在两台已经互相信任的设备上手动

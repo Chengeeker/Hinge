@@ -12,6 +12,7 @@ import 'session_manager.dart';
 import 'transfer_model.dart';
 
 class _IncomingFileContext {
+  final SessionConnection connection;
   final FileOfferMessage offer;
   final String tempFilePath;
   final String finalFilePath;
@@ -20,6 +21,7 @@ class _IncomingFileContext {
   Future<void> writeQueue = Future.value();
 
   _IncomingFileContext({
+    required this.connection,
     required this.offer,
     required this.tempFilePath,
     required this.finalFilePath,
@@ -69,6 +71,10 @@ class TransferManager {
           bytesTransferred: bytesTransferred,
           totalBytes: totalBytes,
           state: state,
+          direction: FileTransferDirection.receive,
+          deviceId: '${event['deviceId'] ?? ''}',
+          deviceName: '${event['deviceName'] ?? ''}',
+          error: '${event['reason'] ?? ''}',
         ),
       );
     }
@@ -146,6 +152,19 @@ class TransferManager {
     final fileName = fileNameOverride ?? file.uri.pathSegments.last;
     final fileSize = file.lengthSync();
     final transferId = _generateUuid();
+    final peer = conn.peerInfo;
+    final offering = TransferProgress(
+      transferId: transferId,
+      fileName: fileName,
+      bytesTransferred: 0,
+      totalBytes: fileSize,
+      state: TransferState.offering,
+      direction: FileTransferDirection.send,
+      deviceId: peer?.deviceId ?? '',
+      deviceName: peer?.name ?? '',
+    );
+    onProgress?.call(offering);
+    _progressController.add(offering);
 
     // Compute SHA-256 incrementally so opening a large video does not load the
     // whole file into the Dart heap or destabilize the session connection.
@@ -245,6 +264,9 @@ class TransferManager {
           bytesTransferred: bytesSent,
           totalBytes: fileSize,
           state: TransferState.transferring,
+          direction: FileTransferDirection.send,
+          deviceId: peer?.deviceId ?? '',
+          deviceName: peer?.name ?? '',
         );
         onProgress?.call(prog);
         _progressController.add(prog);
@@ -272,11 +294,29 @@ class TransferManager {
         bytesTransferred: fileSize,
         totalBytes: fileSize,
         state: TransferState.completed,
+        direction: FileTransferDirection.send,
+        deviceId: peer?.deviceId ?? '',
+        deviceName: peer?.name ?? '',
       );
       onProgress?.call(finalProg);
       _progressController.add(finalProg);
 
       return transferId;
+    } catch (error) {
+      final failed = TransferProgress(
+        transferId: transferId,
+        fileName: fileName,
+        bytesTransferred: 0,
+        totalBytes: fileSize,
+        state: TransferState.failed,
+        direction: FileTransferDirection.send,
+        deviceId: peer?.deviceId ?? '',
+        deviceName: peer?.name ?? '',
+        error: error.toString(),
+      );
+      onProgress?.call(failed);
+      _progressController.add(failed);
+      rethrow;
     } finally {
       await sub.cancel();
     }
@@ -386,6 +426,7 @@ class TransferManager {
 
     final raf = await tempFile.open(mode: FileMode.append);
     final context = _IncomingFileContext(
+      connection: conn,
       offer: offer,
       tempFilePath: tempPath,
       finalFilePath: finalPath,
@@ -400,6 +441,18 @@ class TransferManager {
       offset: existingBytes,
     );
     conn.sendJson(MessageType.fileAccept, accept.toJson());
+    _progressController.add(
+      TransferProgress(
+        transferId: offer.transferId,
+        fileName: safeName,
+        bytesTransferred: existingBytes,
+        totalBytes: offer.fileSize,
+        state: TransferState.transferring,
+        direction: FileTransferDirection.receive,
+        deviceId: conn.peerInfo?.deviceId ?? '',
+        deviceName: conn.peerInfo?.name ?? '',
+      ),
+    );
   }
 
   Future<void> _handleFileChunk(Uint8List payload) async {
@@ -428,6 +481,9 @@ class TransferManager {
       bytesTransferred: context.bytesReceived,
       totalBytes: context.offer.fileSize,
       state: TransferState.transferring,
+      direction: FileTransferDirection.receive,
+      deviceId: context.connection.peerInfo?.deviceId ?? '',
+      deviceName: context.connection.peerInfo?.name ?? '',
     );
     _progressController.add(prog);
   }
@@ -469,6 +525,9 @@ class TransferManager {
         bytesTransferred: context.offer.fileSize,
         totalBytes: context.offer.fileSize,
         state: TransferState.completed,
+        direction: FileTransferDirection.receive,
+        deviceId: context.connection.peerInfo?.deviceId ?? '',
+        deviceName: context.connection.peerInfo?.name ?? '',
       );
       _progressController.add(prog);
       _fileReceivedController.add(context.finalFilePath);
@@ -480,6 +539,10 @@ class TransferManager {
         bytesTransferred: 0,
         totalBytes: context.offer.fileSize,
         state: TransferState.failed,
+        direction: FileTransferDirection.receive,
+        deviceId: context.connection.peerInfo?.deviceId ?? '',
+        deviceName: context.connection.peerInfo?.name ?? '',
+        error: '文件校验失败',
       );
       _progressController.add(prog);
     }

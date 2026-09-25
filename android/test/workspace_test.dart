@@ -13,7 +13,6 @@ void main() {
       expect(state.themePreference, equals(AppThemePreference.system));
       expect(state.themeMode, equals(ThemeMode.system));
       expect(state.currentTabIndex, equals(0));
-      expect(state.clipboardSyncEnabled, isTrue);
     });
 
     test('WorkspaceState cycles theme preference properly', () {
@@ -37,13 +36,10 @@ void main() {
       expect(notifyCount, equals(3));
     });
 
-    test('WorkspaceState updates tab index and clipboard sync', () {
+    test('WorkspaceState updates the active tab index', () {
       final state = WorkspaceState();
       state.setTabIndex(2);
       expect(state.currentTabIndex, equals(2));
-
-      state.setClipboardSync(false);
-      expect(state.clipboardSyncEnabled, isFalse);
     });
   });
 

@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 当前版本：`v1.2.4`（Android `1.2.4+83`，Windows `1.2.4.0`）
+- 本次发行版本：Android `1.4.0+99`（arm64-v8a）；Windows `1.4.0.0`。重点完善 Cloud Relay 文件传输进度与 Android 传输记录；剪贴板跨设备同步已移除。
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -17,13 +17,14 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 - Native-first：Windows 使用 WinUI 3 / Windows App SDK，媒体文件交给 Windows 默认关联应用打开；Android 使用 Flutter UI 和 Android 原生桥接；
 - 事实优先：Mock、回环测试和真实手机验收分开记录，不把自动化测试当作所有机型都已验证。
 
-## 当前版本能做什么
+## 当前版本包含的功能
 
 ### 跨设备基础能力
 
 - UDP 局域网发现和手动设备发现；
 - 已知设备快速重连、心跳和断线状态恢复；已经建立过会话且仍在信任库中的设备，在更新或短暂断线后重新上线时自动恢复连接，新设备仍需手动连接；
-- 文本、文件和剪贴板同步；
+- 文本消息与文件传输；跨设备剪贴板同步已移除；
+- Android 首页提供本地文件传输记录，显示局域网/Cloud Relay 收发方向、状态与进度；可删除或清理已结束记录；
 - 前台服务、通知和厂商后台保活设置引导；
 - Android 支持低功耗待命，Windows 右键发送时可通过 BLE Companion presence 请求恢复局域网连接；BLE 只负责唤醒，不承载文件内容，自动唤醒不可用时由 Android 常驻通知作为人工兜底；Android 系统分享在已有会话可用时直接进入发送，断联时才显示待发送队列；
 - 统一的跨端协议、传输模型和测试基线。
@@ -34,7 +35,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 - 笔记、待办、日历和相册入口；
 - 读取日历、MediaStore、手机存储和系统统计信息；
 - 相册按批次读取，避免大型媒体库一次性阻塞界面；
-- Material You / Monet 动态颜色、浅色/深色模式、纯黑深色模式和预置主题；
+- Material You / Monet 动态颜色、浅色/深色模式、纯黑深色模式和标准 Material 3 预置色板；
 - 自定义存储路径、通知常驻和后台保活设置入口；
 - 原生前台服务负责局域网 TCP、心跳、断线重连和待发送队列；息屏静止后进入 `Suspended`/低功耗待命，保留可恢复会话，不把普通第三方应用承诺为永久 TCP 保活；
 - 保活设置支持 Companion Device 绑定、解除绑定和能力状态；常驻通知在活跃和待命阶段使用不同状态文案，并提供点击唤醒入口；
@@ -53,7 +54,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 - 文件分类不只依赖手机厂商返回的 MIME：对常见文档、压缩包、安装包和媒体扩展名做统一回退识别，未知类型在需要时再读取文件头；
 - 大型工作区/同步控制数据支持双方协商的 ZLIB 压缩，旧版本会自动回退到普通控制帧；
 - 文件传输沿用 LAN TCP 帧协议，双方支持时使用边读边校验的 SHA-256、3 个 2 MiB 缓冲块有限 read-ahead 和最终帧直写，减少传输前整文件预扫描、重复大块复制和磁盘/网络空转；旧版本对端自动回退到原有预校验路径；
-- Cloud Relay 可在设置中单独开启：使用用户自建的 Cloudflare Worker + 私有 R2 和独立的 [Hinge-Relay](https://github.com/Chengeeker/Hinge-Relay)，客户端在上传前用 AES-256-GCM 加密元数据和每个 8 MiB 文件分块；局域网恢复前，文件会显示为“等待设备接收”；
+- Cloud Relay 文件中转可在设置中开启：使用用户自建的 Cloudflare Worker + 私有 R2 和独立的 [Hinge-Relay](https://github.com/Chengeeker/Hinge-Relay)，客户端在上传前用 AES-256-GCM 加密元数据和每个 8 MiB 文件分块；Android 通知栏显示云上传/下载进度，局域网恢复前，已上传文件会显示为“等待设备接收”；
 - Windows 首页传输状态会显示测得的有效字节速率，Android 原生连接诊断会记录耗时、字节数和吞吐，方便区分 Wi-Fi、手机写盘与协议处理瓶颈；
 - 宫格/列表视图、类型筛选、排序、多选、保存、删除、目录进入/返回和分页加载；
 - 相册和图片缩略图按批次加载，首次只取前 200 项，继续滚动时再读取后续内容；
@@ -61,7 +62,6 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 - 支持从资源管理器拖入文件，并在拖动过程中预览保存目标；窗口标题栏移动不会误触发文件投放提示；
 - 支持在 Hinge 运行且手机已连接时，从 Windows 11 第一层右键菜单的“通过 Hinge 发送到”悬停选择目标机型；支持资源管理器多选，复用同一传输链路并自动保存到 Android `/storage/emulated/0/Download/Hinge/` 下的类型目录。设备快照读取失败时根项仍保留并显示禁用提示；EXE 安装版把 Shell DLL 放入签名稀疏身份包；便携版未注册包身份时使用“显示更多选项”中的兼容菜单；
 - Windows 右键发送在手机未连接时会先保存到持久化队列，并尝试通过 BLE 唤醒已关联的 Android 设备；BLE、适配器或厂商后台策略不可用时，用户点击 Android 常驻通知即可恢复连接并继续发送；
-- 剪贴板同步会把对端文本写入本机系统剪贴板，而不是只显示在 Hinge 页面；两端带有回环抑制，避免同步内容反复转发；
 - 图片、视频、音频使用当前 Windows 文件关联打开，避免应用内播放器的后台播放和释放问题；
 - WinUI 3 主题、窗口材质、背景图、开机启动、静默启动和关闭时最小化到托盘；后台运行提示可在设置中单独控制，默认关闭；
 - 推荐使用可选择安装路径的自包含 EXE 安装器，也提供便携 ZIP。
@@ -88,9 +88,9 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 ### 可选 Cloud Relay
 
-Cloud Relay 不是 Hinge 官方服务。需要先把 [`Hinge-Relay`](https://github.com/Chengeeker/Hinge-Relay) 导入自己的 GitHub 仓库，在 Cloudflare Worker 中绑定私有 R2、设置 `RELAY_ADMIN_TOKEN` 后部署；再在 Windows 和 Android 的 Cloud Relay 设置中填写 Worker 地址、使用同一个 Relay 密钥，并分别注册两个已经在 Hinge 中信任的设备。Relay 密钥不会上传 Worker，文件名、大小和摘要也在客户端加密后才进入 R2。
+Cloud Relay 不是 Hinge 官方服务。需要先把 [`Hinge-Relay`](https://github.com/Chengeeker/Hinge-Relay) 导入自己的 GitHub 仓库，在 Cloudflare Worker 中绑定私有 R2、设置 `RELAY_ADMIN_TOKEN` 后部署；再在 Windows 和 Android 的 Cloud Relay 设置中填写 Worker 地址、使用同一个 Relay 密钥，并分别注册两个已经在 Hinge 中信任的设备。Relay 密钥不会上传 Worker；文件名、大小和摘要在客户端加密后才进入 R2。跨设备剪贴板同步及 `/v1/clipboard` Relay API 已从当前源码移除。
 
-Cloud Relay 只做异步中转：当 LAN 会话可用时仍走原有 TCP；没有 LAN 时，发送端上传后等待接收端轮询，Android 被系统完全停止时不会承诺即时唤醒。部署、API、更新同步和密钥边界见独立项目的 [README](https://github.com/Chengeeker/Hinge-Relay#readme) 与 [协议说明](protocol/cloud-relay.md)。
+Cloud Relay 只做异步文件中转：当 LAN 会话可用时仍走原有 TCP；没有 LAN 时，文件等待接收端轮询，Android 被系统完全停止时不会承诺即时唤醒。部署、API、更新同步和密钥边界见独立项目的 [README](https://github.com/Chengeeker/Hinge-Relay#readme) 与 [协议说明](protocol/cloud-relay.md)。
 
 另外提供：
 

@@ -24,7 +24,8 @@ public sealed record SessionPeerInfo(
     string Manufacturer = "",
     string Model = "",
     IReadOnlyList<string>? Capabilities = null,
-    bool PairingRequired = false);
+    bool PairingRequired = false,
+    int MaxPayloadSize = ProtocolFrame.LegacyMaxPayloadSize);
 
 public class SessionMessageEventArgs : EventArgs
 {
@@ -40,7 +41,7 @@ public class SessionMessageEventArgs : EventArgs
 
 public class SessionConnection : IDisposable
 {
-    // Keep enough in-flight data for the 2 MiB bulk frames on a Wi-Fi link.
+    // Keep enough in-flight data for the 4 MiB bulk frames on a Wi-Fi link.
     // The OS may clamp or round this value; socket tuning remains best effort.
     private const int BulkSocketBufferSize = 4 * 1024 * 1024;
     private static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(5);
@@ -176,7 +177,7 @@ public class SessionConnection : IDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(SessionConnection));
 
         long frameStart = timingCallback == null ? 0 : Stopwatch.GetTimestamp();
-        int payloadLength = checked(28 + data.Length);
+        int payloadLength = checked(ProtocolFrame.FileChunkMetadataSize + data.Length);
         int frameLength = checked(ProtocolFrame.HeaderSize + payloadLength);
         byte[] frame = ArrayPool<byte>.Shared.Rent(frameLength);
         try
@@ -227,6 +228,7 @@ public class SessionConnection : IDisposable
             ProtocolCompression.Capability,
             ProtocolCompression.StreamingFileHashCapability
         },
+        maxPayloadSize = ProtocolFrame.MaxPayloadSize,
         pairingRequired = _localPairingCode.Length > 0,
         pairingChallenge = _localPairingChallenge,
         pairingProof = string.Empty
@@ -249,6 +251,7 @@ public class SessionConnection : IDisposable
                 ProtocolCompression.Capability,
                 ProtocolCompression.StreamingFileHashCapability
             },
+            maxPayloadSize = ProtocolFrame.MaxPayloadSize,
             pairingRequired = _localPairingCode.Length > 0,
             pairingChallenge = _localPairingChallenge,
             pairingProof = proof
@@ -387,7 +390,8 @@ public class SessionConnection : IDisposable
                 root.TryGetProperty("manufacturer", out var manufacturerValue) ? manufacturerValue.GetString() ?? string.Empty : string.Empty,
                 root.TryGetProperty("model", out var modelValue) ? modelValue.GetString() ?? string.Empty : string.Empty,
                 ReadCapabilities(root),
-                pairingRequired);
+                pairingRequired,
+                ReadMaxPayloadSize(root));
 
             _peerPairingRequired = pairingRequired;
             if (!string.IsNullOrWhiteSpace(pairingChallenge))
@@ -421,6 +425,20 @@ public class SessionConnection : IDisposable
         {
             // Ignore malformed identity frames without dropping a healthy socket.
         }
+    }
+
+    private static int ReadMaxPayloadSize(JsonElement root)
+    {
+        if (!root.TryGetProperty("maxPayloadSize", out var value) ||
+            !value.TryGetInt32(out int maxPayloadSize) ||
+            maxPayloadSize <= ProtocolFrame.FileChunkMetadataSize)
+        {
+            // Older peers do not advertise a limit. Their documented protocol
+            // ceiling is 16 MiB, so use that conservative compatibility value.
+            return ProtocolFrame.LegacyMaxPayloadSize;
+        }
+
+        return maxPayloadSize;
     }
 
     private void TryCompleteAuthentication()

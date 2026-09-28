@@ -425,6 +425,8 @@ class WorkspaceDataService {
   final Map<String, DateTime> _cloudRelayProgressLastUpdate =
       <String, DateTime>{};
   final Map<String, String> _cloudRelayProgressLastStage = <String, String>{};
+  final CloudRelayProgressGuard _cloudRelayProgressGuard =
+      CloudRelayProgressGuard();
 
   Future<dynamic> _invoke(String method, [dynamic arguments]) async {
     try {
@@ -651,26 +653,32 @@ class WorkspaceDataService {
     CloudRelayProgress progress, {
     required String direction,
   }) async {
+    final normalizedProgress = _cloudRelayProgressGuard.normalize(
+      progress,
+      direction: direction,
+    );
     final now = DateTime.now();
-    final stage = progress.stage.name;
-    final previousAt = _cloudRelayProgressLastUpdate[progress.transferId];
-    final previousStage = _cloudRelayProgressLastStage[progress.transferId];
+    final stage = normalizedProgress.stage.name;
+    final previousAt =
+        _cloudRelayProgressLastUpdate[normalizedProgress.transferId];
+    final previousStage =
+        _cloudRelayProgressLastStage[normalizedProgress.transferId];
     if (previousAt != null &&
         previousStage == stage &&
         now.difference(previousAt) < const Duration(milliseconds: 450)) {
       return true;
     }
-    _cloudRelayProgressLastUpdate[progress.transferId] = now;
-    _cloudRelayProgressLastStage[progress.transferId] = stage;
+    _cloudRelayProgressLastUpdate[normalizedProgress.transferId] = now;
+    _cloudRelayProgressLastStage[normalizedProgress.transferId] = stage;
     try {
       final raw = await _invoke('showCloudRelayTransferProgress', {
-        'transferId': progress.transferId,
-        'fileName': progress.fileName,
+        'transferId': normalizedProgress.transferId,
+        'fileName': normalizedProgress.fileName,
         'direction': direction,
         'stage': stage,
-        'bytesTransferred': progress.bytesTransferred,
-        'totalBytes': progress.totalBytes,
-        'percentage': progress.percentage.round(),
+        'bytesTransferred': normalizedProgress.bytesTransferred,
+        'totalBytes': normalizedProgress.totalBytes,
+        'percentage': normalizedProgress.percentage.round(),
       });
       return raw == true;
     } catch (_) {
@@ -687,6 +695,10 @@ class WorkspaceDataService {
   }) async {
     _cloudRelayProgressLastUpdate.remove(transferId);
     _cloudRelayProgressLastStage.remove(transferId);
+    _cloudRelayProgressGuard.clear(
+      transferId: transferId,
+      direction: direction,
+    );
     try {
       final raw = await _invoke('finishCloudRelayTransferNotification', {
         'transferId': transferId,
@@ -728,6 +740,11 @@ class WorkspaceDataService {
       'packageName': packageName ?? '',
     });
     return raw == true;
+  }
+
+  Future<String> openTransferHistoryFile(String path) async {
+    final raw = await _invoke('openTransferHistoryFile', {'path': path});
+    return raw is String && raw.isNotEmpty ? raw : 'failed';
   }
 
   Future<void> openAppSettings() async {

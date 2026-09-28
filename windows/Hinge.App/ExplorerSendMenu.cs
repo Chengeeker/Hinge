@@ -282,11 +282,13 @@ internal static class ExplorerSendMenu
                     NotifyShell();
                 }
             }
-            catch
+            catch (Exception exception)
             {
                 // The context menu is an optional integration. A locked-down
                 // profile or a registry policy must not affect connectivity or
                 // the main Hinge process.
+                App.LogLifecycle(
+                    $"explorer-menu-refresh-failed error={exception.GetType().Name}");
             }
         }
     }
@@ -384,7 +386,18 @@ internal static class ExplorerSendMenu
         string? executablePath,
         IReadOnlyList<ExplorerSendDevice> devices)
     {
-        WriteSnapshotFile(executablePath, devices);
+        // The text snapshot is a compatibility/debugging aid. It must not
+        // prevent the registry-backed shell menu from being refreshed when
+        // the file is locked or unavailable (for example, during an update).
+        try
+        {
+            WriteSnapshotFile(executablePath, devices);
+        }
+        catch (Exception exception)
+        {
+            App.LogLifecycle(
+                $"explorer-menu-file-snapshot-failed error={exception.GetType().Name}");
+        }
 
         using var snapshot = Registry.CurrentUser.CreateSubKey(SnapshotPath, writable: true);
         if (snapshot == null) return;

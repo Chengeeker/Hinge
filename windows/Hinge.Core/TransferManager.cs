@@ -23,10 +23,19 @@ public class IncomingFileContext
 
 public class TransferManager : IDisposable
 {
-    // Keep file frames large enough to avoid turning a bulk transfer into a
-    // long sequence of small socket writes. The protocol still accepts the
-    // older smaller chunks, so this is a sender-side performance improvement.
-    private const int FileChunkSize = 2 * 1024 * 1024;
+    // Larger bulk frames reduce per-frame overhead. The release default is
+    // 32 MiB; diagnostic variants are capped to the peer's advertised limit.
+#if HINGE_FILE_CHUNK_SIZE_64M
+    private const int FileChunkSize = 64 * 1024 * 1024;
+#elif HINGE_FILE_CHUNK_SIZE_32M
+    private const int FileChunkSize = 32 * 1024 * 1024;
+#elif HINGE_FILE_CHUNK_SIZE_16M
+    private const int FileChunkSize = 16 * 1024 * 1024;
+#elif HINGE_FILE_CHUNK_SIZE_8M
+    private const int FileChunkSize = 8 * 1024 * 1024;
+#else
+    private const int FileChunkSize = 32 * 1024 * 1024;
+#endif
     private const int FileReadAheadDepth = 3;
     private string _downloadDirectory;
     private readonly ConcurrentDictionary<string, IncomingFileContext> _incomingTransfers = new();
@@ -216,6 +225,11 @@ public class TransferManager : IDisposable
                     throw new InvalidOperationException($"File transfer rejected: {accept.Reason}");
                 }
 
+                int fileChunkSize = ProtocolFrame.GetNegotiatedFileChunkSize(
+                    FileChunkSize,
+                    ProtocolFrame.MaxPayloadSize,
+                    conn.PeerInfo?.MaxPayloadSize ?? ProtocolFrame.MaxPayloadSize);
+
                 // Begin chunk stream from accept.Offset
                 long offset = Math.Clamp(accept.Offset, 0, fileInfo.Length);
 #if HINGE_TRANSFER_DIAGNOSTICS
@@ -264,7 +278,7 @@ public class TransferManager : IDisposable
                             FileMode.Open,
                             FileAccess.Read,
                             FileShare.Read,
-                            FileChunkSize,
+                            fileChunkSize,
                             FileOptions.Asynchronous | FileOptions.SequentialScan);
                         if (offset > 0) fs.Seek(offset, SeekOrigin.Begin);
 
@@ -273,14 +287,14 @@ public class TransferManager : IDisposable
                         while (readOffset < fileInfo.Length)
                         {
                             pipelineCts.Token.ThrowIfCancellationRequested();
-                            byte[]? buffer = ArrayPool<byte>.Shared.Rent(FileChunkSize);
+                            byte[]? buffer = ArrayPool<byte>.Shared.Rent(fileChunkSize);
                             try
                             {
 #if HINGE_TRANSFER_DIAGNOSTICS
                                 long readStart = Stopwatch.GetTimestamp();
 #endif
                                 int bytesRead = await fs.ReadAsync(
-                                    buffer.AsMemory(0, FileChunkSize),
+                                    buffer.AsMemory(0, fileChunkSize),
                                     pipelineCts.Token);
 #if HINGE_TRANSFER_DIAGNOSTICS
                                 Interlocked.Add(ref timing.ReadTicks,
@@ -560,7 +574,7 @@ public class TransferManager : IDisposable
 
     private async Task HandleFileChunkAsync(byte[] payload)
     {
-        if (payload.Length < 28) return;
+        if (payload.Length < ProtocolFrame.FileChunkMetadataSize) return;
 
         Guid transferId = ProtocolUuid.ReadNetworkBytes(payload.AsSpan(0, 16));
         string transferIdStr = transferId.ToString();
@@ -570,7 +584,7 @@ public class TransferManager : IDisposable
         }
 
         long chunkOffset = BinaryPrimitives.ReadInt64BigEndian(payload.AsSpan(20, 8));
-        int dataLength = payload.Length - 28;
+        int dataLength = payload.Length - ProtocolFrame.FileChunkMetadataSize;
 
         if (context.FileStream.Position != chunkOffset)
         {
@@ -578,10 +592,10 @@ public class TransferManager : IDisposable
             context.HashIsContiguous = false;
         }
 
-        await context.FileStream.WriteAsync(payload.AsMemory(28, dataLength));
+        await context.FileStream.WriteAsync(payload.AsMemory(ProtocolFrame.FileChunkMetadataSize, dataLength));
         if (context.Hash != null && context.HashIsContiguous)
         {
-            context.Hash.AppendData(payload.AsSpan(28, dataLength));
+            context.Hash.AppendData(payload.AsSpan(ProtocolFrame.FileChunkMetadataSize, dataLength));
         }
         context.BytesReceived += dataLength;
 

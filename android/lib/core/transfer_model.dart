@@ -153,6 +153,7 @@ class TransferProgress {
   final FileTransferDirection direction;
   final String deviceId;
   final String deviceName;
+  final String localFilePath;
   final String error;
 
   double get percentage =>
@@ -167,6 +168,7 @@ class TransferProgress {
     this.direction = FileTransferDirection.receive,
     this.deviceId = '',
     this.deviceName = '',
+    this.localFilePath = '',
     this.error = '',
   });
 }

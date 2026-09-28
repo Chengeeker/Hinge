@@ -4,8 +4,9 @@ import '../core/transfer_history.dart';
 
 class TransferHistoryScreen extends StatelessWidget {
   final TransferHistoryStore store;
+  final Future<String> Function(String path)? openFile;
 
-  const TransferHistoryScreen({super.key, required this.store});
+  const TransferHistoryScreen({super.key, required this.store, this.openFile});
 
   @override
   Widget build(BuildContext context) {
@@ -16,8 +17,8 @@ class TransferHistoryScreen extends StatelessWidget {
           AnimatedBuilder(
             animation: store,
             builder: (context, _) => IconButton(
-              tooltip: '清空已完成记录',
-              onPressed: store.records.any((record) => record.canDelete)
+              tooltip: '清空本机记录',
+              onPressed: store.records.isNotEmpty
                   ? () => _confirmClear(context)
                   : null,
               icon: const Icon(Icons.delete_sweep_outlined),
@@ -63,12 +64,22 @@ class TransferHistoryScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             itemCount: records.length,
             separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, index) => _TransferHistoryTile(
-              record: records[index],
-              onDelete: records[index].canDelete
-                  ? () => store.delete(records[index].id)
-                  : null,
-            ),
+            itemBuilder: (context, index) {
+              final record = records[index];
+              final canLocateFile =
+                  record.localFilePath.isNotEmpty ||
+                  (record.direction == TransferHistoryDirection.receive &&
+                      record.status == TransferHistoryStatus.completed);
+              return _TransferHistoryTile(
+                record: record,
+                onOpen: openFile != null && canLocateFile
+                    ? () => _openRecord(context, record)
+                    : null,
+                onDelete: record.canDelete
+                    ? () => store.delete(record.id)
+                    : null,
+              );
+            },
           );
         },
       ),
@@ -76,16 +87,12 @@ class TransferHistoryScreen extends StatelessWidget {
   }
 
   Future<void> _confirmClear(BuildContext context) async {
-    final finishedCount = store.records
-        .where((record) => record.canDelete)
-        .length;
+    final recordCount = store.records.length;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('清空传输记录？'),
-        content: Text(
-          '将删除 $finishedCount 条已结束记录，包括完成、失败或等待接收的云中转记录。只删除本机记录，不会取消传输；进行中的任务会保留。',
-        ),
+        content: Text('将从本机列表中移除 $recordCount 条记录。此操作不会取消正在进行的传输，也不会删除已接收的文件。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -98,82 +105,131 @@ class TransferHistoryScreen extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed == true) store.clearFinished();
+    if (confirmed == true) store.clearAll();
+  }
+
+  Future<void> _openRecord(
+    BuildContext context,
+    TransferHistoryRecord record,
+  ) async {
+    final path = record.localFilePath.trim();
+    if (path.isEmpty) {
+      _showMessage(context, '这是旧记录，未保存本机文件位置，无法直接打开。');
+      return;
+    }
+    final opener = openFile;
+    if (opener == null) return;
+
+    String result;
+    try {
+      result = await opener(path);
+    } catch (_) {
+      result = 'failed';
+    }
+    if (!context.mounted) return;
+    switch (result) {
+      case 'opened':
+        return;
+      case 'missing':
+        _showMessage(context, '文件已不存在或已被删除。');
+      default:
+        _showMessage(context, '无法打开文件，请检查“默认应用”设置或文件访问权限。');
+    }
+  }
+
+  void _showMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
 class _TransferHistoryTile extends StatelessWidget {
   final TransferHistoryRecord record;
+  final VoidCallback? onOpen;
   final VoidCallback? onDelete;
 
-  const _TransferHistoryTile({required this.record, this.onDelete});
+  const _TransferHistoryTile({
+    required this.record,
+    this.onOpen,
+    this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final active = record.isInProgress;
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  record.direction == TransferHistoryDirection.send
-                      ? Icons.upload_rounded
-                      : Icons.download_rounded,
-                  color: scheme.primary,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    record.fileName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    record.direction == TransferHistoryDirection.send
+                        ? Icons.upload_rounded
+                        : Icons.download_rounded,
+                    color: scheme.primary,
                   ),
-                ),
-                if (onDelete != null)
-                  IconButton(
-                    tooltip: '删除记录',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline_rounded),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      record.fileName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                   ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              [
-                record.directionText,
-                if (record.deviceName.isNotEmpty) record.deviceName,
-                record.statusText,
-                _formatTime(record.updatedAt),
-              ].join(' · '),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: record.status == TransferHistoryStatus.failed
-                    ? scheme.error
-                    : active
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant,
+                  if (onOpen != null)
+                    Icon(
+                      Icons.open_in_new_rounded,
+                      size: 18,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  if (onDelete != null)
+                    IconButton(
+                      tooltip: '删除记录',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onDelete,
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                ],
               ),
-            ),
-            if (record.status == TransferHistoryStatus.transferring &&
-                record.totalBytes > 0) ...[
-              const SizedBox(height: 12),
-              LinearProgressIndicator(value: record.progress),
               const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  '${_formatBytes(record.bytesTransferred)} / ${_formatBytes(record.totalBytes)}',
-                  style: Theme.of(context).textTheme.labelSmall,
+              Text(
+                [
+                  record.directionText,
+                  if (record.deviceName.isNotEmpty) record.deviceName,
+                  record.statusText,
+                  _formatTime(record.updatedAt),
+                ].join(' · '),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: record.status == TransferHistoryStatus.failed
+                      ? scheme.error
+                      : active
+                      ? scheme.primary
+                      : scheme.onSurfaceVariant,
                 ),
               ),
+              if (record.status == TransferHistoryStatus.transferring &&
+                  record.totalBytes > 0) ...[
+                const SizedBox(height: 12),
+                LinearProgressIndicator(value: record.progress),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    '${_formatBytes(record.bytesTransferred)} / ${_formatBytes(record.totalBytes)}',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

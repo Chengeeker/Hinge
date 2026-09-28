@@ -103,6 +103,37 @@ public class ProtocolFramingTests
                 Payload = new byte[ProtocolFrame.MaxPayloadSize + 1]
             }.Serialize());
     }
+
+    [Fact]
+    public void ProtocolFrame_NegotiatesChunkSizeAgainstBothPeerLimits()
+    {
+        const int mib = 1024 * 1024;
+        const int preferred64MiB = 64 * mib;
+        const int peer16MiBPayload = 16 * mib;
+        const int peer64MiBFilePayload = 64 * mib + ProtocolFrame.FileChunkMetadataSize;
+        var legacyPeer = new SessionPeerInfo("legacy", "Legacy", "android");
+
+        Assert.Equal(ProtocolFrame.LegacyMaxPayloadSize, legacyPeer.MaxPayloadSize);
+
+        Assert.Equal(
+            peer16MiBPayload - ProtocolFrame.FileChunkMetadataSize,
+            ProtocolFrame.GetNegotiatedFileChunkSize(
+                preferred64MiB,
+                peer64MiBFilePayload,
+                legacyPeer.MaxPayloadSize));
+        Assert.Equal(
+            preferred64MiB,
+            ProtocolFrame.GetNegotiatedFileChunkSize(
+                preferred64MiB,
+                peer64MiBFilePayload,
+                peer64MiBFilePayload));
+        Assert.Equal(
+            4 * mib,
+            ProtocolFrame.GetNegotiatedFileChunkSize(
+                4 * mib,
+                peer64MiBFilePayload,
+                peer64MiBFilePayload));
+    }
 }
 
 public class ProtocolCompressionTests

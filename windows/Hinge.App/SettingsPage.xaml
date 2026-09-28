@@ -7,7 +7,7 @@
         <StackPanel Style="{StaticResource HingePageStackStyle}">
             <TextBlock Text="设置" Style="{StaticResource HingePageTitleStyle}" />
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
-                <StackPanel Spacing="12">
+                <StackPanel Spacing="8">
                     <Button
                         x:Name="PersonalizationButton"
                         HorizontalAlignment="Stretch"
@@ -29,110 +29,69 @@
                             <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
                         </Grid>
                     </Button>
-                    <StackPanel Spacing="8">
-                    <TextBlock Text="自定义存储位置" FontSize="15" FontWeight="SemiBold" />
-                        <Grid ColumnSpacing="8">
+                    <Button
+                        x:Name="WindowsSettingsButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="0"
+                        ToolTipService.ToolTip="打开 Windows 设置"
+                        AutomationProperties.Name="Windows 设置">
+                        <Grid Padding="14,12" ColumnSpacing="14">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBox
-                                x:Name="StoragePathTextBox"
-                                Grid.Column="0"
-                                IsReadOnly="True"
-                                PlaceholderText="未设置时使用 Downloads\Hinge"
-                                HorizontalAlignment="Stretch" />
-                            <Button
-                                x:Name="StorageButton"
-                                Grid.Column="1"
-                                Content="浏览"
-                                MinWidth="72"
-                                HorizontalAlignment="Right" />
+                            <SymbolIcon Grid.Column="0" Symbol="Setting" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="Windows 设置" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock Text="开机启动、托盘行为与 Windows 通知" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
                         </Grid>
-                        <TextBlock
-                            Text="批量保存文件和照片时使用此目录。更新应用不会清除该设置。"
-                            FontSize="14"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Windows 通知" FontSize="15" FontWeight="SemiBold" />
-                        <Grid ColumnSpacing="8">
+                    </Button>
+                    <Button
+                        x:Name="TransferSettingsButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="0"
+                        ToolTipService.ToolTip="打开传输与连接设置"
+                        AutomationProperties.Name="传输与连接设置">
+                        <Grid Padding="14,12" ColumnSpacing="14">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock
-                                x:Name="NotificationStatusText"
-                                Grid.Column="0"
-                                VerticalAlignment="Center"
-                                Text="检查中…"
-                                FontSize="14"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                TextWrapping="Wrap" />
-                            <Button
-                                x:Name="OpenNotificationSettingsButton"
-                                Grid.Column="1"
-                                Content="打开通知设置"
-                                HorizontalAlignment="Right" />
+                            <SymbolIcon Grid.Column="0" Symbol="Folder" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="传输与连接" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock Text="自定义接收位置、设备配对与 Android 唤醒" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
                         </Grid>
-                        <TextBlock
-                            Text="即使 Windows 系统通知被关闭，Hinge 仍会在窗口内显示手机短信和验证码。"
-                            FontSize="14"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="连接安全" FontSize="15" FontWeight="SemiBold" />
-                        <TextBlock Text="设置后，其他设备连接到本机时需要输入这个 6 位数字；留空表示不启用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        <Grid ColumnSpacing="8">
+                    </Button>
+                    <Button
+                        x:Name="CloudRelaySettingsButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="0"
+                        ToolTipService.ToolTip="打开 Cloud Relay 设置"
+                        AutomationProperties.Name="Cloud Relay 设置">
+                        <Grid Padding="14,12" ColumnSpacing="14">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBox
-                                x:Name="PairingCodeTextBox"
-                                Grid.Column="0"
-                                MaxLength="6"
-                                PlaceholderText="输入 6 位数字"
-                                HorizontalAlignment="Stretch" />
-                            <Button x:Name="SavePairingCodeButton" Grid.Column="1" Content="保存" MinWidth="72" />
-                            <Button x:Name="ClearPairingCodeButton" Grid.Column="2" Content="清除" MinWidth="72" />
+                            <SymbolIcon Grid.Column="0" Symbol="Setting" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="Cloud Relay" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock Text="配置你自己的 Worker、Relay 密钥与设备注册" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
                         </Grid>
-                        <TextBlock x:Name="PairingCodeStatusText" Text="未启用本机配对码" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Android 自动唤醒" FontSize="15" FontWeight="SemiBold" />
-                        <TextBlock Text="右键发送文件时，先用短暂 BLE 广播唤醒已绑定的 Android Hinge，再沿用局域网连接传输。广播不承载文件或配对码。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        <Button x:Name="StartBlePairingButton" Content="开启 60 秒 BLE 配对广播" HorizontalAlignment="Left" />
-                    </StackPanel>
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Cloud Relay" FontSize="15" FontWeight="SemiBold" />
-                          <TextBlock Text="可选的用户自有 Cloudflare Worker + R2 异步文件中转。局域网连接仍然优先；两台已信任设备需要使用同一 Relay 密钥。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                          <ToggleSwitch x:Name="CloudRelayEnabledToggle" Header="启用 Cloud Relay" OnContent="开启" OffContent="关闭" />
-                        <TextBox x:Name="CloudRelayEndpointTextBox" Header="Worker 地址" PlaceholderText="https://hinge-relay.example.workers.dev" />
-                        <TextBox x:Name="CloudRelayKeyTextBox" Header="Relay 加密密钥" PlaceholderText="Base64URL 32 字节密钥" />
-                        <PasswordBox x:Name="CloudRelayAdminTokenTextBox" Header="部署 Token（仅注册时使用）" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="GenerateCloudRelayKeyButton" Content="生成密钥" />
-                            <Button x:Name="CopyCloudRelayKeyButton" Content="复制密钥" />
-                            <Button x:Name="SaveCloudRelayButton" Content="保存配置" />
-                            <Button x:Name="RegisterCloudRelayButton" Content="注册此设备" />
-                            <Button x:Name="TestCloudRelayButton" Content="测试 Worker" />
-                        </StackPanel>
-                        <TextBlock x:Name="CloudRelayStatusText" Text="未配置 Cloud Relay" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <Button x:Name="AboutButton" Content="关于应用" HorizontalAlignment="Left" />
-                    <ToggleSwitch x:Name="MinimizeToTrayToggle" Header="关闭窗口时最小化到托盘" OnContent="开启" OffContent="关闭" />
-                    <TextBlock Text="开启后点击关闭按钮会隐藏窗口，仍可从系统托盘恢复或退出应用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <ToggleSwitch x:Name="ShowTrayBackgroundNoticeToggle" Header="显示后台运行提示" OnContent="开启" OffContent="关闭" />
-                    <TextBlock Text="开启后，关闭窗口并最小化到托盘时会显示一次提示；关闭后不影响后台运行和托盘恢复。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <ToggleSwitch x:Name="StartWithWindowsToggle" Header="开机启动" OnContent="开启" OffContent="关闭" />
-                    <TextBlock Text="登录 Windows 后自动启动 Hinge。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <ToggleSwitch x:Name="SilentStartupToggle" Header="静默启动" OnContent="开启" OffContent="关闭" />
-                    <TextBlock Text="开机启动时不显示主窗口，应用会在系统托盘中运行。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <TextBlock x:Name="SettingsStatusText" Text="当前使用 Windows 系统主题与系统强调色。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    </Button>
                 </StackPanel>
             </Border>
         </StackPanel>

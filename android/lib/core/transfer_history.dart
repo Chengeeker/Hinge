@@ -21,6 +21,7 @@ class TransferHistoryRecord {
   final String deviceId;
   final String deviceName;
   final String fileName;
+  final String localFilePath;
   final TransferHistoryDirection direction;
   final TransferHistoryStatus status;
   final int bytesTransferred;
@@ -35,6 +36,7 @@ class TransferHistoryRecord {
     this.deviceId = '',
     this.deviceName = '',
     required this.fileName,
+    this.localFilePath = '',
     required this.direction,
     required this.status,
     this.bytesTransferred = 0,
@@ -78,6 +80,7 @@ class TransferHistoryRecord {
     String? deviceId,
     String? deviceName,
     String? fileName,
+    String? localFilePath,
     TransferHistoryDirection? direction,
     TransferHistoryStatus? status,
     int? bytesTransferred,
@@ -90,6 +93,7 @@ class TransferHistoryRecord {
     deviceId: deviceId ?? this.deviceId,
     deviceName: deviceName ?? this.deviceName,
     fileName: fileName ?? this.fileName,
+    localFilePath: localFilePath ?? this.localFilePath,
     direction: direction ?? this.direction,
     status: status ?? this.status,
     bytesTransferred: bytesTransferred ?? this.bytesTransferred,
@@ -105,6 +109,7 @@ class TransferHistoryRecord {
     'deviceId': deviceId,
     'deviceName': deviceName,
     'fileName': fileName,
+    'localFilePath': localFilePath,
     'direction': direction.name,
     'status': status.name,
     'bytesTransferred': bytesTransferred,
@@ -122,6 +127,7 @@ class TransferHistoryRecord {
       deviceId: '${json['deviceId'] ?? ''}',
       deviceName: '${json['deviceName'] ?? ''}',
       fileName: '${json['fileName'] ?? ''}',
+      localFilePath: '${json['localFilePath'] ?? ''}',
       direction: TransferHistoryDirection.values.firstWhere(
         (value) => value.name == json['direction'],
         orElse: () => TransferHistoryDirection.receive,
@@ -143,8 +149,10 @@ class TransferHistoryRecord {
 /// Persistence is best effort so a storage issue cannot interrupt transfers.
 class TransferHistoryStore extends ChangeNotifier {
   static const int _maxRecords = 100;
+  static const int _maxSuppressedTransferIds = 1000;
   final String? _storagePath;
   List<TransferHistoryRecord> _records = <TransferHistoryRecord>[];
+  final Set<String> _suppressedTransferIds = <String>{};
 
   TransferHistoryStore([this._storagePath]) {
     _records = _readRecords();
@@ -154,6 +162,10 @@ class TransferHistoryStore extends ChangeNotifier {
 
   void upsert(TransferHistoryRecord record) {
     if (record.id.trim().isEmpty || record.fileName.trim().isEmpty) return;
+    // Clearing the local list must not touch the native queue or socket. Keep
+    // a tombstone for in-flight IDs so their later progress/completion events
+    // do not repopulate the list the user just cleared.
+    if (_suppressedTransferIds.contains(record.id)) return;
     final index = _records.indexWhere((item) => item.id == record.id);
     if (index >= 0) {
       _records[index] = record;
@@ -177,14 +189,50 @@ class TransferHistoryStore extends ChangeNotifier {
     return true;
   }
 
-  int clearFinished() {
-    final before = _records.length;
-    _records.removeWhere((record) => record.canDelete);
-    final removed = before - _records.length;
+  int clearAll() {
+    final removed = _records.length;
     if (removed == 0) return 0;
+    _suppressedTransferIds.addAll(
+      _records
+          .where((record) => record.isInProgress)
+          .map((record) => record.id),
+    );
+    while (_suppressedTransferIds.length > _maxSuppressedTransferIds) {
+      _suppressedTransferIds.remove(_suppressedTransferIds.first);
+    }
+    _records.clear();
     _saveRecords();
     notifyListeners();
     return removed;
+  }
+
+  /// Reconciles persisted UI state against the tasks still owned by Android's
+  /// foreground service. A Flutter/activity restart does not necessarily mean
+  /// that service died, so only missing tasks are marked interrupted.
+  void reconcileAfterStartup(Set<String> activeTransferHistoryIds) {
+    final now = DateTime.now();
+    var changed = false;
+    for (var index = 0; index < _records.length; index++) {
+      final record = _records[index];
+      final nativeQueueEntry =
+          record.status == TransferHistoryStatus.queued &&
+          record.id.startsWith('native-');
+      if (record.status != TransferHistoryStatus.transferring &&
+          !nativeQueueEntry) {
+        continue;
+      }
+      if (activeTransferHistoryIds.contains(record.id)) continue;
+      _records[index] = record.copyWith(
+        status: TransferHistoryStatus.failed,
+        updatedAt: now,
+        error: '应用重启后传输已中断，可重新发送',
+      );
+      changed = true;
+    }
+    if (changed) {
+      _saveRecords();
+      notifyListeners();
+    }
   }
 
   List<TransferHistoryRecord> _readRecords() {
@@ -194,8 +242,25 @@ class TransferHistoryStore extends ChangeNotifier {
       final file = File(path);
       if (!file.existsSync()) return <TransferHistoryRecord>[];
       final decoded = jsonDecode(file.readAsStringSync());
-      if (decoded is! List) return <TransferHistoryRecord>[];
-      return decoded
+      final List<dynamic> rawRecords;
+      if (decoded is List) {
+        // Keep reading history files written by earlier app versions.
+        rawRecords = decoded;
+      } else if (decoded is Map && decoded['records'] is List) {
+        rawRecords = decoded['records'] as List<dynamic>;
+        final suppressed = decoded['suppressedTransferIds'];
+        if (suppressed is List) {
+          _suppressedTransferIds.addAll(
+            suppressed
+                .whereType<Object>()
+                .map((value) => '$value'.trim())
+                .where((value) => value.isNotEmpty),
+          );
+        }
+      } else {
+        return <TransferHistoryRecord>[];
+      }
+      return rawRecords
           .whereType<Map>()
           .map(
             (item) => TransferHistoryRecord.fromJson(
@@ -217,8 +282,10 @@ class TransferHistoryStore extends ChangeNotifier {
       final file = File(path);
       file.parent.createSync(recursive: true);
       file.writeAsStringSync(
-        const JsonEncoder.withIndent('  ')
-            .convert(_records.map((record) => record.toJson()).toList()),
+        const JsonEncoder.withIndent('  ').convert({
+          'records': _records.map((record) => record.toJson()).toList(),
+          'suppressedTransferIds': _suppressedTransferIds.toList(),
+        }),
         flush: true,
       );
     } catch (_) {

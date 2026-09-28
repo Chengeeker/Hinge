@@ -1,14 +1,55 @@
-param([switch]$TransferDiagnostics)
+param(
+    [switch]$TransferDiagnostics,
+    [switch]$TestBuild,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')]
+    [string]$TestBuildTag,
+    [ValidateSet(4, 8, 16, 32, 64)]
+    [int]$FileChunkSizeMiB = 32
+)
 
 $diagnosticBuild = [bool]$TransferDiagnostics
+$testDiagnosticBuild = $diagnosticBuild -and [bool]$TestBuild
 $ErrorActionPreference = 'Stop'
 
+if ($TestBuildTag -and -not $TestBuild) {
+    throw '-TestBuildTag 只能与 -TestBuild 一起使用。'
+}
+if ($FileChunkSizeMiB -ne 32 -and -not $testDiagnosticBuild) {
+    throw '非默认分块大小只能用于隔离诊断测试构建（-TestBuild -TransferDiagnostics）。'
+}
+$testTagSuffix = if ($TestBuildTag) { "-$TestBuildTag" } else { '' }
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$publishDir = Join-Path $repoRoot $(if ($diagnosticBuild) { 'publish\windows\diagnostics' } else { 'publish\windows' })
-$bundleDir = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-win-bundle-diagnostics' } else { 'tmp\Hinge-win-bundle' })
-$nativeOutput = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-winui-publish-diagnostics' } else { 'tmp\Hinge-winui-publish' })
-$shellOutput = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-shell-publish-diagnostics' } else { 'tmp\Hinge-shell-publish' })
-$sparseStage = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-sparse-package-diagnostics' } else { 'tmp\Hinge-sparse-package' })
+$publishDir = Join-Path $repoRoot $(
+    if ($testDiagnosticBuild) { "publish\test\windows\diagnostics$testTagSuffix" }
+    elseif ($diagnosticBuild) { 'publish\windows\diagnostics' }
+    elseif ($TestBuild -and $TestBuildTag) { "publish\test\windows\candidate$testTagSuffix" }
+    elseif ($TestBuild) { 'publish\test\windows' }
+    else { 'publish\windows' })
+$bundleDir = Join-Path $repoRoot $(
+    if ($testDiagnosticBuild) { "tmp\Hinge-win-bundle-test-diagnostics$testTagSuffix" }
+    elseif ($diagnosticBuild) { 'tmp\Hinge-win-bundle-diagnostics' }
+    elseif ($TestBuild -and $TestBuildTag) { "tmp\Hinge-win-bundle-test-candidate$testTagSuffix" }
+    elseif ($TestBuild) { 'tmp\Hinge-win-bundle-test' }
+    else { 'tmp\Hinge-win-bundle' })
+$nativeOutput = Join-Path $repoRoot $(
+    if ($testDiagnosticBuild) { "tmp\Hinge-winui-publish-test-diagnostics$testTagSuffix" }
+    elseif ($diagnosticBuild) { 'tmp\Hinge-winui-publish-diagnostics' }
+    elseif ($TestBuild -and $TestBuildTag) { "tmp\Hinge-winui-publish-test-candidate$testTagSuffix" }
+    elseif ($TestBuild) { 'tmp\Hinge-winui-publish-test' }
+    else { 'tmp\Hinge-winui-publish' })
+$shellOutput = Join-Path $repoRoot $(
+    if ($testDiagnosticBuild) { "tmp\Hinge-shell-publish-test-diagnostics$testTagSuffix" }
+    elseif ($diagnosticBuild) { 'tmp\Hinge-shell-publish-diagnostics' }
+    elseif ($TestBuild -and $TestBuildTag) { "tmp\Hinge-shell-publish-test-candidate$testTagSuffix" }
+    elseif ($TestBuild) { 'tmp\Hinge-shell-publish-test' }
+    else { 'tmp\Hinge-shell-publish' })
+$sparseStage = Join-Path $repoRoot $(
+    if ($testDiagnosticBuild) { "tmp\Hinge-sparse-package-test-diagnostics$testTagSuffix" }
+    elseif ($diagnosticBuild) { 'tmp\Hinge-sparse-package-diagnostics' }
+    elseif ($TestBuild -and $TestBuildTag) { "tmp\Hinge-sparse-package-test-candidate$testTagSuffix" }
+    elseif ($TestBuild) { 'tmp\Hinge-sparse-package-test' }
+    else { 'tmp\Hinge-sparse-package' })
 
 Write-Host '=== Building Hinge WinUI 3 Windows Release Bundle ===' -ForegroundColor Cyan
 
@@ -64,6 +105,9 @@ $publishArgs = @(
 if ($diagnosticBuild) {
     $publishArgs += '-p:HingeTransferDiagnostics=true'
 }
+if ($FileChunkSizeMiB -ne 32) {
+    $publishArgs += "-p:HingeFileChunkSizeMiB=$FileChunkSizeMiB"
+}
 & dotnet @publishArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Error 'WinUI 3 Windows 发布失败。请确认已安装 .NET 8 SDK、Windows App SDK 和 Windows 11 SDK。'
@@ -107,7 +151,14 @@ if (-not (Test-Path -LiteralPath $executablePath)) {
     exit 1
 }
 
-$artifactSuffix = $(if ($diagnosticBuild) { '-AB-send-timing' } else { '' })
+$artifactSuffix = $(
+    if ($testDiagnosticBuild) {
+        $chunkSuffix = if ($FileChunkSizeMiB -eq 32) { '' } else { "-chunk${FileChunkSizeMiB}m" }
+        "-test-v$productVersion$chunkSuffix-AB-send-timing"
+    }
+    elseif ($diagnosticBuild) { '-AB-send-timing' }
+    elseif ($TestBuild) { "-test-v$productVersion" }
+    else { '' })
 if (Test-Path -LiteralPath $publishDir) {
     try {
         Remove-Item -LiteralPath $publishDir -Recurse -Force -ErrorAction Stop
@@ -250,7 +301,12 @@ Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $zipPath -For
 # self-contained and carries the runnable ZIP as an appended payload. It asks
 # for the destination folder at install time, so it is not tied to MSIX/AppX
 # deployment rules or the system C: drive.
-$installerOutput = Join-Path $repoRoot $(if ($diagnosticBuild) { 'tmp\Hinge-setup-publish-diagnostics' } else { 'tmp\Hinge-setup-publish' })
+$installerOutput = Join-Path $repoRoot $(
+    if ($testDiagnosticBuild) { "tmp\Hinge-setup-publish-test-diagnostics$testTagSuffix" }
+    elseif ($diagnosticBuild) { 'tmp\Hinge-setup-publish-diagnostics' }
+    elseif ($TestBuild -and $TestBuildTag) { "tmp\Hinge-setup-publish-test-candidate$testTagSuffix" }
+    elseif ($TestBuild) { 'tmp\Hinge-setup-publish-test' }
+    else { 'tmp\Hinge-setup-publish' })
 $installerProject = Join-Path $repoRoot 'installer\Hinge.Setup.csproj'
 $setupPath = Join-Path $publishDir ("Hinge-Setup$artifactSuffix.exe")
 if (Test-Path -LiteralPath $installerOutput) {

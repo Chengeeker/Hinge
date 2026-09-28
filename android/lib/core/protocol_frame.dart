@@ -41,7 +41,9 @@ enum MessageType {
 class ProtocolFrame {
   static const List<int> magicBytes = [0x4F, 0x53, 0x50, 0x31]; // "OSP1"
   static const int headerSize = 52;
-  static const int maxPayloadSize = 16 * 1024 * 1024;
+  static const int fileChunkMetadataSize = 28;
+  static const int legacyMaxPayloadSize = 16 * 1024 * 1024;
+  static const int maxPayloadSize = 32 * 1024 * 1024 + fileChunkMetadataSize;
 
   final int version;
   final MessageType type;
@@ -102,11 +104,11 @@ class ProtocolFrame {
     if (transferId.length != 16) {
       throw ArgumentError('transferId must contain exactly 16 bytes.');
     }
-    if (data.length + 28 > maxPayloadSize) {
+    if (data.length + fileChunkMetadataSize > maxPayloadSize) {
       throw ArgumentError('Payload exceeds the $maxPayloadSize byte limit.');
     }
 
-    final payloadLength = 28 + data.length;
+    final payloadLength = fileChunkMetadataSize + data.length;
     final buffer = Uint8List(headerSize + payloadLength);
     final byteData = ByteData.sublistView(buffer);
     final resolvedSessionId = sessionId ?? Uint8List(16);
@@ -126,9 +128,9 @@ class ProtocolFrame {
     buffer.setRange(32, 48, resolvedSessionId);
     byteData.setUint32(48, payloadLength, Endian.big);
     buffer.setRange(headerSize, headerSize + 16, transferId);
-    byteData.setUint32( headerSize + 16, chunkIndex, Endian.big);
+    byteData.setUint32(headerSize + 16, chunkIndex, Endian.big);
     byteData.setInt64(headerSize + 20, offset, Endian.big);
-    buffer.setRange(headerSize + 28, buffer.length, data);
+    buffer.setRange(headerSize + fileChunkMetadataSize, buffer.length, data);
     return buffer;
   }
 

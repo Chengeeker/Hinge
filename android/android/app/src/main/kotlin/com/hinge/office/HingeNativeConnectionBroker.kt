@@ -91,7 +91,8 @@ object HingeNativeConnectionEvents {
 
 private object HingeProtocol {
     const val headerSize = 52
-    const val maxPayloadSize = 16 * 1024 * 1024
+    const val legacyMaxPayloadSize = 16 * 1024 * 1024
+    const val maxPayloadSize = 32 * 1024 * 1024 + 28
     const val sessionInit = 0x0010
     const val sessionAck = 0x0011
     const val heartbeatPing = 0x0012
@@ -154,6 +155,7 @@ private data class NativePeer(
     val platform: String,
     val capabilities: List<String>,
     val pairingRequired: Boolean,
+    val maxPayloadSize: Int,
 )
 
 private data class NativePeerConfig(
@@ -608,6 +610,22 @@ class HingeNativeConnectionBroker(private val context: Context) {
     fun clearDiagnostics() = diagnostics.clear()
 
     fun emitCurrentSnapshotForFlutter() = emitSnapshot()
+
+    /**
+     * Returns transfer IDs still owned by this foreground service. The history
+     * screen uses this to distinguish a live socket/queued send from a stale
+     * persisted progress row after Flutter or the Activity is recreated.
+     */
+    fun activeTransferHistoryIds(): List<String> {
+        val ids = mutableSetOf<String>()
+        incomingTransfers.values.forEach { transfer ->
+            if (connections[transfer.connectionId]?.isReady == true) {
+                ids.add("lan-${transfer.transferId}")
+            }
+        }
+        queuedTasks.keys.forEach { ids.add("native-$it") }
+        return ids.toList()
+    }
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
@@ -1884,6 +1902,16 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 platform = json.optString("platform", "unknown"),
                 capabilities = capabilities.distinct(),
                 pairingRequired = peerPairingRequired,
+                maxPayloadSize = json.optInt(
+                    "maxPayloadSize",
+                    HingeProtocol.legacyMaxPayloadSize,
+                ).let { advertised ->
+                    if (advertised > 28 && advertised <= HingeProtocol.maxPayloadSize) {
+                        advertised
+                    } else {
+                        HingeProtocol.legacyMaxPayloadSize
+                    }
+                },
             )
             emitPeer()
             onPeerIdentified(this, peer!!)
@@ -1996,6 +2024,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 put("model", current.model)
                 put("platform", "android")
                 put("capabilities", capabilities)
+                put("maxPayloadSize", HingeProtocol.maxPayloadSize)
                 put("pairingRequired", localPairingCode.isNotEmpty())
                 put("pairingChallenge", localChallenge)
                 put("pairingProof", proof)
@@ -2034,6 +2063,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
             "platform" to value.platform,
             "capabilities" to value.capabilities,
             "pairingRequired" to value.pairingRequired,
+            "maxPayloadSize" to value.maxPayloadSize,
             "pairingAuthenticated" to (
                 pairingAuthenticated &&
                     (!value.pairingRequired || pairingProofSent)

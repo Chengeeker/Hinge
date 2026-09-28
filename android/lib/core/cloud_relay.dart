@@ -198,9 +198,58 @@ class CloudRelayProgress {
     this.stage = CloudRelayProgressStage.uploading,
   });
 
+  CloudRelayProgress copyWith({
+    int? bytesTransferred,
+    int? totalBytes,
+    CloudRelayProgressStage? stage,
+  }) => CloudRelayProgress(
+    transferId: transferId,
+    fileName: fileName,
+    bytesTransferred: bytesTransferred ?? this.bytesTransferred,
+    totalBytes: totalBytes ?? this.totalBytes,
+    stage: stage ?? this.stage,
+  );
+
   double get percentage => totalBytes <= 0
       ? 0
       : (bytesTransferred / totalBytes * 100).clamp(0, 100).toDouble();
+}
+
+/// Keeps late or overlapping callbacks from moving one transfer's visible
+/// progress backwards. A retry starts a new reporting window after [clear].
+class CloudRelayProgressGuard {
+  final Map<String, int> _latestBytes = <String, int>{};
+  final Map<String, int> _totals = <String, int>{};
+
+  CloudRelayProgress normalize(
+    CloudRelayProgress progress, {
+    required String direction,
+  }) {
+    final key = '$direction:${progress.transferId}';
+    final rawBytes = progress.bytesTransferred < 0
+        ? 0
+        : progress.totalBytes > 0 &&
+              progress.bytesTransferred > progress.totalBytes
+        ? progress.totalBytes
+        : progress.bytesTransferred;
+    final previousBytes = _latestBytes[key];
+    final previousTotal = _totals[key];
+    final bytes =
+        previousBytes != null &&
+            previousTotal == progress.totalBytes &&
+            previousBytes > rawBytes
+        ? previousBytes
+        : rawBytes;
+    _latestBytes[key] = bytes;
+    _totals[key] = progress.totalBytes;
+    return progress.copyWith(bytesTransferred: bytes);
+  }
+
+  void clear({required String transferId, required String direction}) {
+    final key = '$direction:$transferId';
+    _latestBytes.remove(key);
+    _totals.remove(key);
+  }
 }
 
 class CloudRelayCrypto {
@@ -749,9 +798,7 @@ class CloudRelayClient {
       if (onBodyBytesSent == null) {
         request.add(bodyBytes);
       } else {
-        await request.addStream(
-          _requestBodyChunks(bodyBytes, onBodyBytesSent),
-        );
+        await request.addStream(_requestBodyChunks(bodyBytes, onBodyBytesSent));
       }
     } else if (body != null) {
       request.headers.contentType = ContentType.json;
@@ -811,6 +858,8 @@ class CloudRelayClient {
 }
 
 class CloudRelayTransferService {
+  static final Set<String> _activeInboxTransferIds = <String>{};
+
   final CloudRelayClient client;
 
   const CloudRelayTransferService(this.client);
@@ -982,150 +1031,170 @@ class CloudRelayTransferService {
     required String downloadDirectory,
     Set<String>? allowedSenderRelayDeviceIds,
     void Function(CloudRelayProgress progress)? onProgress,
+    void Function(String transferId, String path)? onFileReceived,
   }) async {
     final manifests = await client.inbox(
       settings: settings,
       localHingeDeviceId: localHingeDeviceId,
     );
     final paths = <String>[];
+    final processedTransferIds = <String>{};
     for (final manifest in manifests) {
       if (allowedSenderRelayDeviceIds != null &&
           !allowedSenderRelayDeviceIds.contains(manifest.senderRelayDeviceId)) {
         continue;
       }
-      final metadata = await CloudRelayCrypto.decryptMetadata(
-        manifest: manifest,
-        relayEncryptionKey: settings.relayEncryptionKey,
-      );
-      if (metadata.fileSize < 0 || metadata.sha256.length != 64) {
-        throw const FormatException('Cloud Relay file metadata is invalid.');
-      }
-      final safeName = _safeFileName(
-        metadata.fileName.isEmpty
-            ? 'Hinge-${manifest.transferId}.bin'
-            : metadata.fileName,
-      );
-      final directory = Directory(downloadDirectory);
-      await directory.create(recursive: true);
-      final temporary = File('${directory.path}/.${manifest.transferId}.part');
-      final raf = await temporary.open(mode: FileMode.writeOnly);
-      var written = 0;
-      onProgress?.call(
-        CloudRelayProgress(
-          transferId: manifest.transferId,
-          fileName: safeName,
-          bytesTransferred: 0,
-          totalBytes: metadata.fileSize,
-          stage: CloudRelayProgressStage.downloading,
-        ),
-      );
+      if (!processedTransferIds.add(manifest.transferId)) continue;
+      if (!_activeInboxTransferIds.add(manifest.transferId)) continue;
       try {
-        for (
-          var partNumber = 1;
-          partNumber <= manifest.partCount;
-          partNumber++
-        ) {
-          final partLength = partNumber == manifest.partCount
-              ? manifest.ciphertextSize -
-                    (partNumber - 1) *
-                        (manifest.partSize + cloudRelayGcmTagSize) -
-                    cloudRelayGcmTagSize
-              : manifest.partSize;
-          if (partLength < 0 || partLength > cloudRelayPartSize) {
-            throw const FormatException(
-              'Cloud Relay manifest range is invalid.',
-            );
-          }
-          final encrypted = await client.downloadPart(
-            settings: settings,
-            localHingeDeviceId: localHingeDeviceId,
-            transferId: manifest.transferId,
-            partNumber: partNumber,
-            onProgress: (bytesReceived) {
-              final partBytesReceived = min(partLength, bytesReceived);
-              onProgress?.call(
-                CloudRelayProgress(
-                  transferId: manifest.transferId,
-                  fileName: safeName,
-                  bytesTransferred: min(
-                    metadata.fileSize,
-                    written + partBytesReceived,
-                  ),
-                  totalBytes: metadata.fileSize,
-                  stage: CloudRelayProgressStage.downloading,
-                ),
-              );
-            },
-          );
-          final key = CloudRelayCrypto.deriveTransferKey(
-            relayEncryptionKey: settings.relayEncryptionKey,
-            transferId: manifest.transferId,
-            senderRelayDeviceId: manifest.senderRelayDeviceId,
-            receiverRelayDeviceId: manifest.receiverRelayDeviceId,
-          );
-          final plaintext = await CloudRelayCrypto.decryptPart(
-            encrypted: encrypted,
-            transferKey: key,
-            transferId: manifest.transferId,
-            senderRelayDeviceId: manifest.senderRelayDeviceId,
-            receiverRelayDeviceId: manifest.receiverRelayDeviceId,
-            partNumber: partNumber,
-            plaintextLength: partLength,
-          );
-          await raf.writeFrom(plaintext);
-          written += plaintext.length;
-          onProgress?.call(
-            CloudRelayProgress(
-              transferId: manifest.transferId,
-              fileName: safeName,
-              bytesTransferred: written,
-              totalBytes: metadata.fileSize,
-              stage: CloudRelayProgressStage.downloading,
-            ),
-          );
-        }
-      } finally {
-        await raf.close();
-      }
-      onProgress?.call(
-        CloudRelayProgress(
-          transferId: manifest.transferId,
-          fileName: safeName,
-          bytesTransferred: written,
-          totalBytes: metadata.fileSize,
-          stage: CloudRelayProgressStage.verifying,
-        ),
-      );
-      final actualHash =
-          (await crypto_lib.sha256.bind(temporary.openRead()).first).toString();
-      if (written != metadata.fileSize ||
-          actualHash.toLowerCase() != metadata.sha256.toLowerCase()) {
-        try {
-          await temporary.delete();
-        } catch (_) {}
-        throw const FormatException(
-          'Cloud Relay plaintext SHA-256 verification failed.',
+        final path = await _receiveManifest(
+          manifest: manifest,
+          settings: settings,
+          localHingeDeviceId: localHingeDeviceId,
+          downloadDirectory: downloadDirectory,
+          onProgress: onProgress,
         );
+        paths.add(path);
+        onFileReceived?.call(manifest.transferId, path);
+      } finally {
+        _activeInboxTransferIds.remove(manifest.transferId);
       }
-      final destination = _uniquePath('${directory.path}/$safeName');
-      await temporary.rename(destination);
-      await client.acknowledge(
-        settings: settings,
-        localHingeDeviceId: localHingeDeviceId,
-        transferId: manifest.transferId,
-      );
-      paths.add(destination);
-      onProgress?.call(
-        CloudRelayProgress(
-          transferId: manifest.transferId,
-          fileName: safeName,
-          bytesTransferred: written,
-          totalBytes: metadata.fileSize,
-          stage: CloudRelayProgressStage.completed,
-        ),
-      );
     }
     return paths;
+  }
+
+  Future<String> _receiveManifest({
+    required CloudRelayManifest manifest,
+    required CloudRelaySettings settings,
+    required String localHingeDeviceId,
+    required String downloadDirectory,
+    void Function(CloudRelayProgress progress)? onProgress,
+  }) async {
+    final metadata = await CloudRelayCrypto.decryptMetadata(
+      manifest: manifest,
+      relayEncryptionKey: settings.relayEncryptionKey,
+    );
+    if (metadata.fileSize < 0 || metadata.sha256.length != 64) {
+      throw const FormatException('Cloud Relay file metadata is invalid.');
+    }
+    final safeName = _safeFileName(
+      metadata.fileName.isEmpty
+          ? 'Hinge-${manifest.transferId}.bin'
+          : metadata.fileName,
+    );
+    final directory = Directory(downloadDirectory);
+    await directory.create(recursive: true);
+    final temporary = File('${directory.path}/.${manifest.transferId}.part');
+    final raf = await temporary.open(mode: FileMode.writeOnly);
+    var written = 0;
+    onProgress?.call(
+      CloudRelayProgress(
+        transferId: manifest.transferId,
+        fileName: safeName,
+        bytesTransferred: 0,
+        totalBytes: metadata.fileSize,
+        stage: CloudRelayProgressStage.downloading,
+      ),
+    );
+    try {
+      for (var partNumber = 1; partNumber <= manifest.partCount; partNumber++) {
+        final partLength = partNumber == manifest.partCount
+            ? manifest.ciphertextSize -
+                  (partNumber - 1) *
+                      (manifest.partSize + cloudRelayGcmTagSize) -
+                  cloudRelayGcmTagSize
+            : manifest.partSize;
+        if (partLength < 0 || partLength > cloudRelayPartSize) {
+          throw const FormatException('Cloud Relay manifest range is invalid.');
+        }
+        final encrypted = await client.downloadPart(
+          settings: settings,
+          localHingeDeviceId: localHingeDeviceId,
+          transferId: manifest.transferId,
+          partNumber: partNumber,
+          onProgress: (bytesReceived) {
+            final partBytesReceived = min(partLength, bytesReceived);
+            onProgress?.call(
+              CloudRelayProgress(
+                transferId: manifest.transferId,
+                fileName: safeName,
+                bytesTransferred: min(
+                  metadata.fileSize,
+                  written + partBytesReceived,
+                ),
+                totalBytes: metadata.fileSize,
+                stage: CloudRelayProgressStage.downloading,
+              ),
+            );
+          },
+        );
+        final key = CloudRelayCrypto.deriveTransferKey(
+          relayEncryptionKey: settings.relayEncryptionKey,
+          transferId: manifest.transferId,
+          senderRelayDeviceId: manifest.senderRelayDeviceId,
+          receiverRelayDeviceId: manifest.receiverRelayDeviceId,
+        );
+        final plaintext = await CloudRelayCrypto.decryptPart(
+          encrypted: encrypted,
+          transferKey: key,
+          transferId: manifest.transferId,
+          senderRelayDeviceId: manifest.senderRelayDeviceId,
+          receiverRelayDeviceId: manifest.receiverRelayDeviceId,
+          partNumber: partNumber,
+          plaintextLength: partLength,
+        );
+        await raf.writeFrom(plaintext);
+        written += plaintext.length;
+        onProgress?.call(
+          CloudRelayProgress(
+            transferId: manifest.transferId,
+            fileName: safeName,
+            bytesTransferred: written,
+            totalBytes: metadata.fileSize,
+            stage: CloudRelayProgressStage.downloading,
+          ),
+        );
+      }
+    } finally {
+      await raf.close();
+    }
+    onProgress?.call(
+      CloudRelayProgress(
+        transferId: manifest.transferId,
+        fileName: safeName,
+        bytesTransferred: written,
+        totalBytes: metadata.fileSize,
+        stage: CloudRelayProgressStage.verifying,
+      ),
+    );
+    final actualHash =
+        (await crypto_lib.sha256.bind(temporary.openRead()).first).toString();
+    if (written != metadata.fileSize ||
+        actualHash.toLowerCase() != metadata.sha256.toLowerCase()) {
+      try {
+        await temporary.delete();
+      } catch (_) {}
+      throw const FormatException(
+        'Cloud Relay plaintext SHA-256 verification failed.',
+      );
+    }
+    final destination = _uniquePath('${directory.path}/$safeName');
+    await temporary.rename(destination);
+    await client.acknowledge(
+      settings: settings,
+      localHingeDeviceId: localHingeDeviceId,
+      transferId: manifest.transferId,
+    );
+    onProgress?.call(
+      CloudRelayProgress(
+        transferId: manifest.transferId,
+        fileName: safeName,
+        bytesTransferred: written,
+        totalBytes: metadata.fileSize,
+        stage: CloudRelayProgressStage.completed,
+      ),
+    );
+    return destination;
   }
 
   static String _safeFileName(String value) {

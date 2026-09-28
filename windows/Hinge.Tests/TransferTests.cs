@@ -95,6 +95,7 @@ public class TransferTests
 
             var completed = await Task.WhenAny(fileReceivedTcs.Task, Task.Delay(5000));
             Assert.Equal(fileReceivedTcs.Task, completed);
+            Assert.Equal(ProtocolFrame.MaxPayloadSize, clientConn.PeerInfo?.MaxPayloadSize);
 
             string receivedPath = await fileReceivedTcs.Task;
             Assert.True(File.Exists(receivedPath));

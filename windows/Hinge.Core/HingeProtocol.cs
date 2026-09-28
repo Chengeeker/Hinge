@@ -34,7 +34,46 @@ public class ProtocolFrame
 {
     public static readonly byte[] MagicBytes = new byte[] { 0x4F, 0x53, 0x50, 0x31 }; // "OSP1"
     public const int HeaderSize = 52;
-    public const int MaxPayloadSize = 16 * 1024 * 1024;
+    public const int LegacyMaxPayloadSize = 16 * 1024 * 1024;
+#if HINGE_FILE_CHUNK_SIZE_64M
+    public const int MaxPayloadSize = 64 * 1024 * 1024 + 28;
+#elif HINGE_FILE_CHUNK_SIZE_32M
+    public const int MaxPayloadSize = 32 * 1024 * 1024 + 28;
+#elif HINGE_FILE_CHUNK_SIZE_16M
+    public const int MaxPayloadSize = 16 * 1024 * 1024 + 28;
+#elif HINGE_FILE_CHUNK_SIZE_8M
+    public const int MaxPayloadSize = 8 * 1024 * 1024 + 28;
+#else
+    public const int MaxPayloadSize = 32 * 1024 * 1024 + 28;
+#endif
+    public const int FileChunkMetadataSize = 28;
+
+    /// <summary>
+    /// Resolves a safe FILE_CHUNK data size from the local preference and the
+    /// payload limits advertised by both peers. The protocol payload includes
+    /// the fixed FILE_CHUNK metadata, but not the 52-byte frame header.
+    /// </summary>
+    public static int GetNegotiatedFileChunkSize(
+        int preferredDataSize,
+        int localMaxPayloadSize,
+        int peerMaxPayloadSize)
+    {
+        if (preferredDataSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(preferredDataSize));
+        }
+        if (localMaxPayloadSize <= FileChunkMetadataSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(localMaxPayloadSize));
+        }
+        if (peerMaxPayloadSize <= FileChunkMetadataSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(peerMaxPayloadSize));
+        }
+
+        int maximumPayloadSize = Math.Min(localMaxPayloadSize, peerMaxPayloadSize);
+        return Math.Min(preferredDataSize, maximumPayloadSize - FileChunkMetadataSize);
+    }
 
     public ushort Version { get; set; } = 1;
     public MessageType Type { get; set; }
@@ -113,7 +152,7 @@ public class ProtocolFrame
         long offset,
         ReadOnlySpan<byte> data)
     {
-        int payloadLength = checked(28 + data.Length);
+        int payloadLength = checked(FileChunkMetadataSize + data.Length);
         if (payloadLength > MaxPayloadSize)
         {
             throw new ArgumentOutOfRangeException(nameof(data), $"Payload exceeds the {MaxPayloadSize} byte limit.");
@@ -148,7 +187,7 @@ public class ProtocolFrame
         long offset,
         ReadOnlySpan<byte> data)
     {
-        int payloadLength = checked(28 + data.Length);
+        int payloadLength = checked(FileChunkMetadataSize + data.Length);
         int frameLength = checked(HeaderSize + payloadLength);
         if (frame.Length < frameLength)
         {
@@ -167,7 +206,7 @@ public class ProtocolFrame
         ProtocolUuid.WriteNetworkBytes(transferId, payload[..16]);
         BinaryPrimitives.WriteUInt32BigEndian(payload.Slice(16, 4), chunkIndex);
         BinaryPrimitives.WriteInt64BigEndian(payload.Slice(20, 8), offset);
-        data.CopyTo(payload[28..]);
+        data.CopyTo(payload[FileChunkMetadataSize..]);
     }
 
     /// <summary>

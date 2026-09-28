@@ -37,6 +37,7 @@ class SessionPeerInfo {
   final String platform;
   final Set<String> capabilities;
   final bool pairingRequired;
+  final int maxPayloadSize;
 
   const SessionPeerInfo({
     required this.deviceId,
@@ -46,7 +47,18 @@ class SessionPeerInfo {
     required this.platform,
     this.capabilities = const <String>{},
     this.pairingRequired = false,
+    this.maxPayloadSize = ProtocolFrame.legacyMaxPayloadSize,
   });
+}
+
+int _readMaxPayloadSize(dynamic value) {
+  if (value is! num) return ProtocolFrame.legacyMaxPayloadSize;
+  final size = value.toInt();
+  if (size <= ProtocolFrame.fileChunkMetadataSize ||
+      size > ProtocolFrame.maxPayloadSize) {
+    return ProtocolFrame.legacyMaxPayloadSize;
+  }
+  return size;
 }
 
 class FileEnqueueResult {
@@ -314,6 +326,7 @@ class _SocketSessionConnection extends SessionConnection {
         ProtocolCompression.capability,
         ProtocolCapabilities.streamingFileHash,
       ],
+      'maxPayloadSize': ProtocolFrame.maxPayloadSize,
       'pairingRequired': _localPairingCode.isNotEmpty,
       'pairingChallenge': _localPairingChallenge,
       'pairingProof': '',
@@ -336,6 +349,7 @@ class _SocketSessionConnection extends SessionConnection {
         ProtocolCompression.capability,
         ProtocolCapabilities.streamingFileHash,
       ],
+      'maxPayloadSize': ProtocolFrame.maxPayloadSize,
       'pairingRequired': _localPairingCode.isNotEmpty,
       'pairingChallenge': _localPairingChallenge,
       'pairingProof': proof,
@@ -437,6 +451,7 @@ class _SocketSessionConnection extends SessionConnection {
         platform: '${json['platform'] ?? 'unknown'}',
         capabilities: _readCapabilities(json['capabilities']),
         pairingRequired: json['pairingRequired'] == true,
+        maxPayloadSize: _readMaxPayloadSize(json['maxPayloadSize']),
       );
       _peerPairingRequired = peer.pairingRequired;
       final challenge = '${json['pairingChallenge'] ?? ''}'.trim();
@@ -652,6 +667,24 @@ class _NativeSessionBridge {
     // unknown and must not be presented as an immediate send.
     return FileEnqueueResult(accepted: result == true, connectionReady: false);
   }
+
+  Future<Set<String>?> activeTransferHistoryIds() async {
+    try {
+      final result = await _methodChannel.invokeMethod<dynamic>(
+        'activeTransferHistoryIds',
+      );
+      if (result is! List) return null;
+      return result
+          .whereType<Object>()
+          .map((value) => '$value'.trim())
+          .where((value) => value.isNotEmpty)
+          .toSet();
+    } catch (_) {
+      // If Android cannot confirm the foreground service's task list, keep
+      // persisted statuses unchanged rather than falsely expiring a live job.
+      return null;
+    }
+  }
 }
 
 class _NativeSessionConnection extends SessionConnection {
@@ -811,6 +844,7 @@ class _NativeSessionConnection extends SessionConnection {
       platform: '${event['platform'] ?? 'unknown'}',
       capabilities: _readCapabilities(event['capabilities']),
       pairingRequired: _peerRequiresPairing,
+      maxPayloadSize: _readMaxPayloadSize(event['maxPayloadSize']),
     );
     _peerInfo = peer;
     if (!_peerController.isClosed) _peerController.add(peer);
@@ -962,6 +996,12 @@ class SessionManager {
   List<SessionConnection> get activeConnections => List.unmodifiable(
     _connections.where((connection) => !connection.isDisposed),
   );
+
+  Future<Set<String>?> activeTransferHistoryIds() async {
+    final bridge = _nativeBridge;
+    if (bridge == null) return null;
+    return bridge.activeTransferHistoryIds();
+  }
 
   SessionManager({
     required this._localIdentity,

@@ -119,7 +119,7 @@ class _DefaultAppsScreenState extends State<DefaultAppsScreen> {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           Text(
-            '仅用于点击“收到文件”通知时的打开方式。Hinge 的其他文件预览和系统默认行为不受影响。',
+            '用于打开“收到文件”通知和文件传输记录中的本机文件。未选择时由 Android 询问打开方式。',
             style: Theme.of(context).textTheme.bodyLarge,
           ),
           const SizedBox(height: 16),

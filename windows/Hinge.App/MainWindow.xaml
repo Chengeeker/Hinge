@@ -60,13 +60,14 @@
                 CompactPaneLength="48"
                 HorizontalContentAlignment="Stretch"
                 IsBackButtonVisible="Collapsed"
-                IsSettingsVisible="True"
+                IsSettingsVisible="False"
                 AlwaysShowHeader="False"
                 IsTitleBarAutoPaddingEnabled="False"
                 Loaded="AppNavigation_Loaded"
                 PaneOpened="AppNavigation_PaneStateChanged"
                 PaneClosed="AppNavigation_PaneStateChanged"
-                SelectionChanged="AppNavigation_SelectionChanged">
+                SelectionChanged="AppNavigation_SelectionChanged"
+                ItemInvoked="AppNavigation_ItemInvoked">
             <NavigationView.Resources>
                 <Thickness x:Key="NavigationViewContentMargin">0</Thickness>
                 <Thickness x:Key="NavigationViewMinimalContentMargin">0</Thickness>
@@ -96,6 +97,15 @@
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
+
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem Content="设置" Tag="settings">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Setting" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="关于应用" Tag="about">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Help" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
 
             <NavigationView.Content>
                 <Grid

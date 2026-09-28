@@ -74,6 +74,9 @@ class TransferManager {
           direction: FileTransferDirection.receive,
           deviceId: '${event['deviceId'] ?? ''}',
           deviceName: '${event['deviceName'] ?? ''}',
+          localFilePath: eventType == 'file_received'
+              ? '${event['path'] ?? ''}'
+              : '',
           error: '${event['reason'] ?? ''}',
         ),
       );
@@ -162,6 +165,7 @@ class TransferManager {
       direction: FileTransferDirection.send,
       deviceId: peer?.deviceId ?? '',
       deviceName: peer?.name ?? '',
+      localFilePath: filePath,
     );
     onProgress?.call(offering);
     _progressController.add(offering);
@@ -267,6 +271,7 @@ class TransferManager {
           direction: FileTransferDirection.send,
           deviceId: peer?.deviceId ?? '',
           deviceName: peer?.name ?? '',
+          localFilePath: filePath,
         );
         onProgress?.call(prog);
         _progressController.add(prog);
@@ -297,6 +302,7 @@ class TransferManager {
         direction: FileTransferDirection.send,
         deviceId: peer?.deviceId ?? '',
         deviceName: peer?.name ?? '',
+        localFilePath: filePath,
       );
       onProgress?.call(finalProg);
       _progressController.add(finalProg);
@@ -312,6 +318,7 @@ class TransferManager {
         direction: FileTransferDirection.send,
         deviceId: peer?.deviceId ?? '',
         deviceName: peer?.name ?? '',
+        localFilePath: filePath,
         error: error.toString(),
       );
       onProgress?.call(failed);
@@ -528,6 +535,7 @@ class TransferManager {
         direction: FileTransferDirection.receive,
         deviceId: context.connection.peerInfo?.deviceId ?? '',
         deviceName: context.connection.peerInfo?.name ?? '',
+        localFilePath: context.finalFilePath,
       );
       _progressController.add(prog);
       _fileReceivedController.add(context.finalFilePath);

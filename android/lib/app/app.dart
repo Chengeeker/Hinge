@@ -179,6 +179,13 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     } catch (_) {
       // SessionManager records its own error and discovery can still start.
     }
+    if (Platform.isAndroid) {
+      final activeTransferIds = await _sessionManager
+          .activeTransferHistoryIds();
+      if (mounted && activeTransferIds != null) {
+        _transferHistoryStore.reconcileAfterStartup(activeTransferIds);
+      }
+    }
     if (!mounted) return;
     _commandRouter.start();
     if (_ownsDiscovery) {
@@ -744,6 +751,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   StreamSubscription<List<SharedFile>>? _sharedFileSubscription;
   final List<StreamSubscription<dynamic>> _incomingPeerSubscriptions = [];
   final Set<SessionConnection> _watchedConnections = <SessionConnection>{};
+  final Set<SessionConnection> _uiWatchedConnections = <SessionConnection>{};
   final Map<String, DateTime> _lastTransferHistoryProgressAt = {};
   late final NotificationManager _notificationManager;
   late final SmsRelayManager _smsRelayManager;
@@ -756,6 +764,8 @@ class _DevicesScreenState extends State<DevicesScreen>
   bool _sharedFileDispatchInFlight = false;
   Timer? _cloudRelayPollTimer;
   bool _cloudRelayPollInFlight = false;
+  final CloudRelayProgressGuard _cloudRelayProgressGuard =
+      CloudRelayProgressGuard();
 
   StorageInfo? _storage;
   bool _storageLoading = false;
@@ -842,9 +852,10 @@ class _DevicesScreenState extends State<DevicesScreen>
     _createdConnectionSubscription = widget.sessionManager.onConnectionCreated
         .listen(_watchConnectionData);
     // The native service can restore a socket before this page subscribes.
-    // Attach feature consumers to sessions that were restored before the page subscribed.
+    // Reattach both feature consumers and UI/session-state observers so a
+    // restored TCP session is not left displayed as merely discovered.
     for (final connection in widget.sessionManager.activeConnections) {
-      _watchConnectionData(connection);
+      _watchIncomingConnection(connection);
     }
     _connectionRequestSubscription = widget.discoveryService.connectionRequests
         .listen((request) {
@@ -934,6 +945,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       subscription.cancel();
     }
     _incomingPeerSubscriptions.clear();
+    _uiWatchedConnections.clear();
     unawaited(_smsRelayManager.dispose());
     _notificationManager.dispose();
     // Only a native transport can outlive this Flutter state. The stable Dart
@@ -1012,6 +1024,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                 deviceId: targetDeviceId,
                 deviceName: _transferDeviceName(targetDeviceId),
                 fileName: file.name,
+                localFilePath: file.path,
                 direction: TransferHistoryDirection.send,
                 status: TransferHistoryStatus.queued,
                 totalBytes: totalBytes,
@@ -1092,6 +1105,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           totalBytes: fileSize,
           deviceId: targetDeviceId,
           deviceName: _transferDeviceName(targetDeviceId),
+          localFilePath: file.path,
         );
         await _finishCloudRelayTransferNotification(
           transferId: transferId,
@@ -1170,6 +1184,14 @@ class _DevicesScreenState extends State<DevicesScreen>
           activeProgress = progress;
           _onCloudRelayTransferProgress(progress, direction: 'download');
         },
+        onFileReceived: (transferId, path) {
+          final existing = _findTransferHistory('cloud-download-$transferId');
+          if (existing != null) {
+            widget.transferHistoryStore.upsert(
+              existing.copyWith(localFilePath: path, updatedAt: DateTime.now()),
+            );
+          }
+        },
       );
       for (final path in paths) {
         unawaited(widget.dataService.showFileReceivedNotification(path));
@@ -1214,12 +1236,15 @@ class _DevicesScreenState extends State<DevicesScreen>
     required String direction,
   }) {
     if (!Platform.isAndroid) return;
-    _recordCloudRelayProgress(progress, direction: direction);
-    if (progress.stage == CloudRelayProgressStage.completed) {
+    final normalizedProgress = _recordCloudRelayProgress(
+      progress,
+      direction: direction,
+    );
+    if (normalizedProgress.stage == CloudRelayProgressStage.completed) {
       unawaited(
         _finishCloudRelayTransferNotification(
-          transferId: progress.transferId,
-          fileName: progress.fileName,
+          transferId: normalizedProgress.transferId,
+          fileName: normalizedProgress.fileName,
           direction: direction,
           succeeded: true,
         ),
@@ -1228,7 +1253,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
     unawaited(
       widget.dataService.showCloudRelayTransferProgress(
-        progress,
+        normalizedProgress,
         direction: direction,
       ),
     );
@@ -1273,6 +1298,9 @@ class _DevicesScreenState extends State<DevicesScreen>
         direction: progress.direction == FileTransferDirection.send
             ? TransferHistoryDirection.send
             : TransferHistoryDirection.receive,
+        localFilePath: progress.localFilePath.isNotEmpty
+            ? progress.localFilePath
+            : existing?.localFilePath ?? '',
         status: status,
         bytesTransferred: progress.bytesTransferred,
         totalBytes: progress.totalBytes,
@@ -1327,6 +1355,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         deviceName: _transferDeviceName(targetDeviceId),
         fileName: fileName,
         direction: TransferHistoryDirection.send,
+        localFilePath: existing?.localFilePath ?? '',
         status: state,
         bytesTransferred: state == TransferHistoryStatus.completed
             ? (totalBytes > 0 ? totalBytes : bytes)
@@ -1339,10 +1368,14 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
   }
 
-  void _recordCloudRelayProgress(
+  CloudRelayProgress _recordCloudRelayProgress(
     CloudRelayProgress progress, {
     required String direction,
   }) {
+    progress = _cloudRelayProgressGuard.normalize(
+      progress,
+      direction: direction,
+    );
     final isUpload = direction == 'upload';
     final id = 'cloud-$direction-${progress.transferId}';
     final existing = _findTransferHistory(id);
@@ -1369,6 +1402,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         direction: isUpload
             ? TransferHistoryDirection.send
             : TransferHistoryDirection.receive,
+        localFilePath: existing?.localFilePath ?? '',
         status: status,
         bytesTransferred: progress.bytesTransferred,
         totalBytes: progress.totalBytes,
@@ -1376,6 +1410,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         updatedAt: now,
       ),
     );
+    return progress;
   }
 
   void _recordCloudRelayUploadStored({
@@ -1384,6 +1419,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     required int totalBytes,
     required String deviceId,
     required String deviceName,
+    required String localFilePath,
   }) {
     final now = DateTime.now();
     final id = 'cloud-upload-$transferId';
@@ -1396,6 +1432,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         deviceName: deviceName,
         fileName: fileName,
         direction: TransferHistoryDirection.send,
+        localFilePath: localFilePath,
         status: TransferHistoryStatus.awaitingPickup,
         bytesTransferred: totalBytes,
         totalBytes: totalBytes,
@@ -1410,8 +1447,11 @@ class _DevicesScreenState extends State<DevicesScreen>
     required String direction,
     required Object error,
   }) {
-    _recordCloudRelayProgress(progress, direction: direction);
-    final id = 'cloud-$direction-${progress.transferId}';
+    final normalizedProgress = _recordCloudRelayProgress(
+      progress,
+      direction: direction,
+    );
+    final id = 'cloud-$direction-${normalizedProgress.transferId}';
     final existing = _findTransferHistory(id);
     if (existing == null) return;
     widget.transferHistoryStore.upsert(
@@ -1467,13 +1507,20 @@ class _DevicesScreenState extends State<DevicesScreen>
     required String direction,
     required bool succeeded,
   }) async {
-    if (!Platform.isAndroid) return;
-    await widget.dataService.finishCloudRelayTransferNotification(
-      transferId: transferId,
-      fileName: fileName,
-      direction: direction,
-      succeeded: succeeded,
-    );
+    try {
+      if (!Platform.isAndroid) return;
+      await widget.dataService.finishCloudRelayTransferNotification(
+        transferId: transferId,
+        fileName: fileName,
+        direction: direction,
+        succeeded: succeeded,
+      );
+    } finally {
+      _cloudRelayProgressGuard.clear(
+        transferId: transferId,
+        direction: direction,
+      );
+    }
   }
 
   Future<void> _dispatchPendingSharedFiles() async {
@@ -2004,31 +2051,18 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   void _watchIncomingConnection(SessionConnection connection) {
+    if (!_uiWatchedConnections.add(connection)) return;
     _watchConnectionData(connection);
     _incomingPeerSubscriptions.add(
-      connection.peerStream.listen(
-        (peer) => _registerIncomingPeer(connection, peer),
-      ),
+      connection.peerStream.listen((peer) {
+        if (connection.isReady) _registerIncomingPeer(connection, peer);
+      }),
     );
     _incomingPeerSubscriptions.add(
       connection.stateStream.listen((state) {
-        final deviceId = connection.peerInfo?.deviceId ?? '';
-        if (state == SessionState.suspended) {
-          widget.discoveryService.registry.markSessionSuspended(deviceId);
-          return;
-        }
-        if (state == SessionState.connected) {
-          widget.discoveryService.registry.markSessionConnected(deviceId);
-          return;
-        }
-        if (!mounted || state != SessionState.disconnected) return;
-        widget.discoveryService.registry.markSessionDisconnected(deviceId);
-        _scheduleHistoricalReconnect(deviceId);
-        if (_activeConnection == connection) {
-          setState(() {
-            _activeConnection = null;
-            _activeDevice = null;
-          });
+        _handleObservedSessionState(connection, state);
+        if (state == SessionState.disconnected) {
+          _uiWatchedConnections.remove(connection);
         }
       }),
     );
@@ -2036,7 +2070,64 @@ class _DevicesScreenState extends State<DevicesScreen>
     // attached. SessionConnection retains the latest hello so an incoming
     // connection is still shown in 已连接的机型 in that race window.
     final peer = connection.peerInfo;
-    if (peer != null) _registerIncomingPeer(connection, peer);
+    if (peer != null && connection.isReady) {
+      _registerIncomingPeer(connection, peer);
+    }
+  }
+
+  bool _handleObservedSessionState(
+    SessionConnection connection,
+    SessionState state,
+  ) {
+    final deviceId = connection.peerInfo?.deviceId ?? '';
+    if (deviceId.isEmpty) return false;
+
+    if (state == SessionState.connected || state == SessionState.suspended) {
+      final peer = connection.peerInfo;
+      if (peer != null &&
+          (_activeConnection != connection ||
+              _activeDevice?.deviceId != deviceId)) {
+        _registerIncomingPeer(connection, peer);
+      }
+      if (state == SessionState.suspended) {
+        widget.discoveryService.registry.markSessionSuspended(deviceId);
+      } else {
+        widget.discoveryService.registry.markSessionConnected(deviceId);
+      }
+      return false;
+    }
+
+    if (state != SessionState.disconnected || !mounted) return false;
+
+    // Duplicate-session cleanup closes one socket after another has already
+    // won. A late disconnect from the loser must not demote the surviving
+    // session or clear the device currently shown in the UI.
+    final replacement = widget.sessionManager.connectionForDevice(deviceId);
+    if (replacement != null) {
+      final replacementPeer = replacement.peerInfo;
+      if (replacementPeer != null &&
+          (_activeConnection != replacement ||
+              _activeDevice?.deviceId != deviceId)) {
+        _registerIncomingPeer(replacement, replacementPeer);
+      }
+      if (replacement.state == SessionState.suspended) {
+        widget.discoveryService.registry.markSessionSuspended(deviceId);
+      } else {
+        widget.discoveryService.registry.markSessionConnected(deviceId);
+      }
+      return false;
+    }
+
+    widget.discoveryService.registry.markSessionDisconnected(deviceId);
+    _scheduleHistoricalReconnect(deviceId);
+    if (_activeDevice?.deviceId == deviceId ||
+        identical(_activeConnection, connection)) {
+      setState(() {
+        _activeConnection = null;
+        _activeDevice = null;
+      });
+    }
+    return true;
   }
 
   void _watchConnectionData(SessionConnection connection) {
@@ -2474,25 +2565,15 @@ class _DevicesScreenState extends State<DevicesScreen>
         return;
       }
       _connectionSubscription?.cancel();
-      _connectionSubscription = connection.stateStream.listen((state) {
-        if (state == SessionState.suspended) {
-          widget.discoveryService.registry.markSessionSuspended(peer.deviceId);
-          return;
+      final observedConnection = connection;
+      _connectionSubscription = observedConnection.stateStream.listen((state) {
+        final disconnected = _handleObservedSessionState(
+          observedConnection,
+          state,
+        );
+        if (disconnected && mounted) {
+          _showMessage('${device.name} 已断开');
         }
-        if (state == SessionState.connected) {
-          widget.discoveryService.registry.markSessionConnected(peer.deviceId);
-          return;
-        }
-        if (!mounted || state != SessionState.disconnected) return;
-        widget.discoveryService.registry.markSessionDisconnected(peer.deviceId);
-        _scheduleHistoricalReconnect(peer.deviceId);
-        setState(() {
-          if (identical(_activeConnection, connection)) {
-            _activeConnection = null;
-            _activeDevice = null;
-          }
-        });
-        _showMessage('${device.name} 已断开');
       });
       if (previousConnection != null &&
           previousConnection.peerInfo?.deviceId != device.deviceId) {
@@ -3976,8 +4057,10 @@ class _DevicesScreenState extends State<DevicesScreen>
               label: const Text('文件传输记录'),
               onPressed: () => Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(
-                  builder: (_) =>
-                      TransferHistoryScreen(store: widget.transferHistoryStore),
+                  builder: (_) => TransferHistoryScreen(
+                    store: widget.transferHistoryStore,
+                    openFile: widget.dataService.openTransferHistoryFile,
+                  ),
                 ),
               ),
             ),
@@ -5926,6 +6009,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           totalBytes: await File(cachedPath).length(),
           deviceId: target.deviceId,
           deviceName: target.name,
+          localFilePath: cachedPath,
         );
         await _finishCloudRelayTransferNotification(
           transferId: transferId,

@@ -106,7 +106,9 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _fileLoadingCancellation;
     private HomePage? _homePage;
     private FileManagementPage? _filePage;
-    private SettingsPage? _settingsPage;
+    private WindowsSettingsPage? _windowsSettingsPage;
+    private TransferSettingsPage? _transferSettingsPage;
+    private CloudRelaySettingsPage? _cloudRelaySettingsPage;
     private NotesPage? _notesPage;
     private TodoPage? _todoPage;
     private CalendarPage? _calendarPage;
@@ -350,7 +352,8 @@ public sealed partial class MainWindow : Window
     private ListView FileListView => _filePage?.Files ?? throw new InvalidOperationException("文件管理页面尚未加载");
     private TextBlock FilePathText => _filePage?.PathText ?? throw new InvalidOperationException("文件管理页面尚未加载");
     private TextBlock FileManagementStatusText => _filePage?.StatusText ?? throw new InvalidOperationException("文件管理页面尚未加载");
-    private TextBlock SettingsStatusText => _settingsPage?.Status ?? throw new InvalidOperationException("设置页面尚未加载");
+    private TextBlock SettingsStatusText => _windowsSettingsPage?.Status ?? throw new InvalidOperationException("Windows 设置页面尚未加载");
+    private TextBlock TransferSettingsStatusText => _transferSettingsPage?.Status ?? throw new InvalidOperationException("传输与连接设置页面尚未加载");
 
     public MainWindow()
     {
@@ -516,8 +519,19 @@ public sealed partial class MainWindow : Window
                 ConfigureFileManagementPage(files);
                 break;
             case SettingsPage settings:
-                _settingsPage = settings;
                 ConfigureSettingsPage(settings);
+                break;
+            case WindowsSettingsPage windowsSettings:
+                _windowsSettingsPage = windowsSettings;
+                ConfigureWindowsSettingsPage(windowsSettings);
+                break;
+            case TransferSettingsPage transferSettings:
+                _transferSettingsPage = transferSettings;
+                ConfigureTransferSettingsPage(transferSettings);
+                break;
+            case CloudRelaySettingsPage cloudRelaySettings:
+                _cloudRelaySettingsPage = cloudRelaySettings;
+                ConfigureCloudRelaySettingsPage(cloudRelaySettings);
                 break;
             case PersonalizationPage personalization:
                 _personalizationPage = personalization;
@@ -881,17 +895,17 @@ public sealed partial class MainWindow : Window
     {
         if (!_configuredPages.Add(page)) return;
         page.Personalization.Click += BtnPersonalization_Click;
-        page.Storage.Click += BtnStorage_Click;
-        page.StoragePath.Text = _receiveDirectory;
-        page.PairingCode.Text = _localPairingCode;
-        page.PairingCodeStatus.Text = _localPairingCode.Length > 0
-            ? "已启用本机配对码；其他设备连接到本机时需要验证。"
-            : "未启用本机配对码";
-        page.SavePairingCode.Click += SavePairingCode_Click;
-        page.ClearPairingCode.Click += ClearPairingCode_Click;
+        page.WindowsSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WindowsSettingsPage));
+        page.TransferSettings.Click += (_, _) => ContentFrame.Navigate(typeof(TransferSettingsPage));
+        page.CloudRelaySettings.Click += (_, _) => ContentFrame.Navigate(typeof(CloudRelaySettingsPage));
+    }
+
+    private void ConfigureWindowsSettingsPage(WindowsSettingsPage page)
+    {
+        if (!_configuredPages.Add(page)) return;
+        page.BackToSettings.Click += HeaderBackButton_Click;
         page.NotificationStatus.Text = _notificationPresenter.SystemNotificationStatus;
         page.OpenNotificationSettings.Click += OpenNotificationSettings_Click;
-        page.About.Click += BtnAbout_Click;
         page.MinimizeToTray.IsOn = _minimizeToTray;
         page.MinimizeToTray.Toggled += MinimizeToTray_Toggled;
         page.ShowTrayBackgroundNotice.IsOn = _showTrayBackgroundNotice;
@@ -902,20 +916,40 @@ public sealed partial class MainWindow : Window
         page.SilentStartup.IsEnabled = page.StartWithWindows.IsOn;
         page.StartWithWindows.Toggled += StartWithWindows_Toggled;
         page.SilentStartup.Toggled += SilentStartup_Toggled;
+    }
+
+    private void ConfigureTransferSettingsPage(TransferSettingsPage page)
+    {
+        if (!_configuredPages.Add(page)) return;
+        page.BackToSettings.Click += HeaderBackButton_Click;
+        page.StoragePath.Text = _receiveDirectory;
+        page.Storage.Click += BtnStorage_Click;
+        page.PairingCode.Text = _localPairingCode;
+        page.PairingCodeStatus.Text = _localPairingCode.Length > 0
+            ? "已启用本机配对码；其他设备连接到本机时需要验证。"
+            : "未启用本机配对码";
+        page.SavePairingCode.Click += SavePairingCode_Click;
+        page.ClearPairingCode.Click += ClearPairingCode_Click;
         page.StartBlePairing.Click += StartBlePairing_Click;
-        page.CloudRelayEnabled.IsOn = _cloudRelaySettings.Enabled;
-        page.CloudRelayEndpoint.Text = _cloudRelaySettings.Endpoint;
-        page.CloudRelayKey.Text = _cloudRelaySettings.RelayEncryptionKey;
-        page.CloudRelayAdminToken.Password = string.Empty;
-        page.CloudRelayStatus.Text = _cloudRelaySettings.IsConfigured
+    }
+
+    private void ConfigureCloudRelaySettingsPage(CloudRelaySettingsPage page)
+    {
+        if (!_configuredPages.Add(page)) return;
+        page.BackToSettings.Click += HeaderBackButton_Click;
+        page.Enabled.IsOn = _cloudRelaySettings.Enabled;
+        page.Endpoint.Text = _cloudRelaySettings.Endpoint;
+        page.Key.Text = _cloudRelaySettings.RelayEncryptionKey;
+        page.AdminToken.Password = string.Empty;
+        page.Status.Text = _cloudRelaySettings.IsConfigured
             ? "已配置；局域网不可用时可使用异步中转。"
             : "未配置 Cloud Relay";
-        page.CloudRelayEnabled.Toggled += CloudRelayEnabled_Toggled;
-        page.GenerateCloudRelayKey.Click += GenerateCloudRelayKey_Click;
-        page.CopyCloudRelayKey.Click += CopyCloudRelayKey_Click;
-        page.SaveCloudRelay.Click += SaveCloudRelay_Click;
-        page.RegisterCloudRelay.Click += RegisterCloudRelay_Click;
-        page.TestCloudRelay.Click += TestCloudRelay_Click;
+        page.Enabled.Toggled += CloudRelayEnabled_Toggled;
+        page.GenerateKey.Click += GenerateCloudRelayKey_Click;
+        page.CopyKey.Click += CopyCloudRelayKey_Click;
+        page.Save.Click += SaveCloudRelay_Click;
+        page.Register.Click += RegisterCloudRelay_Click;
+        page.Test.Click += TestCloudRelay_Click;
     }
 
     private void StartBlePairing_Click(object sender, RoutedEventArgs e)
@@ -942,35 +976,35 @@ public sealed partial class MainWindow : Window
 
     private void CloudRelayEnabled_Toggled(object sender, RoutedEventArgs e)
     {
-        if (_settingsPage == null) return;
+        if (_cloudRelaySettingsPage == null) return;
         SaveCloudRelayFromPage();
-        _settingsPage.CloudRelayStatus.Text = _cloudRelaySettings.Enabled
+        _cloudRelaySettingsPage.Status.Text = _cloudRelaySettings.Enabled
             ? "Cloud Relay 已开启；局域网连接仍然优先。"
             : "Cloud Relay 已关闭，文件只走原有局域网路径。";
     }
 
     private void GenerateCloudRelayKey_Click(object sender, RoutedEventArgs e)
     {
-        if (_settingsPage == null) return;
-        _settingsPage.CloudRelayKey.Text = CloudRelayCrypto.GenerateEncryptionKey();
-        _settingsPage.CloudRelayStatus.Text = "已生成新密钥；请在另一台已信任设备导入同一密钥。";
+        if (_cloudRelaySettingsPage == null) return;
+        _cloudRelaySettingsPage.Key.Text = CloudRelayCrypto.GenerateEncryptionKey();
+        _cloudRelaySettingsPage.Status.Text = "已生成新密钥；请在另一台已信任设备导入同一密钥。";
     }
 
     private void CopyCloudRelayKey_Click(object sender, RoutedEventArgs e)
     {
-        if (_settingsPage == null || string.IsNullOrWhiteSpace(_settingsPage.CloudRelayKey.Text)) return;
+        if (_cloudRelaySettingsPage == null || string.IsNullOrWhiteSpace(_cloudRelaySettingsPage.Key.Text)) return;
         var data = new DataPackage();
-        data.SetText(_settingsPage.CloudRelayKey.Text.Trim());
+        data.SetText(_cloudRelaySettingsPage.Key.Text.Trim());
         Clipboard.SetContent(data);
-        _settingsPage.CloudRelayStatus.Text = "Relay 密钥已复制到系统剪贴板。";
+        _cloudRelaySettingsPage.Status.Text = "Relay 密钥已复制到系统剪贴板。";
     }
 
     private void SaveCloudRelay_Click(object sender, RoutedEventArgs e)
     {
         SaveCloudRelayFromPage();
-        if (_settingsPage != null)
+        if (_cloudRelaySettingsPage != null)
         {
-            _settingsPage.CloudRelayStatus.Text = _cloudRelaySettings.IsConfigured
+            _cloudRelaySettingsPage.Status.Text = _cloudRelaySettings.IsConfigured
                 ? "Cloud Relay 配置已保存。"
                 : "配置已保存，但地址、设备 Token 或密钥仍不完整。";
         }
@@ -978,15 +1012,15 @@ public sealed partial class MainWindow : Window
 
     private void SaveCloudRelayFromPage()
     {
-        if (_settingsPage == null) return;
+        if (_cloudRelaySettingsPage == null) return;
         try
         {
-            string key = _settingsPage.CloudRelayKey.Text.Trim();
+            string key = _cloudRelaySettingsPage.Key.Text.Trim();
             if (key.Length > 0) CloudRelayCrypto.DecodeKey(key);
             _cloudRelaySettings = new CloudRelaySettings
             {
-                Enabled = _settingsPage.CloudRelayEnabled.IsOn,
-                Endpoint = _settingsPage.CloudRelayEndpoint.Text.Trim(),
+                Enabled = _cloudRelaySettingsPage.Enabled.IsOn,
+                Endpoint = _cloudRelaySettingsPage.Endpoint.Text.Trim(),
                 DeviceToken = _cloudRelaySettings.DeviceToken,
                 RelayEncryptionKey = key
             };
@@ -994,26 +1028,26 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            _settingsPage.CloudRelayStatus.Text = $"Relay 密钥无效：{exception.Message}";
+            _cloudRelaySettingsPage.Status.Text = $"Relay 密钥无效：{exception.Message}";
         }
     }
 
     private async void RegisterCloudRelay_Click(object sender, RoutedEventArgs e)
     {
-        if (_settingsPage == null) return;
-        string endpoint = _settingsPage.CloudRelayEndpoint.Text.Trim();
-        string adminToken = _settingsPage.CloudRelayAdminToken.Password.Trim();
-        string key = _settingsPage.CloudRelayKey.Text.Trim();
+        if (_cloudRelaySettingsPage == null) return;
+        string endpoint = _cloudRelaySettingsPage.Endpoint.Text.Trim();
+        string adminToken = _cloudRelaySettingsPage.AdminToken.Password.Trim();
+        string key = _cloudRelaySettingsPage.Key.Text.Trim();
         if (endpoint.Length == 0 || adminToken.Length == 0 || key.Length == 0)
         {
-            _settingsPage.CloudRelayStatus.Text = "注册前请填写 Worker 地址、部署 Token 和 Relay 密钥。";
+            _cloudRelaySettingsPage.Status.Text = "注册前请填写 Worker 地址、部署 Token 和 Relay 密钥。";
             return;
         }
 
         try
         {
             string relayDeviceId = CloudRelayCrypto.ComputeRelayDeviceId(key, _localIdentity.DeviceId);
-            _settingsPage.CloudRelayStatus.Text = "正在注册此设备…";
+            _cloudRelaySettingsPage.Status.Text = "正在注册此设备…";
             var credentials = await _cloudRelayClient.RegisterAsync(
                 endpoint,
                 adminToken,
@@ -1029,35 +1063,35 @@ public sealed partial class MainWindow : Window
                 RelayEncryptionKey = key
             };
             SaveCloudRelaySettings(_cloudRelaySettings);
-            _settingsPage.CloudRelayEnabled.IsOn = true;
-            _settingsPage.CloudRelayAdminToken.Password = string.Empty;
-            _settingsPage.CloudRelayStatus.Text = "设备已注册；部署 Token 已从输入框清除。";
+            _cloudRelaySettingsPage.Enabled.IsOn = true;
+            _cloudRelaySettingsPage.AdminToken.Password = string.Empty;
+            _cloudRelaySettingsPage.Status.Text = "设备已注册；部署 Token 已从输入框清除。";
         }
         catch (Exception exception)
         {
-            _settingsPage.CloudRelayStatus.Text = $"注册失败：{exception.Message}";
+            _cloudRelaySettingsPage.Status.Text = $"注册失败：{exception.Message}";
         }
     }
 
     private async void TestCloudRelay_Click(object sender, RoutedEventArgs e)
     {
-        if (_settingsPage == null) return;
-        string endpoint = _settingsPage.CloudRelayEndpoint.Text.Trim();
+        if (_cloudRelaySettingsPage == null) return;
+        string endpoint = _cloudRelaySettingsPage.Endpoint.Text.Trim();
         if (endpoint.Length == 0)
         {
-            _settingsPage.CloudRelayStatus.Text = "请先填写 Worker 地址。";
+            _cloudRelaySettingsPage.Status.Text = "请先填写 Worker 地址。";
             return;
         }
         try
         {
             bool healthy = await _cloudRelayClient.CheckHealthAsync(endpoint);
-            _settingsPage.CloudRelayStatus.Text = healthy
+            _cloudRelaySettingsPage.Status.Text = healthy
                 ? "Worker 可用。"
                 : "Worker 返回了非成功状态。";
         }
         catch (Exception exception)
         {
-            _settingsPage.CloudRelayStatus.Text = $"测试失败：{exception.Message}";
+            _cloudRelaySettingsPage.Status.Text = $"测试失败：{exception.Message}";
         }
     }
 
@@ -1075,9 +1109,34 @@ public sealed partial class MainWindow : Window
         page.BackToSettings.Click += HeaderBackButton_Click;
     }
 
+    private async Task ShowAboutDialogAsync()
+    {
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Hinge\n局域网优先的跨设备办公套件\n\nWindows 端：WinUI 3 + Windows App SDK\nAndroid 端：Flutter + Material 3 Expressive\n\n数据默认只在局域网设备之间传输。",
+            TextWrapping = TextWrapping.Wrap
+        });
+        content.Children.Add(new HyperlinkButton
+        {
+            Content = "访问 GitHub 项目主页",
+            NavigateUri = new Uri("https://github.com/Chengeeker/Hinge"),
+            HorizontalAlignment = HorizontalAlignment.Left
+        });
+
+        var dialog = new ContentDialog
+        {
+            Title = "关于 Hinge",
+            Content = content,
+            CloseButtonText = "关闭",
+            XamlRoot = ((FrameworkElement)Content).XamlRoot
+        };
+        await ShowContentDialogAsync(dialog);
+    }
+
     private void HeaderBackButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ContentFrame.Content is PersonalizationPage)
+        if (ContentFrame.Content is PersonalizationPage or WindowsSettingsPage or TransferSettingsPage or CloudRelaySettingsPage)
         {
             NavigateTo("设置", 0);
         }
@@ -3962,7 +4021,6 @@ public sealed partial class MainWindow : Window
 
     private void NavHome_Click(object sender, RoutedEventArgs e) => NavigateTo("首页", 0);
     private void NavTransfer_Click(object sender, RoutedEventArgs e) => NavigateTo("设备操作", 0);
-    private void NavSettings_Click(object sender, RoutedEventArgs e) => NavigateTo("设置", 0);
 
     private void SearchBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
     {
@@ -4001,12 +4059,6 @@ public sealed partial class MainWindow : Window
 
     private void AppNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (args.IsSettingsSelected)
-        {
-            NavSettings_Click(sender, new RoutedEventArgs());
-            return;
-        }
-
         if (args.SelectedItem is not NavigationViewItem item || item.Tag is not string tag)
         {
             return;
@@ -4035,9 +4087,20 @@ public sealed partial class MainWindow : Window
             case "notificationHistory":
                 NavigateTo("手机历史通知", 0);
                 break;
+            case "settings":
+                NavigateTo("设置", 0);
+                break;
             case "transfers":
                 NavigateTo("设备操作", 0);
                 break;
+        }
+    }
+
+    private void AppNavigation_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
+    {
+        if (args.InvokedItemContainer is NavigationViewItem { Tag: "about" })
+        {
+            _ = ShowAboutDialogAsync();
         }
     }
 
@@ -4365,21 +4428,41 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        DispatcherQueue.TryEnqueue(RefreshExplorerSendMenu);
-        if (ReferenceEquals(_activeConnection, connection))
+        var disconnectedDeviceId =
+            connection.RemoteDeviceId ?? _activeDevice?.DeviceId ?? string.Empty;
+        var replacement = string.IsNullOrWhiteSpace(disconnectedDeviceId)
+            ? null
+            : _sessionManager.ConnectionForDevice(disconnectedDeviceId);
+        if (replacement != null && !ReferenceEquals(replacement, connection))
         {
-            SessionConnection? replacement = connection.RemoteDeviceId is { } remoteId
-                ? _sessionManager.ConnectionForDevice(remoteId)
-                : null;
-            if (replacement != null && !ReferenceEquals(replacement, connection))
+            if (ReferenceEquals(_activeConnection, connection) ||
+                string.Equals(
+                    _activeDevice?.DeviceId,
+                    disconnectedDeviceId,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 AttachConnection(replacement);
-                return;
             }
+            DispatcherQueue.TryEnqueue(() =>
+                RefreshDeviceList(_registry.GetAllDevices()));
+            DispatcherQueue.TryEnqueue(RefreshExplorerSendMenu);
+            return;
+        }
 
-            var disconnectedDeviceId =
-                connection.RemoteDeviceId ?? _activeDevice?.DeviceId ?? string.Empty;
-            _registry.MarkSessionDisconnected(disconnectedDeviceId);
+        _registry.MarkSessionDisconnected(disconnectedDeviceId);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            RefreshDeviceList(_registry.GetAllDevices());
+            RefreshExplorerSendMenu();
+        });
+
+        var wasActiveConnection = ReferenceEquals(_activeConnection, connection) ||
+            string.Equals(
+                _activeDevice?.DeviceId,
+                disconnectedDeviceId,
+                StringComparison.OrdinalIgnoreCase);
+        if (wasActiveConnection)
+        {
             DispatcherQueue.TryEnqueue(() =>
                 ScheduleHistoricalReconnect(disconnectedDeviceId));
 
@@ -4462,7 +4545,16 @@ public sealed partial class MainWindow : Window
         }
 
         HeroDeviceName.Text = device.Name;
-        HeroDeviceDetail.Text = $"手机设备 · 已连接 · {string.Join(", ", device.NetworkAddresses)}";
+        var hasSession = IsDeviceSessionConnected(device);
+        var connectionLabel = hasSession && device.ConnectionState == ConnectionState.Suspended
+            ? "后台休眠"
+            : hasSession
+                ? "已连接"
+                : device.ConnectionState == ConnectionState.Disconnected
+                    ? "离线"
+                    : "局域网已发现，尚未建立会话";
+        HeroDeviceDetail.Text =
+            $"手机设备 · {connectionLabel} · {string.Join(", ", device.NetworkAddresses)}";
         HeroDeviceLogo.Content = BuildOfficialBrandLogo(device.Manufacturer, device.Model);
     }
 
@@ -5895,13 +5987,13 @@ public sealed partial class MainWindow : Window
 
     private void SavePairingCode_Click(object sender, RoutedEventArgs e)
     {
-        if (_settingsPage == null) return;
+        if (_transferSettingsPage == null) return;
 
-        var code = PairingManager.NormalizePairingCode(_settingsPage.PairingCode.Text);
+        var code = PairingManager.NormalizePairingCode(_transferSettingsPage.PairingCode.Text);
         if (code.Length == 0)
         {
-            _settingsPage.PairingCodeStatus.Text = "请输入完整的 6 位数字；不启用时请点击“清除”。";
-            SettingsStatusText.Text = "本机配对码未更新。";
+            _transferSettingsPage.PairingCodeStatus.Text = "请输入完整的 6 位数字；不启用时请点击“清除”。";
+            TransferSettingsStatusText.Text = "本机配对码未更新。";
             return;
         }
 
@@ -5909,9 +6001,9 @@ public sealed partial class MainWindow : Window
         SavePairingCode(code);
         _sessionManager.LocalPairingCode = code;
         _discoveryService.PairingRequired = true;
-        _settingsPage.PairingCode.Text = code;
-        _settingsPage.PairingCodeStatus.Text = "已启用本机配对码；其他设备连接到本机时需要验证。";
-        SettingsStatusText.Text = "本机配对码已保存；新连接会要求输入配对码。";
+        _transferSettingsPage.PairingCode.Text = code;
+        _transferSettingsPage.PairingCodeStatus.Text = "已启用本机配对码；其他设备连接到本机时需要验证。";
+        TransferSettingsStatusText.Text = "本机配对码已保存；新连接会要求输入配对码。";
     }
 
     private void ClearPairingCode_Click(object sender, RoutedEventArgs e)
@@ -5920,21 +6012,21 @@ public sealed partial class MainWindow : Window
         SavePairingCode(null);
         _sessionManager.LocalPairingCode = string.Empty;
         _discoveryService.PairingRequired = false;
-        if (_settingsPage != null)
+        if (_transferSettingsPage != null)
         {
-            _settingsPage.PairingCode.Text = string.Empty;
-            _settingsPage.PairingCodeStatus.Text = "未启用本机配对码";
+            _transferSettingsPage.PairingCode.Text = string.Empty;
+            _transferSettingsPage.PairingCodeStatus.Text = "未启用本机配对码";
         }
-        SettingsStatusText.Text = "本机配对码已关闭。";
+        TransferSettingsStatusText.Text = "本机配对码已关闭。";
     }
 
     private void MinimizeToTray_Toggled(object sender, RoutedEventArgs e)
     {
         _minimizeToTray = sender is ToggleSwitch { IsOn: true };
         SaveMinimizeToTray(_minimizeToTray);
-        if (_settingsPage != null)
+        if (_windowsSettingsPage != null)
         {
-            _settingsPage.ShowTrayBackgroundNotice.IsEnabled = _minimizeToTray;
+            _windowsSettingsPage.ShowTrayBackgroundNotice.IsEnabled = _minimizeToTray;
         }
         SettingsStatusText.Text = _minimizeToTray
             ? "关闭窗口时将隐藏到系统托盘，可从托盘恢复或退出。"
@@ -5954,7 +6046,7 @@ public sealed partial class MainWindow : Window
 
     private void StartWithWindows_Toggled(object sender, RoutedEventArgs e)
     {
-        if (_settingsPage == null || sender is not ToggleSwitch toggle) return;
+        if (_windowsSettingsPage == null || sender is not ToggleSwitch toggle) return;
 
         if (!TrySaveStartWithWindows(toggle.IsOn))
         {
@@ -5963,7 +6055,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _settingsPage.SilentStartup.IsEnabled = toggle.IsOn;
+        _windowsSettingsPage.SilentStartup.IsEnabled = toggle.IsOn;
         SettingsStatusText.Text = toggle.IsOn
             ? "已启用开机启动；下次登录 Windows 时会自动运行。"
             : "已关闭开机启动。";
@@ -6043,37 +6135,12 @@ public sealed partial class MainWindow : Window
 
         _receiveDirectory = directory;
         SaveReceiveDirectory(_receiveDirectory);
-        if (_settingsPage != null)
+        if (_transferSettingsPage != null)
         {
-            _settingsPage.StoragePath.Text = _receiveDirectory;
+            _transferSettingsPage.StoragePath.Text = _receiveDirectory;
         }
-        SettingsStatusText.Text = $"默认接收目录：{_receiveDirectory}";
+        TransferSettingsStatusText.Text = $"默认接收目录：{_receiveDirectory}";
         StatusText.Text = "存储设置已保存";
-    }
-
-    private async void BtnAbout_Click(object sender, RoutedEventArgs e)
-    {
-        var content = new StackPanel { Spacing = 12 };
-        content.Children.Add(new TextBlock
-        {
-            Text = "Hinge\n局域网优先的跨设备办公套件\n\nWindows 端：WinUI 3 + Windows App SDK\nAndroid 端：Flutter + Material 3 Expressive\n\n数据默认只在局域网设备之间传输。",
-            TextWrapping = TextWrapping.Wrap
-        });
-        content.Children.Add(new HyperlinkButton
-        {
-            Content = "访问 GitHub 项目主页",
-            NavigateUri = new Uri("https://github.com/Chengeeker/Hinge"),
-            HorizontalAlignment = HorizontalAlignment.Left
-        });
-
-        var dialog = new ContentDialog
-        {
-            Title = "关于 Hinge",
-            Content = content,
-            CloseButtonText = "关闭",
-            XamlRoot = ((FrameworkElement)Content).XamlRoot
-        };
-        await ShowContentDialogAsync(dialog);
     }
 
     private async Task ShowQuickTransferAsync()
@@ -6262,20 +6329,27 @@ public sealed partial class MainWindow : Window
                 connection = await TryWakeDeviceAsync(request.DeviceId, cancellation.Token);
             }
 
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(25));
+#if HINGE_TRANSFER_DIAGNOSTICS
+            var selectedRoute = connection != null
+                ? "lan"
+                : _cloudRelaySettings.IsConfigured ? "cloud" : "queued";
+            App.LogLifecycle(
+                $"shell_send_route pendingId={pending.Id} route={selectedRoute} " +
+                $"connectionState={connection?.State.ToString() ?? "none"}");
+#endif
+
             var result = connection != null
                 ? await SendFilesToConnectionAsync(
                     connection,
                     pending.FilePaths,
                     "Download/Hinge",
-                    timeout.Token,
+                    cancellation.Token,
                     showFailureDialog: false,
                     pendingId: pending.Id)
                 : await SendFilesViaCloudAsync(
                     request.DeviceId,
                     pending.FilePaths,
-                    timeout.Token,
+                    cancellation.Token,
                     pending.Id);
             if (result == null)
             {
@@ -6413,6 +6487,13 @@ public sealed partial class MainWindow : Window
                 }
                 if (connection == null && !_cloudRelaySettings.IsConfigured) continue;
 
+#if HINGE_TRANSFER_DIAGNOSTICS
+                App.LogLifecycle(
+                    $"pending_shell_send_route pendingId={pending.Id} " +
+                    $"route={(connection != null ? "lan" : "cloud")} " +
+                    $"connectionState={connection?.State.ToString() ?? "none"}");
+#endif
+
                 var existingPaths = pending.FilePaths
                     .Where(File.Exists)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -6428,20 +6509,18 @@ public sealed partial class MainWindow : Window
                 {
                     using var cancellation = new CancellationTokenSource();
                     _pendingSendCancellations[pending.Id] = cancellation;
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-                    timeout.CancelAfter(TimeSpan.FromSeconds(25));
                     var result = connection != null
                         ? await SendFilesToConnectionAsync(
                             connection,
                             existingPaths,
                             "Download/Hinge",
-                            timeout.Token,
+                            cancellation.Token,
                             showFailureDialog: false,
                             pendingId: pending.Id)
                         : await SendFilesViaCloudAsync(
                             pending.DeviceId,
                             existingPaths,
-                            timeout.Token,
+                            cancellation.Token,
                             pending.Id);
                     if (result == null)
                     {
@@ -6700,6 +6779,12 @@ public sealed partial class MainWindow : Window
             _transferHistoryStore.Upsert(history);
             RefreshTransferHistory();
 
+#if HINGE_TRANSFER_DIAGNOSTICS
+            var sendTimer = System.Diagnostics.Stopwatch.StartNew();
+            App.LogLifecycle(
+                $"file_send_started route=cloud pendingId={pendingId ?? "none"} " +
+                $"sizeBytes={fileInfo.Length}");
+#endif
             var progressReporter = new Progress<TransferProgress>(progress =>
             {
                 _transferHistoryStore.Upsert(history with
@@ -6721,6 +6806,12 @@ public sealed partial class MainWindow : Window
                     path,
                     progress: progressReporter,
                     cancellationToken: cancellationToken);
+#if HINGE_TRANSFER_DIAGNOSTICS
+                App.LogLifecycle(
+                    $"file_send_timing route=cloud transferId={transferId} " +
+                    $"sizeBytes={fileInfo.Length} elapsedMs={sendTimer.ElapsedMilliseconds} " +
+                    "result=uploaded");
+#endif
                 _transferHistoryStore.Upsert(history with
                 {
                     TransferId = transferId,
@@ -6735,6 +6826,12 @@ public sealed partial class MainWindow : Window
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+#if HINGE_TRANSFER_DIAGNOSTICS
+                App.LogLifecycle(
+                    $"file_send_timing route=cloud pendingId={pendingId ?? "none"} " +
+                    $"sizeBytes={fileInfo.Length} elapsedMs={sendTimer.ElapsedMilliseconds} " +
+                    "result=cancelled");
+#endif
                 _transferHistoryStore.Upsert(history with
                 {
                     State = TransferState.Cancelled,
@@ -6746,6 +6843,12 @@ public sealed partial class MainWindow : Window
             }
             catch (Exception exception)
             {
+#if HINGE_TRANSFER_DIAGNOSTICS
+                App.LogLifecycle(
+                    $"file_send_timing route=cloud pendingId={pendingId ?? "none"} " +
+                    $"sizeBytes={fileInfo.Length} elapsedMs={sendTimer.ElapsedMilliseconds} " +
+                    $"result=failed errorType={exception.GetType().Name}");
+#endif
                 _transferHistoryStore.Upsert(history with
                 {
                     State = TransferState.Failed,
@@ -6860,6 +6963,12 @@ public sealed partial class MainWindow : Window
                 }
             }
 
+#if HINGE_TRANSFER_DIAGNOSTICS
+            var sendTimer = System.Diagnostics.Stopwatch.StartNew();
+            App.LogLifecycle(
+                $"file_send_started route=lan pendingId={pendingId ?? "none"} " +
+                $"sizeBytes={fileInfo.Length}");
+#endif
             try
             {
                 var transferId = await _transferManager.SendFileAsync(
@@ -6868,6 +6977,12 @@ public sealed partial class MainWindow : Window
                     progress: progressReporter,
                     cancellationToken: cancellationToken,
                     destinationPath: destination);
+#if HINGE_TRANSFER_DIAGNOSTICS
+                App.LogLifecycle(
+                    $"file_send_timing route=lan transferId={transferId} " +
+                    $"sizeBytes={fileInfo.Length} elapsedMs={sendTimer.ElapsedMilliseconds} " +
+                    "result=completed");
+#endif
 
                 TransferHistoryRecord completedHistory;
                 lock (progressGate)
@@ -6890,6 +7005,12 @@ public sealed partial class MainWindow : Window
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+#if HINGE_TRANSFER_DIAGNOSTICS
+                App.LogLifecycle(
+                    $"file_send_timing route=lan pendingId={pendingId ?? "none"} " +
+                    $"sizeBytes={fileInfo.Length} elapsedMs={sendTimer.ElapsedMilliseconds} " +
+                    "result=cancelled");
+#endif
                 StopProgress();
                 _transferHistoryStore.Upsert(latestHistory with
                 {
@@ -6902,6 +7023,12 @@ public sealed partial class MainWindow : Window
             }
             catch (Exception exception)
             {
+#if HINGE_TRANSFER_DIAGNOSTICS
+                App.LogLifecycle(
+                    $"file_send_timing route=lan pendingId={pendingId ?? "none"} " +
+                    $"sizeBytes={fileInfo.Length} elapsedMs={sendTimer.ElapsedMilliseconds} " +
+                    $"result=failed errorType={exception.GetType().Name}");
+#endif
                 StopProgress();
                 _transferHistoryStore.Upsert(latestHistory with
                 {

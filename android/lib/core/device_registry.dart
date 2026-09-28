@@ -211,7 +211,6 @@ class DeviceRegistry {
   void markSessionConnected(String deviceId) {
     final record = _records[deviceId];
     if (record == null ||
-        record.device.connectionState == DeviceConnectionState.disconnected ||
         record.device.connectionState == DeviceConnectionState.connected) {
       return;
     }

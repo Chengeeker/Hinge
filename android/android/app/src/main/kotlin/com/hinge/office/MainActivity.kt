@@ -557,6 +557,18 @@ class MainActivity : FlutterActivity() {
             "nativeSendFrame" -> nativeSendFrame(call, result)
             "nativeSendFileChunk" -> nativeSendFileChunk(call, result)
             "nativeEnqueueFile" -> nativeEnqueueFile(call, result)
+            "activeTransferHistoryIds" -> {
+                val broker = HingeForegroundService.current?.connectionBroker()
+                if (broker == null) {
+                    result.error(
+                        "native_service_unavailable",
+                        "原生连接服务尚未启动，无法校验传输状态",
+                        null,
+                    )
+                } else {
+                    result.success(broker.activeTransferHistoryIds())
+                }
+            }
             "readConnectionDiagnostics" -> result.success(
                 HingeForegroundService.current?.connectionBroker()?.readDiagnostics() ?: "",
             )
@@ -594,6 +606,7 @@ class MainActivity : FlutterActivity() {
             "defaultAppOptions" -> defaultAppOptions(call, result)
             "defaultApp" -> result.success(defaultApp(call))
             "setDefaultApp" -> setDefaultApp(call, result)
+            "openTransferHistoryFile" -> openTransferHistoryFile(call, result)
             "openAppSettings" -> openAppSettings(result)
             "openProjectUrl" -> result.success(openProjectUrl())
             "startScreenCapture" -> requestScreenCapture(call, result)
@@ -2150,8 +2163,27 @@ class MainActivity : FlutterActivity() {
         if (path.isNullOrBlank()) return
         val file = File(path)
         if (!file.exists() || !file.isFile) return
+        val resolvedMime = mimeType?.takeIf { it.isNotBlank() } ?: guessMimeType(file.name)
+        if (!openFileUsingDefaultApp(file, resolvedMime)) {
+            // Keep the received-file notification useful if an OEM handler or
+            // FileProvider rejects the view intent.
+            openReceivedDirectory(path)
+        }
+    }
+
+    private fun openTransferHistoryFile(call: MethodCall, result: MethodChannel.Result) {
+        val path = call.argument<String>("path")?.trim().orEmpty()
+        val file = File(path)
+        if (path.isEmpty() || !file.isFile) {
+            result.success("missing")
+            return
+        }
+        val opened = openFileUsingDefaultApp(file, guessMimeType(file.name))
+        result.success(if (opened) "opened" else "failed")
+    }
+
+    private fun openFileUsingDefaultApp(file: File, resolvedMime: String): Boolean {
         try {
-            val resolvedMime = mimeType?.takeIf { it.isNotBlank() } ?: guessMimeType(file.name)
             val fileUri = FileProvider.getUriForFile(
                 this@MainActivity,
                 "${applicationContext.packageName}.fileprovider",
@@ -2170,6 +2202,7 @@ class MainActivity : FlutterActivity() {
             }
             try {
                 startActivity(openIntent)
+                return true
             } catch (_: ActivityNotFoundException) {
                 if (preferredPackage != null) {
                     val editIntent = Intent(Intent.ACTION_EDIT).apply {
@@ -2180,7 +2213,7 @@ class MainActivity : FlutterActivity() {
                     }
                     try {
                         startActivity(editIntent)
-                        return
+                        return true
                     } catch (_: ActivityNotFoundException) {
                         // The selected package may have disappeared between
                         // listing and notification click; fall back to the
@@ -2189,12 +2222,10 @@ class MainActivity : FlutterActivity() {
                 }
                 openIntent.setPackage(null)
                 startActivity(Intent.createChooser(openIntent, "选择打开方式"))
+                return true
             }
         } catch (_: Exception) {
-            // A provider or OEM handler may reject the private URI. Falling
-            // back to the directory keeps the notification useful instead of
-            // leaving a dead click target.
-            openReceivedDirectory(path)
+            return false
         }
     }
 

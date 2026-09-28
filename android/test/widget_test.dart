@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +10,8 @@ import 'package:hinge/core/device_model.dart';
 import 'package:hinge/core/device_registry.dart';
 import 'package:hinge/core/discovery_message.dart';
 import 'package:hinge/core/discovery_service.dart';
+import 'package:hinge/core/session_manager.dart';
+import 'package:hinge/core/trust_store.dart';
 import 'package:hinge/core/workspace_state.dart';
 
 void main() {
@@ -29,6 +33,89 @@ void main() {
       expect(find.text('Hinge Work'), findsOneWidget);
       expect(find.text('没有已连接的机型'), findsOneWidget);
       expect(find.text('工作区'), findsOneWidget);
+    });
+
+    testWidgets('HingeApp restores UI state for an already connected session', (
+      tester,
+    ) async {
+      final tempDirectory = await tester.runAsync(
+        () => Directory.systemTemp.createTemp('hinge-restored-session-test-'),
+      );
+      expect(tempDirectory, isNotNull);
+      final testDirectory = tempDirectory!;
+      const localIdentity = DeviceIdentity(
+        deviceId: 'restored-local-device',
+        name: 'Local Device',
+      );
+      const remoteIdentity = DeviceIdentity(
+        deviceId: 'restored-remote-device',
+        name: 'Remote Windows',
+      );
+      final trustStore = TrustStore(
+        '${testDirectory.path}${Platform.pathSeparator}trust.json',
+      );
+      final registry = DeviceRegistry();
+      final discovery = DiscoveryService(
+        localIdentity: localIdentity,
+        registry: registry,
+      );
+      registry.upsertDevice(
+        const DiscoveryMessage(
+          deviceId: 'restored-remote-device',
+          name: 'Remote Windows',
+          platform: 'windows',
+          timestamp: 123456,
+        ),
+        '127.0.0.1',
+      );
+
+      final server = SessionManager(
+        localIdentity: localIdentity,
+        trustStore: trustStore,
+        listenPort: 0,
+      );
+      final client = SessionManager(
+        localIdentity: remoteIdentity,
+        trustStore: trustStore,
+        listenPort: 0,
+      );
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        client.dispose();
+        server.dispose();
+        discovery.dispose();
+        await tester.runAsync(() async {
+          if (await testDirectory.exists()) {
+            await testDirectory.delete(recursive: true);
+          }
+        });
+      });
+      await tester.runAsync(() async {
+        await server.startListener();
+        await client
+            .connectToPeer(InternetAddress.loopbackIPv4, server.listeningPort)
+            .timeout(const Duration(seconds: 8));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      expect(server.connectionForDevice(remoteIdentity.deviceId), isNotNull);
+
+      await tester.pumpWidget(
+        HingeApp(
+          identity: localIdentity,
+          discoveryService: discovery,
+          trustStore: trustStore,
+          sessionManager: server,
+          persistentDataDirectory: testDirectory.path,
+        ),
+      );
+      // A connected device starts an asynchronous storage read; keep the
+      // indeterminate progress indicator from making pumpAndSettle wait for
+      // an animation that intentionally remains active in widget tests.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('已建立会话'), findsOneWidget);
+      expect(find.text('已发现 · 可建立会话'), findsNothing);
     });
 
     testWidgets('HingeApp remains readable in dark theme', (tester) async {

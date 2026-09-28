@@ -199,6 +199,34 @@ void main() {
     });
 
     test(
+      'DeviceRegistry marks a reconnected session online after pruning',
+      () async {
+        final registry = DeviceRegistry();
+        final msg = DiscoveryMessage(
+          deviceId: 'phone-reconnected',
+          name: 'Phone',
+          platform: 'android',
+          timestamp: 1,
+        );
+
+        registry.upsertDevice(msg, '192.168.1.22');
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+        registry.pruneOffline(Duration.zero);
+        expect(
+          registry.devices.single.connectionState,
+          equals(DeviceConnectionState.disconnected),
+        );
+
+        registry.markSessionConnected(msg.deviceId);
+        expect(
+          registry.devices.single.connectionState,
+          equals(DeviceConnectionState.connected),
+        );
+        registry.dispose();
+      },
+    );
+
+    test(
       'DeviceRegistry reconciles duplicate identities on one LAN address',
       () {
         final registry = DeviceRegistry();

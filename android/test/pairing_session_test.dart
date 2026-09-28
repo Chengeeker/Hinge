@@ -215,6 +215,14 @@ void main() {
         clientConn.peerInfo?.capabilities,
         contains(ProtocolCompression.capability),
       );
+      expect(
+        incomingConnection?.peerInfo?.maxPayloadSize,
+        equals(32 * 1024 * 1024 + ProtocolFrame.fileChunkMetadataSize),
+      );
+      expect(
+        clientConn.peerInfo?.maxPayloadSize,
+        equals(32 * 1024 * 1024 + ProtocolFrame.fileChunkMetadataSize),
+      );
       final msg = List.filled(300, 'Hello from client').join(' ');
       clientConn.sendFrame(
         MessageType.textMessage,

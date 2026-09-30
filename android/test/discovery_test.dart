@@ -110,6 +110,40 @@ void main() {
     });
 
     test(
+      'DiscoveryService pauses background scans without closing its listener',
+      () async {
+        final registry = DeviceRegistry();
+        final service = _LifecycleTestDiscoveryService(
+          localIdentity: const DeviceIdentity(
+            deviceId: 'local-device',
+            name: 'Local',
+          ),
+          registry: registry,
+          listenPort: 0,
+        );
+        try {
+          await service.start();
+          expect(service.broadcastCount, 1);
+          expect(service.isListening, isTrue);
+
+          await service.setAppForeground(false);
+          await Future<void>.delayed(const Duration(milliseconds: 1100));
+          expect(service.probeCount, 0);
+          expect(service.isRunning, isTrue);
+          expect(service.isListening, isTrue);
+
+          await service.setAppForeground(true);
+          expect(service.broadcastCount, 2);
+          await Future<void>.delayed(const Duration(milliseconds: 1100));
+          expect(service.probeCount, 1);
+          expect(service.isListening, isTrue);
+        } finally {
+          service.dispose();
+        }
+      },
+    );
+
+    test(
       'DeviceRegistry upsert and pruneOffline marks device disconnected',
       () async {
         final registry = DeviceRegistry();
@@ -366,4 +400,25 @@ void main() {
       registry.dispose();
     });
   });
+}
+
+class _LifecycleTestDiscoveryService extends DiscoveryService {
+  int broadcastCount = 0;
+  int probeCount = 0;
+
+  _LifecycleTestDiscoveryService({
+    required super.localIdentity,
+    required super.registry,
+    required super.listenPort,
+  });
+
+  @override
+  Future<void> broadcastOnce() async {
+    broadcastCount++;
+  }
+
+  @override
+  Future<void> probeLocalSubnets() async {
+    probeCount++;
+  }
 }

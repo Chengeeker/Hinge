@@ -219,8 +219,12 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && Platform.isAndroid) {
-      unawaited(_discoveryService.prepareNetwork());
+    if (Platform.isAndroid && state == AppLifecycleState.resumed) {
+      unawaited(_discoveryService.setAppForeground(true));
+    } else if (Platform.isAndroid &&
+        (state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.paused)) {
+      unawaited(_discoveryService.setAppForeground(false));
     }
     if (state == AppLifecycleState.resumed &&
         Platform.isAndroid &&

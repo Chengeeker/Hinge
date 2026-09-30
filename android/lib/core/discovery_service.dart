@@ -32,6 +32,7 @@ class DiscoveryService {
   Timer? _subnetProbeTimer;
   Timer? _pruneTimer;
   bool _isRunning = false;
+  bool _isAppForeground = true;
   bool _isListening = false;
   String? _lastError;
   bool pairingRequired = false;
@@ -39,6 +40,7 @@ class DiscoveryService {
   final Map<String, DateTime> _lastPeerReplies = {};
   final Map<String, DateTime> _lastConnectionRequests = {};
   Future<void>? _networkRefreshInFlight;
+  Future<void> _foregroundUpdateQueue = Future<void>.value();
   final StreamController<DiscoveryConnectionRequest>
   _connectionRequestController =
       StreamController<DiscoveryConnectionRequest>.broadcast();
@@ -91,13 +93,6 @@ class DiscoveryService {
     if (_isRunning) return;
 
     await prepareNetwork();
-    if (Platform.isAndroid) {
-      try {
-        await _platform.invokeMethod<bool>('acquireDiscoveryMulticastLock');
-      } catch (_) {
-        // Discovery still has unicast fallbacks on devices without this API.
-      }
-    }
 
     try {
       await _bindSocket(_listenPort);
@@ -118,26 +113,99 @@ class DiscoveryService {
     }
 
     _isRunning = true;
+    await _scheduleForegroundUpdate(_isAppForeground, refreshNetwork: false);
+  }
 
-    _broadcastTimer = Timer.periodic(
+  /// Pause only Flutter's repeated discovery traffic while Android is not
+  /// visible. The UDP listener and native connection service stay alive so
+  /// existing sessions and incoming connection requests are not torn down.
+  Future<void> setAppForeground(bool foreground) {
+    if (_isAppForeground == foreground) return _foregroundUpdateQueue;
+    _isAppForeground = foreground;
+    if (!foreground) _stopDiscoveryWork();
+    return _scheduleForegroundUpdate(foreground);
+  }
+
+  Future<void> _scheduleForegroundUpdate(
+    bool foreground, {
+    bool refreshNetwork = true,
+  }) {
+    final update = _foregroundUpdateQueue.then(
+      (_) => _applyForegroundState(foreground, refreshNetwork: refreshNetwork),
+    );
+    _foregroundUpdateQueue = update.catchError((_) {});
+    return update;
+  }
+
+  Future<void> _applyForegroundState(
+    bool foreground, {
+    required bool refreshNetwork,
+  }) async {
+    if (!foreground) {
+      _stopDiscoveryWork();
+      await _releaseDiscoveryMulticastLock();
+      return;
+    }
+    if (!_isRunning) return;
+
+    if (refreshNetwork) await prepareNetwork();
+    if (!_isRunning || !_isAppForeground) return;
+    await _acquireDiscoveryMulticastLock();
+    if (!_isRunning || !_isAppForeground) {
+      await _releaseDiscoveryMulticastLock();
+      return;
+    }
+    _startDiscoveryWork();
+  }
+
+  void _startDiscoveryWork() {
+    if (!_isRunning || !_isAppForeground) return;
+    if (_broadcastTimer?.isActive == true) return;
+    _broadcastTimer ??= Timer.periodic(
       const Duration(seconds: 3),
       (_) => broadcastOnce(),
     );
     broadcastOnce();
     // Some access points drop broadcast packets between Wi-Fi clients. A
     // small, rate-limited unicast sweep covers the common /24 subnet case.
-    _subnetProbeTimer = Timer.periodic(
+    _subnetProbeTimer ??= Timer.periodic(
       const Duration(seconds: 10),
       (_) => probeLocalSubnets(),
     );
     Future<void>.delayed(const Duration(seconds: 1), () {
-      if (_isRunning) probeLocalSubnets();
+      if (_isRunning && _isAppForeground) probeLocalSubnets();
     });
-
-    _pruneTimer = Timer.periodic(
+    _pruneTimer ??= Timer.periodic(
       const Duration(seconds: 2),
       (_) => _registry.pruneOffline(const Duration(seconds: 30)),
     );
+  }
+
+  void _stopDiscoveryWork() {
+    _broadcastTimer?.cancel();
+    _broadcastTimer = null;
+    _subnetProbeTimer?.cancel();
+    _subnetProbeTimer = null;
+    _pruneTimer?.cancel();
+    _pruneTimer = null;
+  }
+
+  Future<void> _acquireDiscoveryMulticastLock() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _platform.invokeMethod<bool>('acquireDiscoveryMulticastLock');
+    } catch (_) {
+      // Discovery still has unicast fallbacks on devices without this API.
+    }
+  }
+
+  Future<void> _releaseDiscoveryMulticastLock() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _platform.invokeMethod<bool>('releaseDiscoveryMulticastLock');
+    } catch (_) {
+      // The activity may already be detaching; native teardown also releases it.
+    }
   }
 
   void _onSocketError(Object error, StackTrace stackTrace) {
@@ -488,23 +556,14 @@ class DiscoveryService {
   }
 
   void stop() {
-    _broadcastTimer?.cancel();
-    _broadcastTimer = null;
-    _subnetProbeTimer?.cancel();
-    _subnetProbeTimer = null;
-    _pruneTimer?.cancel();
-    _pruneTimer = null;
+    _stopDiscoveryWork();
     _socket?.close();
     _socket = null;
     _isRunning = false;
     _isListening = false;
     _lastPeerReplies.clear();
     _lastConnectionRequests.clear();
-    if (Platform.isAndroid) {
-      _platform
-          .invokeMethod<bool>('releaseDiscoveryMulticastLock')
-          .catchError((_) => false);
-    }
+    _releaseDiscoveryMulticastLock();
   }
 
   void dispose() {

@@ -213,8 +213,10 @@ internal static class Program
                     _progressBar.Value = Math.Clamp(p.Percent, 0, 100);
                     _statusLabel.Text = p.Status;
                 });
-                await Task.Run(() => Install(installPath, progress));
+                var warning = await Task.Run(() => Install(installPath, progress));
                 SetBusy(false, "安装完成");
+                if (!string.IsNullOrWhiteSpace(warning))
+                    MessageBox.Show(this, $"应用已安装，但部分集成未完成：\n\n{warning}", "Hinge", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 ShowCompletionDialog(installPath);
                 Close();
             }
@@ -529,14 +531,14 @@ internal static class Program
         progress?.Report(new InstallProgress(82, "正在注册卸载程序信息…"));
         RegisterUninstaller(installPath, executablePath);
 
-        progress?.Report(new InstallProgress(88, "正在配置 Windows 11 右键菜单集成…"));
-        RegisterModernExplorerMenu(installPath);
+        progress?.Report(new InstallProgress(88, "正在配置 Windows 11 右键菜单集成（注册最多等待 45 秒）…"));
+        var shellWarning = RegisterModernExplorerMenu(installPath);
 
         progress?.Report(new InstallProgress(95, "正在配置局域网防火墙规则…"));
         var firewallResult = ConfigureFirewall(installPath);
 
         progress?.Report(new InstallProgress(100, "安装完成"));
-        return firewallResult;
+        return string.Join("\n\n", new[] { shellWarning, firewallResult }.Where(value => !string.IsNullOrWhiteSpace(value)));
     }
 
     [DllImport("shell32.dll")]
@@ -556,7 +558,7 @@ internal static class Program
         }
     }
 
-    private static void RegisterModernExplorerMenu(string installPath)
+    private static string? RegisterModernExplorerMenu(string installPath)
     {
         var packagePath = Path.Combine(installPath, "Hinge.Identity.msix");
         var certificatePath = Path.Combine(installPath, "Hinge.Identity.cer");
@@ -579,6 +581,7 @@ internal static class Program
             snapshot?.SetValue("ModernMenuRegistered", 1, RegistryValueKind.DWord);
             snapshot?.SetValue("CertificateThumbprint", certificate.Thumbprint, RegistryValueKind.String);
             try { File.Delete(logPath); } catch { }
+            return null;
         }
         catch (Exception exception)
         {
@@ -592,24 +595,29 @@ internal static class Program
             {
                 // Installation itself remains usable through the legacy menu.
             }
+            var summary = exception.Message.Length > 800 ? exception.Message[..800] + "…（完整错误见日志）" : exception.Message;
+            return $"Windows 11 右键菜单配置未完成：{summary}\n诊断日志：{logPath}\n可先正常打开 Hinge 使用文件传输。";
         }
     }
 
     private static void RegisterSparseIdentity(string packagePath, string installPath)
     {
+        using var archive = ZipFile.OpenRead(packagePath);
+        using var manifestStream = (archive.GetEntry("AppxManifest.xml")
+            ?? throw new InvalidDataException("Windows 集成包缺少清单。")).Open();
+        var manifest = System.Xml.Linq.XDocument.Load(manifestStream);
+        var identity = manifest.Root?.Elements().SingleOrDefault(element => element.Name.LocalName == "Identity");
+        var expectedVersion = Version.Parse(identity?.Attribute("Version")?.Value
+            ?? throw new InvalidDataException("Windows 集成包缺少版本。"));
         var package = QuotePowerShellLiteral(Path.GetFullPath(packagePath));
         var externalLocation = QuotePowerShellLiteral(Path.GetFullPath(installPath));
         var command =
             "$ErrorActionPreference='Stop'; " +
-            $"$existing = @(Get-AppxPackage -Name '{SparsePackageName}' -ErrorAction SilentlyContinue); " +
-            "if ($existing.Count -gt 0) { " +
-            "  $existing | ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -ErrorAction SilentlyContinue }; " +
-            "}; " +
             $"Add-AppxPackage -Path {package} -ExternalLocation {externalLocation} " +
             "-ForceApplicationShutdown -ForceUpdateFromAnyVersion; " +
             $"$registered = @(Get-AppxPackage -Name '{SparsePackageName}' -ErrorAction SilentlyContinue); " +
-            "if ($registered.Count -eq 0 -or $registered[0].Status -ne 'Ok') { " +
-            "  throw 'Hinge 稀疏身份包注册后状态不是 Ok。'; " +
+            $"if (@($registered | Where-Object {{ $_.Status -eq 'Ok' -and $_.Version -eq [version]'{expectedVersion}' }}).Count -eq 0) {{ " +
+            "  throw 'Hinge 稀疏身份包注册后版本或状态不符合预期。'; " +
             "}";
         RunPowerShell(command);
     }
@@ -636,7 +644,7 @@ internal static class Program
         startInfo.ArgumentList.Add(thumbprint);
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("无法启动 Windows 集成证书注册程序。");
-        process.WaitForExit();
+        InstallerProcessRunner.WaitForExit(process, 30000, "Windows 集成证书注册");
         if (process.ExitCode != 0 || !IsMachineCertificateTrusted(thumbprint))
         {
             throw new InvalidOperationException("Windows 11 右键菜单证书未获得本机信任。");
@@ -696,31 +704,20 @@ internal static class Program
 
     private static void RunPowerShell(string command)
     {
-        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
-        using var process = Process.Start(new ProcessStartInfo
+        // Console output avoids PowerShell's redirected CLIXML error/progress stream.
+        var wrapped = "$ProgressPreference='SilentlyContinue'; try { " + command +
+            " } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }";
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(wrapped));
+        InstallerProcessRunner.Run(new ProcessStartInfo
         {
             FileName = "powershell.exe",
-            Arguments = $"-NoProfile -NonInteractive -EncodedCommand {encoded}",
+            Arguments = $"-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {encoded}",
             UseShellExecute = false,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden,
             RedirectStandardOutput = true,
             RedirectStandardError = true
-        }) ?? throw new InvalidOperationException("无法启动 Windows 集成注册程序。");
-        var outputTask = process.StandardOutput.ReadToEndAsync();
-        var errorTask = process.StandardError.ReadToEndAsync();
-        process.WaitForExit();
-        Task.WaitAll(outputTask, errorTask);
-        if (process.ExitCode != 0)
-        {
-            var detail = string.IsNullOrWhiteSpace(errorTask.Result)
-                ? outputTask.Result
-                : errorTask.Result;
-            throw new InvalidOperationException(
-                string.IsNullOrWhiteSpace(detail)
-                    ? $"Windows 集成注册失败，退出代码 {process.ExitCode}。"
-                    : detail.Trim());
-        }
+        }, 45000, "Windows 11 右键菜单注册");
     }
 
     private sealed class BoundedStream : Stream
@@ -828,7 +825,8 @@ internal static class Program
             }
 
             // Smart incremental extraction: skip rewriting if file already exists with same size & timestamp
-            if (File.Exists(destinationPath))
+            if (InstallerFileChecks.IsIdenticalShellExtension(entry, destinationPath)) continue;
+            if (File.Exists(destinationPath) && !entry.Name.StartsWith("Hinge.ShellExtension.v", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {

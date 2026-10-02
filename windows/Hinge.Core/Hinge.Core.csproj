@@ -14,4 +14,7 @@
     <DefineConstants>$(DefineConstants);HINGE_FILE_CHUNK_SIZE_$(HingeFileChunkSizeMiB)M</DefineConstants>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="WebDav.Client" Version="2.9.0" />
+  </ItemGroup>
 </Project>

@@ -10,7 +10,25 @@
     Drop="DropRootGrid_Drop"
     Background="Transparent"
     NavigationCacheMode="Required">
-    <Grid x:Name="DropRootGrid" Background="Transparent" AllowDrop="True" DragEnter="DropRootGrid_DragOver" DragOver="DropRootGrid_DragOver" DragLeave="DropRootGrid_DragLeave" Drop="DropRootGrid_Drop">
+    <Page.Resources>
+        <!-- Enlarge the header inside WinUI's geometry, not the template root. -->
+        <x:Double x:Key="TabViewItemMinHeight">52</x:Double>
+        <x:Double x:Key="TabViewItemHeaderFontSize">16</x:Double>
+        <Thickness x:Key="TabViewItemHeaderPadding">16,8,16,8</Thickness>
+        <Thickness x:Key="TabViewItemHeaderPaddingWithCloseButton">16,8,12,8</Thickness>
+        <Thickness x:Key="TabViewItemHeaderPaddingWithoutCloseButton">16,8,16,8</Thickness>
+        <Thickness x:Key="TabViewSelectedItemHeaderPadding">17,8,17,9</Thickness>
+    </Page.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TabView x:Name="SourceTabs" Margin="24,16,24,0" Padding="0" FontSize="16" IsAddTabButtonVisible="False"
+            CanDragTabs="True" CanReorderTabs="True" AllowDropTabs="True" TabWidthMode="SizeToContent" />
+        <ContentControl x:Name="WebDavHost" Grid.Row="1" Visibility="Collapsed"
+            HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+    <Grid x:Name="DropRootGrid" Grid.Row="1" Background="Transparent" AllowDrop="True" DragEnter="DropRootGrid_DragOver" DragOver="DropRootGrid_DragOver" DragLeave="DropRootGrid_DragLeave" Drop="DropRootGrid_Drop">
         <Border Margin="24,16,24,32" Style="{StaticResource HingeCardStyle}" HorizontalAlignment="Stretch">
             <Grid ColumnSpacing="20">
             <Grid.ColumnDefinitions>
@@ -142,5 +160,6 @@
                 <TextBlock x:Name="DropHintSubtitle" Text="自动分类保存到 /Download/Hinge/视频、图片或文件" FontSize="14" HorizontalAlignment="Center" />
             </StackPanel>
         </Border>
+    </Grid>
     </Grid>
 </Page>

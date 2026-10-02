@@ -177,7 +177,6 @@ if (Test-Path -LiteralPath $bundleDir) {
 New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
 New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 Copy-Item -Path (Join-Path $nativeOutput '*') -Destination $bundleDir -Recurse -Force
-Copy-Item -LiteralPath $shellDll -Destination (Join-Path $bundleDir $versionedShellName) -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\allow_hinge_firewall.ps1') -Destination $bundleDir -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\Uninstall-Hinge.ps1') -Destination $bundleDir -Force
 
@@ -199,7 +198,6 @@ if ($stagedManifest -eq $sparseManifest) {
     $stagedManifestPath,
     $stagedManifest,
     [System.Text.UTF8Encoding]::new($false))
-Copy-Item -LiteralPath $shellDll -Destination (Join-Path $sparseStage $versionedShellName) -Force
 
 Add-Type -AssemblyName System.Drawing.Common
 
@@ -279,6 +277,20 @@ Export-Certificate -Cert $signingCertificate -FilePath $publicCertificate -Force
 if ($LASTEXITCODE -ne 0) {
     throw 'Windows 11 右键菜单组件签名失败。'
 }
+# Same-version test builds can differ too. Identify the final signed bytes,
+# never overwrite a previous Explorer-loaded extension under the same name.
+$shellContentHash = (Get-FileHash -LiteralPath $shellDll -Algorithm SHA256).Hash.ToLowerInvariant()
+$versionedShellName = "Hinge.ShellExtension.v$productVersion.$shellContentHash.dll"
+# Package identity must change on every rebuild, including same-product-version
+# test builds (signed payload/manifest may differ). Keep source product version
+# validation above; only the staged, independently versioned integration changes.
+# UTC year.MMdd.HHmm.(second*1000+millisecond), each field <= 65535.
+$identityBuildTime = [DateTime]::UtcNow
+$identityBuildVersion = '{0}.{1}.{2}.{3}' -f $identityBuildTime.Year, ($identityBuildTime.Month * 100 + $identityBuildTime.Day), ($identityBuildTime.Hour * 100 + $identityBuildTime.Minute), ($identityBuildTime.Second * 1000 + $identityBuildTime.Millisecond)
+$stagedManifest = [regex]::new($sparseVersionPattern).Replace($sparseManifest, ('Version="' + $identityBuildVersion + '"'), 1)
+$stagedManifest = $stagedManifest.Replace('Path="Hinge.ShellExtension.dll"', ('Path="' + $versionedShellName + '"'))
+Write-Host "Windows integration identity version: $identityBuildVersion (product $productVersion)"
+[System.IO.File]::WriteAllText($stagedManifestPath, $stagedManifest, [System.Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath $shellDll -Destination (Join-Path $bundleDir $versionedShellName) -Force
 Copy-Item -LiteralPath $shellDll -Destination (Join-Path $sparseStage $versionedShellName) -Force
 

@@ -6,11 +6,140 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
 using Windows.Storage;
+using System.Collections.ObjectModel;
 
 namespace Hinge.App;
 
 public sealed partial class FileManagementPage : Page
 {
+    private readonly ObservableCollection<TabViewItem> _sourceTabs = new();
+    private readonly Dictionary<string, (WebDavProfile Profile, WebDavBrowserView View)> _webDavViews = new();
+    private string _phoneName = "手机（未连接）";
+    private bool _rebuildingTabs;
+    private WebDavBrowserView? _activeWebDavRemoteDrag;
+    public bool IsSourceTabDragActive { get; private set; }
+    public event EventHandler? SourceTabDragStarted;
+    public event EventHandler? WebDavRemoteDragStarted;
+    public bool IsPhoneSelected => (SourceTabs.SelectedItem as TabViewItem)?.Tag as string is null or "phone";
+    public event EventHandler? PhoneSelected;
+    private WebDavBrowserView? SelectedWebDav => WebDavHost.Content as WebDavBrowserView;
+
+    public void CancelWebDavRemoteDrag() => _activeWebDavRemoteDrag?.CancelOutgoingDrag();
+
+    public void SetPhoneName(string? name)
+    {
+        _phoneName = string.IsNullOrWhiteSpace(name) ? "手机（未连接）" : name;
+        var tab = _sourceTabs.FirstOrDefault(item => (string)item.Tag == "phone");
+        if (tab != null) tab.Header = CreateCenteredTabHeader(_phoneName);
+    }
+
+    public async Task UploadNativeDropAsync(IReadOnlyList<string> paths)
+    {
+        try
+        {
+            if (SelectedWebDav is { } browser) await browser.UploadPathsAsync(paths);
+        }
+        catch (Exception exception) { StatusText.Text = "WebDAV 上传失败：" + exception.Message; }
+    }
+
+    private void WebDavSettingsChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(RefreshSourceTabs);
+
+    private void RefreshSourceTabs()
+    {
+        try
+        {
+            var state = WebDavSettingsStore.Load();
+            var selected = (SourceTabs.SelectedItem as TabViewItem)?.Tag as string ?? "phone";
+            foreach (var id in _webDavViews.Keys.ToArray())
+            {
+                if (state.Profiles.FirstOrDefault(profile => profile.Id == id) != _webDavViews[id].Profile)
+                {
+                    _webDavViews[id].View.Dispose();
+                    _webDavViews.Remove(id);
+                }
+            }
+            _rebuildingTabs = true;
+            var tabs = new List<TabViewItem>
+            { new() { Header = CreateCenteredTabHeader(_phoneName), Tag = "phone", IsClosable = false } };
+            tabs.AddRange(state.Profiles.Select(profile => new TabViewItem
+            { Header = CreateCenteredTabHeader(profile.DisplayName), Tag = profile.Id, IsClosable = false }));
+            foreach (var tab in tabs)
+            {
+                tab.MinWidth = 160;
+            }
+            tabs = tabs.OrderBy(tab =>
+            {
+                int index = state.TabOrder.IndexOf((string)tab.Tag);
+                return index >= 0 ? index : state.TabOrder.Count + tabs.IndexOf(tab);
+            }).ToList();
+            _sourceTabs.Clear();
+            foreach (var tab in tabs) _sourceTabs.Add(tab);
+            SourceTabs.SelectedItem = tabs.FirstOrDefault(tab => (string)tab.Tag == selected) ?? tabs[0];
+            _rebuildingTabs = false;
+            SelectSource();
+        }
+        catch (Exception exception) { _rebuildingTabs = false; StatusText.Text = "WebDAV 配置读取失败：" + exception.Message; }
+    }
+
+    private static TextBlock CreateCenteredTabHeader(string title)
+    {
+        var header = new TextBlock
+        {
+            Text = title,
+            Width = 160,
+            TextAlignment = TextAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ToolTipService.SetToolTip(header, title);
+        return header;
+    }
+
+    private async void SelectSource()
+    {
+        if (_rebuildingTabs || SourceTabs.SelectedItem is not TabViewItem tab) return;
+        ClearExternalDragPreview();
+        if ((string)tab.Tag == "phone")
+        {
+            DropRootGrid.Visibility = Visibility.Visible;
+            WebDavHost.Visibility = Visibility.Collapsed;
+            WebDavHost.Content = null;
+            PhoneSelected?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+        DropRootGrid.Visibility = Visibility.Collapsed;
+        WebDavHost.Visibility = Visibility.Visible;
+        try
+        {
+            string id = (string)tab.Tag;
+            if (!_webDavViews.TryGetValue(id, out var browser))
+            {
+                var profile = WebDavSettingsStore.Load().Profiles.Single(profile => profile.Id == id);
+                var view = new WebDavBrowserView(profile);
+                view.RemoteFileDragStarted += (_, _) =>
+                {
+                    _activeWebDavRemoteDrag = view;
+                    WebDavRemoteDragStarted?.Invoke(this, EventArgs.Empty);
+                };
+                view.RemoteFileDragCompleted += (_, _) =>
+                {
+                    if (ReferenceEquals(_activeWebDavRemoteDrag, view)) _activeWebDavRemoteDrag = null;
+                };
+                browser = (profile, view);
+                _webDavViews[id] = browser;
+            }
+            WebDavHost.Content = browser.View;
+            await browser.View.ActivateAsync();
+        }
+        catch (Exception exception)
+        {
+            WebDavHost.Content = new TextBlock
+            {
+                Text = $"WebDAV 页面初始化失败：{exception.GetType().Name} (0x{exception.HResult:X8})\n{exception.Message}",
+                Margin = new Thickness(24), TextWrapping = TextWrapping.Wrap
+            };
+        }
+    }
     private readonly HashSet<ScrollViewer> _fileScrollViewers = new();
     private bool _nearEndSignaled;
     private bool _nearEndCheckQueued;
@@ -74,6 +203,7 @@ public sealed partial class FileManagementPage : Page
 
     public void ShowExternalDragPreview()
     {
+        if (IsSourceTabDragActive || !IsPhoneSelected) return;
         if (string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(CurrentRelativePath))
         {
@@ -172,6 +302,32 @@ public sealed partial class FileManagementPage : Page
     public FileManagementPage()
     {
         InitializeComponent();
+        SourceTabs.TabItemsSource = _sourceTabs;
+        SourceTabs.SelectionChanged += (_, _) => SelectSource();
+        SourceTabs.TabDragStarting += (_, _) =>
+        {
+            IsSourceTabDragActive = true;
+            ClearExternalDragPreview();
+            SourceTabDragStarted?.Invoke(this, EventArgs.Empty);
+        };
+        SourceTabs.TabDragCompleted += (_, _) =>
+        {
+            IsSourceTabDragActive = false;
+            ClearExternalDragPreview();
+            try { WebDavSettingsStore.SaveOrder(_sourceTabs.Select(item => (string)item.Tag)); }
+            catch (Exception exception) { StatusText.Text = "标签排序保存失败：" + exception.Message; }
+        };
+        Loaded += (_, _) =>
+        {
+            WebDavSettingsStore.Changed -= WebDavSettingsChanged;
+            WebDavSettingsStore.Changed += WebDavSettingsChanged;
+            RefreshSourceTabs();
+        };
+        Unloaded += (_, _) =>
+        {
+            IsSourceTabDragActive = false;
+            WebDavSettingsStore.Changed -= WebDavSettingsChanged;
+        };
         Loaded += FileManagementPage_Loaded;
         FileGridView.Loaded += (_, _) => AttachScrollViewer(FileGridView);
         FileListView.Loaded += (_, _) => AttachScrollViewer(FileListView);
@@ -247,6 +403,7 @@ public sealed partial class FileManagementPage : Page
         item.AllowDrop = true;
         item.DragOver += (sender, args) =>
         {
+            if (IsSourceTabDragActive) return;
             if (!args.DataView.Contains(StandardDataFormats.StorageItems))
             {
                 args.AcceptedOperation = DataPackageOperation.None;
@@ -271,6 +428,7 @@ public sealed partial class FileManagementPage : Page
         item.DragLeave += (_, _) => ClearFolderDropTarget(item);
         item.Drop += async (sender, args) =>
         {
+            if (IsSourceTabDragActive) return;
             ClearFolderDropTarget(item);
             if (!args.DataView.Contains(StandardDataFormats.StorageItems)) return;
 
@@ -315,6 +473,14 @@ public sealed partial class FileManagementPage : Page
 
     private void DropRootGrid_DragOver(object sender, DragEventArgs e)
     {
+        // Leave TabView's Move operation untouched; no file destination feedback.
+        if (IsSourceTabDragActive) { ClearExternalDragPreview(); return; }
+        if (!IsPhoneSelected)
+        {
+            if (SelectedWebDav is { } webDav) webDav.HandleDragOver(e);
+            else { e.Handled = true; e.AcceptedOperation = DataPackageOperation.None; }
+            return;
+        }
         if (!e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = DataPackageOperation.None;
@@ -368,6 +534,13 @@ public sealed partial class FileManagementPage : Page
 
     private async void DropRootGrid_Drop(object sender, DragEventArgs e)
     {
+        if (IsSourceTabDragActive) { ClearExternalDragPreview(); return; }
+        if (!IsPhoneSelected)
+        {
+            if (!e.Handled) SelectedWebDav?.HandleDrop(e);
+            e.Handled = true;
+            return;
+        }
         ClearFolderDropTarget();
         HideDropFeedback();
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
@@ -446,6 +619,7 @@ public sealed partial class FileManagementPage : Page
 
     public bool UpdateExternalDragPreview(Windows.Foundation.Point pagePoint)
     {
+        if (IsSourceTabDragActive || !IsPhoneSelected) return false;
         if (string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase))
         {
             try

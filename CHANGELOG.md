@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.4.5] - 2026-10-02
+
+对照最近的 GitHub 发行版 [`v1.4.4-beta.1`](https://github.com/Chengeeker/Hinge/releases/tag/v1.4.4-beta.1)。该预发行版仅提供 Android 后台发现优化；本稳定版沿用该 Android 代码，不重复罗列其已发布的细节。本次新增与修复主要集中在 Windows WebDAV 和安装器。
+
+### Windows WebDAV 文件管理
+
+- 设置支持添加多个互相独立的 WebDAV 地址；每个地址分别保存 URL、用户名、密码、可选 UA、初始路径、备注、自签 HTTPS 信任开关和多线程传输开关。文件管理顶部以独立标签切换手机与各地址，标签拖动只调整顺序。
+- WebDAV 浏览新增列表/宫格、按名称/类型/大小/修改日期排序、选择/全选、刷新、上传、下载、默认应用打开、新建目录和删除；宫格按可见项加载图片/视频缩略图，并在列表中展示修改时间、类型与大小。
+- 修复 WebDAV 文件下载遇到 HTTP 301/302 等跳转时失败的问题。文件 GET 采用有上限的安全重定向处理；跨出配置目录或带签名查询参数时使用匿名请求，不把 WebDAV 凭据带到外部下载地址。
+- 支持 Windows 文件与手机远端图片拖入 WebDAV，也支持 WebDAV 单文件拖至 Windows 文件夹。拖动时可将文件松到左侧取消区；取消会停止当前拖出下载，WebDAV 文件拖回 WebDAV 页面不会被重新上传。
+
+### Windows 手机文件管理与安装器
+
+- “最近文件”默认隐藏小于 10 KiB 的非目录项；该过滤不影响手机存储及其子目录，也不删除手机文件。
+- 修复安装器在 Windows 11 右键菜单注册时可能无限等待的问题：对注册辅助进程增加等待上限，错误时明确提示并保留诊断日志；安装器会继续完成应用安装，不会自动反复重试或先卸载已有身份包。
+- 修复同一产品版本的右键菜单身份包因内容变化而被 Windows 拒绝更新的问题；为打包身份与 Shell DLL 使用本次构建的独立版本标识，并验证注册后的实际版本与状态。
+
+### 版本、资产与验证
+
+- Android：`1.4.5+106`，`arm64-v8a`；Android 源码行为沿用 `v1.4.4-beta.1`，本次更新为稳定版版本号和签名发行包。
+- Windows：`1.4.5.0`，提供 EXE 安装器和便携 ZIP。
+- 本次 Release 构建了 Android APK 与 Windows 安装器/便携包；本轮未重新运行全量自动化测试，也未在真实 WebDAV 服务、Explorer 拖放和目标 Windows 安装环境完成运行验收。构建结果不等于这些现场场景均已验证。
+- 发行资产及 SHA-256：
+
+| 平台 | 资产 | 大小 | SHA-256 |
+| --- | --- | ---: | --- |
+| Android | `Hinge-Android-1.4.5.apk` | 21,159,073 bytes | `3558A8520913DC7536B1E0CC96FBAD9B6AA90F1EC5CF1D344927E1EF2D94F35C` |
+| Windows | `Hinge-Setup.exe` | 198,205,972 bytes | `562ACC7BAD731A40876E73E73C9669C8649F815299D21C127007D660F233ECAC` |
+| Windows | `Hinge-Windows.zip` | 129,822,424 bytes | `ABEE8B9FD2CDA638597690C0B33351B945910C118517290EBD1BFE6B3227926F` |
+
 ## [1.4.4-beta.1] - 2026-09-30 (预发行)
 
 - 优化 Android 后台发现任务：应用进入后台后暂停 Flutter 侧重复 UDP 广播、子网探测与离线设备清理，并释放发现用组播锁；返回前台后恢复主动发现。
@@ -67,7 +97,7 @@
 
 - Android：`1.4.0+99`，`arm64-v8a`；Windows：`1.4.0.0`。
 - 发行资产：`Hinge.apk`、`Hinge-Setup.exe`、`Hinge-Windows.zip`。
-- 自动化构建/测试不等于真机验收；Android 不承诺应用被系统完全停止后立即轮询 Cloud Relay。详见 [发行说明](RELEASE_NOTES.md)。
+- 自动化构建/测试不等于真机验收；Android 不承诺应用被系统完全停止后立即轮询 Cloud Relay。详见 [v1.4.0 GitHub 发行说明](https://github.com/Chengeeker/Hinge/releases/tag/v1.4.0)。
 
 <details>
 <summary>未公开的历史测试候选（不属于 v1.4.0 发行内容）</summary>

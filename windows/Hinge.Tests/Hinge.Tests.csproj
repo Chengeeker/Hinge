@@ -18,6 +18,10 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="..\Hinge.App\WebDavSettingsStore.cs" Link="WebDavSettingsStore.cs" />
+    <EmbeddedResource Include="..\Hinge.App\WebDavBrowserView.cs" LogicalName="WebDavBrowserView.Source.cs" />
+    <Compile Include="..\..\installer\InstallerFileChecks.cs" Link="InstallerFileChecks.cs" />
+    <Compile Include="..\..\installer\InstallerProcessRunner.cs" Link="InstallerProcessRunner.cs" />
   </ItemGroup>
 
   <ItemGroup>

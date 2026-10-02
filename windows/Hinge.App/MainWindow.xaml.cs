@@ -97,7 +97,7 @@ public sealed partial class MainWindow : Window
     private string _fileCategory = "recent";
     private string _filePath = string.Empty;
     private IReadOnlyList<RemoteFileEntry> _visibleFileEntries = Array.Empty<RemoteFileEntry>();
-    private int _recognizedFileCount;
+    private int _hiddenSmallRecentFileCount;
     private int _loadedFileCount;
     private int _remoteFileOffset;
     private int _remoteFileTotal;
@@ -141,6 +141,7 @@ public sealed partial class MainWindow : Window
     private bool _nativeWindowMoveActive;
     private bool _localPointerGestureActive;
     private bool _nativeInternalRemoteDragActive;
+    private bool _nativeWebDavRemoteDragActive;
     private bool _nativeExternalDragActive;
     private DateTime _nativeExternalDragCandidateSince;
     private CancellationTokenSource? _computerDropCancellation;
@@ -676,9 +677,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ShowInternalRemoteDragCancelZone()
+    private void ShowInternalRemoteDragCancelZone(bool isWebDavFile = false)
     {
         _nativeInternalRemoteDragActive = true;
+        _nativeWebDavRemoteDragActive = isWebDavFile;
+        DragCancelTitle.Text = isWebDavFile ? "取消下载" : "取消发送";
+        DragCancelDescription.Text = isWebDavFile ? "松开鼠标取消本次下载" : "松开鼠标取消本次发送";
         DragCancelZone.Visibility = Visibility.Visible;
         DragCancelZone.IsHitTestVisible = true;
     }
@@ -686,6 +690,7 @@ public sealed partial class MainWindow : Window
     private void HideInternalRemoteDragCancelZone()
     {
         _nativeInternalRemoteDragActive = false;
+        _nativeWebDavRemoteDragActive = false;
         DragCancelZone.IsHitTestVisible = false;
         DragCancelZone.Visibility = Visibility.Collapsed;
     }
@@ -722,7 +727,7 @@ public sealed partial class MainWindow : Window
         }
 
         e.AcceptedOperation = DataPackageOperation.Copy;
-        e.DragUIOverride.Caption = "松开以取消发送";
+        e.DragUIOverride.Caption = _nativeWebDavRemoteDragActive ? "松开以取消下载" : "松开以取消发送";
         e.DragUIOverride.IsGlyphVisible = true;
         e.Handled = true;
     }
@@ -741,12 +746,22 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        bool cancelWebDavDownload = _nativeWebDavRemoteDragActive;
         HideInternalRemoteDragCancelZone();
-        _computerDropCancellation?.Cancel();
+        if (cancelWebDavDownload)
+        {
+            _filePage?.CancelWebDavRemoteDrag();
+            StatusText.Text = "已取消 WebDAV 文件拖出";
+            if (_filePage != null) _filePage.StatusText.Text = "已取消 WebDAV 文件拖出";
+        }
+        else
+        {
+            _computerDropCancellation?.Cancel();
+            StatusText.Text = "已取消发送";
+            if (_filePage != null) _filePage.StatusText.Text = "已取消发送";
+        }
         e.AcceptedOperation = DataPackageOperation.Copy;
         e.Handled = true;
-        StatusText.Text = "已取消发送";
-        if (_filePage != null) _filePage.StatusText.Text = "已取消发送";
     }
 
     private void ConfigureHomePage(HomePage page)
@@ -765,6 +780,14 @@ public sealed partial class MainWindow : Window
         if (_configuredPages.Add(page))
         {
             page.NearEndReached += FilePage_NearEndReached;
+            page.PhoneSelected += (_, _) => QueueFileManagementRefresh();
+            page.WebDavRemoteDragStarted += (_, _) => ShowInternalRemoteDragCancelZone(isWebDavFile: true);
+            page.SourceTabDragStarted += (_, _) =>
+            {
+                _nativeExternalDragCandidateSince = default;
+                _nativeExternalDragActive = false;
+                HideNativeDragFeedback();
+            };
             page.Categories.SelectionChanged += FileCategory_SelectionChanged;
             page.Files.ItemClick += FileListView_ItemClick;
             page.GridFiles.ItemClick += FileListView_ItemClick;
@@ -811,6 +834,7 @@ public sealed partial class MainWindow : Window
 
     private void FilePage_NearEndReached(object? sender, EventArgs e)
     {
+        if (_filePage?.IsPhoneSelected != true) return;
         _ = AppendNextFileBatchAsync();
     }
 
@@ -898,6 +922,7 @@ public sealed partial class MainWindow : Window
         page.WindowsSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WindowsSettingsPage));
         page.TransferSettings.Click += (_, _) => ContentFrame.Navigate(typeof(TransferSettingsPage));
         page.CloudRelaySettings.Click += (_, _) => ContentFrame.Navigate(typeof(CloudRelaySettingsPage));
+        page.WebDavSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WebDavSettingsPage));
     }
 
     private void ConfigureWindowsSettingsPage(WindowsSettingsPage page)
@@ -2309,6 +2334,7 @@ public sealed partial class MainWindow : Window
         }
 
         if (_nativeWindowMoveActive ||
+            ContentFrame.Content is FileManagementPage { IsSourceTabDragActive: true } ||
             _localPointerGestureActive ||
             _nativeInternalRemoteDragActive ||
             IsExternalWindowMoveOrResizeActive())
@@ -2377,6 +2403,11 @@ public sealed partial class MainWindow : Window
 
     private void HandleNativeDragOver(NativePoint point)
     {
+        if (ContentFrame.Content is FileManagementPage { IsSourceTabDragActive: true })
+        {
+            HideNativeDragFeedback();
+            return;
+        }
         if ((GetAsyncKeyState(VkLButton) & 0x8000) == 0) return;
 
         if (!_nativeInternalRemoteDragActive && IsNavigationPanePoint(point))
@@ -2459,6 +2490,7 @@ public sealed partial class MainWindow : Window
         IReadOnlyList<string> paths,
         NativePoint point)
     {
+        if (ContentFrame.Content is FileManagementPage { IsSourceTabDragActive: true }) return;
         if (paths.Count == 0) return;
 
         // The navigation pane is deliberately not a file drop target. This
@@ -2472,6 +2504,11 @@ public sealed partial class MainWindow : Window
         }
 
         var destination = "Download";
+        if (ContentFrame.Content is FileManagementPage webDavPage && !webDavPage.IsPhoneSelected)
+        {
+            _ = webDavPage.UploadNativeDropAsync(paths);
+            return;
+        }
         if (ContentFrame.Content is PhotosPage photos)
         {
             var scale = photos.XamlRoot?.RasterizationScale ?? 1;
@@ -4536,6 +4573,7 @@ public sealed partial class MainWindow : Window
 
     private void SetHeroDevice(Device? device)
     {
+        _filePage?.SetPhoneName(device?.Name);
         if (device == null)
         {
             HeroDeviceName.Text = _localIdentity.Name;
@@ -4679,6 +4717,9 @@ public sealed partial class MainWindow : Window
         var filePage = _filePage;
         if (filePage == null) return;
 
+        filePage.SetPhoneName(_activeDevice?.Name);
+        if (!filePage.IsPhoneSelected) return;
+
         filePage.SetLocation(category, path);
 
         // Update the visible status before any control-state mutation. This
@@ -4692,7 +4733,7 @@ public sealed partial class MainWindow : Window
         var cancellation = new CancellationTokenSource();
         _fileLoadingCancellation = cancellation;
         _visibleFileEntries = Array.Empty<RemoteFileEntry>();
-        _recognizedFileCount = 0;
+        _hiddenSmallRecentFileCount = 0;
         _loadedFileCount = 0;
         _remoteFileOffset = 0;
         _remoteFileTotal = 0;
@@ -4736,9 +4777,9 @@ public sealed partial class MainWindow : Window
 
             _remoteFileOffset = page.Entries.Count;
             _remoteFileTotal = page.Total;
+            _hiddenSmallRecentFileCount = CountSmallRecentFiles(page.Entries, category);
             var visibleEntries = ApplyFileFilters(page.Entries, category);
             _visibleFileEntries = visibleEntries;
-            _recognizedFileCount = page.Total;
             _loadedFileCount = 0;
             ClearFileItemViews();
 
@@ -4902,6 +4943,7 @@ public sealed partial class MainWindow : Window
 
                 _remoteFileOffset += nextPage.Entries.Count;
                 _remoteFileTotal = Math.Max(_remoteFileTotal, nextPage.Total);
+                _hiddenSmallRecentFileCount += CountSmallRecentFiles(nextPage.Entries, _fileCategory);
                 _visibleFileEntries = _visibleFileEntries
                     .Concat(ApplyFileFilters(nextPage.Entries, _fileCategory))
                     .ToArray();
@@ -4959,11 +5001,19 @@ public sealed partial class MainWindow : Window
             }
 
             _loadedFileCount += batch.Count;
+            if (batch.Count == 0 && _loadedFileCount == 0 && _remoteFileOffset >= _remoteFileTotal)
+            {
+                ShowEmptyFileState(_hiddenSmallRecentFileCount > 0
+                    ? $"没有可显示的文件（最近文件已默认隐藏 {_hiddenSmallRecentFileCount} 个小于 10 KB 的文件）。"
+                    : "这个分类暂时没有可显示的内容。");
+            }
             var loadingSuffix = _remoteFileOffset < _remoteFileTotal
                 ? $" · 已扫描 {_remoteFileOffset}/{_remoteFileTotal} 项，继续滚动加载"
                 : " · 已加载全部";
             FileManagementStatusText.Text =
-                $"已识别 {_recognizedFileCount} 项{loadingSuffix}";
+                $"已显示 {_visibleFileEntries.Count} 项" +
+                (_hiddenSmallRecentFileCount > 0 ? $" · 最近文件已隐藏 {_hiddenSmallRecentFileCount} 个小于 10 KB 的文件" : string.Empty) +
+                loadingSuffix;
             _filePage?.ResetNearEndTrigger();
 
             if (thumbnailItems.Count > 0)
@@ -5720,7 +5770,7 @@ public sealed partial class MainWindow : Window
             // zero-byte record. Recent files must never surface directories;
             // directory navigation remains available in phone storage.
             filtered = filtered.Where(entry => !entry.IsDirectory &&
-                !IsRecentCacheNoise(entry));
+                !IsRecentCacheNoise(entry) && entry.SizeBytes >= 10 * 1024);
         }
         if (category.Equals("documents", StringComparison.OrdinalIgnoreCase))
         {
@@ -5750,6 +5800,11 @@ public sealed partial class MainWindow : Window
         };
         return filtered.ToList();
     }
+
+    private static int CountSmallRecentFiles(IEnumerable<RemoteFileEntry> entries, string category) =>
+        category.Equals("recent", StringComparison.OrdinalIgnoreCase)
+            ? entries.Count(entry => !entry.IsDirectory && entry.SizeBytes >= 0 && entry.SizeBytes < 10 * 1024)
+            : 0;
 
     private static bool IsRecentCacheNoise(RemoteFileEntry entry)
     {

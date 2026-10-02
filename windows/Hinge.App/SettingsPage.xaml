@@ -92,6 +92,20 @@
                             <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
                         </Grid>
                     </Button>
+                    <Button x:Name="WebDavSettingsButton" HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch" Padding="0" AutomationProperties.Name="WebDAV 设置">
+                        <Grid Padding="14,12" ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <SymbolIcon Symbol="Globe" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="WebDAV" FontSize="16" FontWeight="SemiBold" />
+                            <TextBlock Text="管理多个地址、账号与独立文件浏览标签" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                            <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
+                        </Grid>
+                    </Button>
                 </StackPanel>
             </Border>
         </StackPanel>

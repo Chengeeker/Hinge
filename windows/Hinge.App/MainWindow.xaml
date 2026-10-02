@@ -197,8 +197,8 @@
                 Drop="DragCancelZone_Drop">
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10">
                     <FontIcon Glyph="&#xE711;" FontSize="30" HorizontalAlignment="Center" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
-                    <TextBlock Text="取消发送" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock Text="松开鼠标取消本次发送" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="DragCancelTitle" Text="取消发送" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="DragCancelDescription" Text="松开鼠标取消本次发送" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </StackPanel>
             </Border>
         </Grid>

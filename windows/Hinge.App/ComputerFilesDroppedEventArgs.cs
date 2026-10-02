@@ -3,6 +3,7 @@ namespace Hinge.App;
 internal static class HingeDragMetadata
 {
     public const string InternalRemoteFile = "Hinge.InternalRemoteFileDrag";
+    public const string WebDavRemoteFile = "Hinge.WebDavRemoteFileDrag";
 
     public static bool IsInternalRemoteFileDrag(Windows.ApplicationModel.DataTransfer.DataPackageView dataView)
     {
@@ -10,6 +11,9 @@ internal static class HingeDragMetadata
             value is bool isInternal &&
             isInternal;
     }
+
+    public static bool IsWebDavRemoteFileDrag(Windows.ApplicationModel.DataTransfer.DataPackageView dataView) =>
+        dataView.Properties.TryGetValue(WebDavRemoteFile, out var value) && value is true;
 }
 
 public sealed class ComputerFilesDroppedEventArgs : EventArgs

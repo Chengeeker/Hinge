@@ -85,6 +85,7 @@ public sealed partial class WebDavSettingsPage : Page
         Username.Text = profile.Username;
         UserAgent.Text = profile.UserAgent;
         InitialPath.Text = profile.InitialPath;
+        ThumbnailMountPath.Text = profile.ThumbnailMountPath;
         TrustCertificates.IsOn = profile.TrustAllCertificates;
         ParallelTransfers.IsOn = profile.ParallelTransfers;
         Status.Text = "";
@@ -114,6 +115,7 @@ public sealed partial class WebDavSettingsPage : Page
         AddressEditor.Visibility = Visibility.Visible;
         PageTitle.Text = "新建 WebDAV 地址";
         Remark.Text = Endpoint.Text = Username.Text = UserAgent.Text = InitialPath.Text = "";
+        ThumbnailMountPath.Text = "";
         Password.Password = "";
         TrustCertificates.IsOn = ParallelTransfers.IsOn = false;
         Status.Text = "填写后保存为新地址。";
@@ -124,7 +126,7 @@ public sealed partial class WebDavSettingsPage : Page
         Id = _id, Url = WebDavBrowserClient.ValidateEndpoint(Endpoint.Text).AbsoluteUri,
         Username = Username.Text, UserAgent = UserAgent.Text.Trim(), InitialPath = InitialPath.Text.Trim(),
         Remark = Remark.Text.Trim(), TrustAllCertificates = TrustCertificates.IsOn,
-        ParallelTransfers = ParallelTransfers.IsOn
+        ParallelTransfers = ParallelTransfers.IsOn, ThumbnailMountPath = ThumbnailMountPath.Text.Trim()
     };
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
@@ -134,6 +136,8 @@ public sealed partial class WebDavSettingsPage : Page
             if (_passwordNeedsReplacement && Password.Password.Length == 0)
                 throw new InvalidOperationException("原密码无法解密，请重新填写密码后保存；原配置不会被覆盖。");
             var profile = ReadForm();
+            if (profile.ThumbnailMountPath.Length != 0)
+                _ = WebDavThumbnailPath.Resolve(new Uri(profile.Url), new Uri(profile.Url + "validation.jpg"), profile.ThumbnailMountPath);
             using var validator = new WebDavBrowserClient(profile, Password.Password);
             if (profile.TrustAllCertificates)
             {
@@ -188,5 +192,6 @@ public sealed partial class WebDavSettingsPage : Page
         DeleteButton.IsEnabled = !busy && _editingProfile != null;
         Remark.IsEnabled = Endpoint.IsEnabled = Username.IsEnabled = Password.IsEnabled = !busy;
         UserAgent.IsEnabled = InitialPath.IsEnabled = TrustCertificates.IsEnabled = ParallelTransfers.IsEnabled = !busy;
+        ThumbnailMountPath.IsEnabled = !busy;
     }
 }

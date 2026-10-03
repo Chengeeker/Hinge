@@ -9,6 +9,7 @@ public sealed record WebDavProfile
     public string ProtectedPassword { get; init; } = "";
     public string UserAgent { get; init; } = "";
     public string InitialPath { get; init; } = "";
+    public string ThumbnailMountPath { get; init; } = "";
     public string Remark { get; init; } = "";
     public bool TrustAllCertificates { get; init; }
     public bool ParallelTransfers { get; init; }

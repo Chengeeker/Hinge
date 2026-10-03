@@ -35,6 +35,8 @@
                     <PasswordBox x:Name="Password" Header="密码" />
                     <TextBox x:Name="UserAgent" Header="自定义 UA（可选）" PlaceholderText="留空使用 Hinge 默认 UA" />
                     <TextBox x:Name="InitialPath" Header="初始路径（可选，相对于 URL）" PlaceholderText="例如：Documents/工作；留空从 URL 目录开始" />
+                    <TextBox x:Name="ThumbnailMountPath" Header="缩略图挂载目录（可选）" PlaceholderText="例如：Z:\ 或 Z:\网盘" />
+                    <TextBlock Text="如果已用其他软件挂载网盘，填写与上方 URL 根目录对应的本机目录（不是初始路径）。预览将优先使用该盘的 Windows 缩略图，包括大视频；上传、下载和删除仍走 WebDAV。留空使用有大小限制的网络预览。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <ToggleSwitch x:Name="TrustCertificates" Header="信任所有 HTTPS 证书" />
                     <TextBlock Text="默认关闭。开启后无法验证服务器身份，仅建议用于你信任的自签名服务器；HTTP 本身不加密。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <ToggleSwitch x:Name="ParallelTransfers" Header="启用多线程传输" />

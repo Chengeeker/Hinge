@@ -161,6 +161,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
         _files.SelectionChanged += (_, _) => UpdateSelectionStatus();
         _gridFiles.SelectionChanged += (_, _) => UpdateSelectionStatus();
         _gridFiles.ContainerContentChanging += ThumbnailContainerChanging;
+        _gridFiles.Loaded += (_, _) => ResumeVisibleThumbnails(_gridFiles);
         Unloaded += (_, _) => { foreach (var request in _thumbnailRequests.Values.ToArray()) request.Cancel(); };
         AllowDrop = true;
         DragOver += (_, e) => HandleDragOver(e);
@@ -183,6 +184,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
 
     private void ThumbnailContainerChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
+        args.ItemContainer.Loaded -= ThumbnailContainerLoaded;
         if (args.InRecycleQueue)
         {
             if (FindThumbnail(args.ItemContainer) is { } recycled)
@@ -193,8 +195,21 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
             }
             return;
         }
+        args.ItemContainer.Loaded += ThumbnailContainerLoaded;
         if (args.Phase == 0) { args.RegisterUpdateCallback(ThumbnailContainerChanging); return; }
         if (args.Item is not WebDavEntry entry || FindThumbnail(args.ItemContainer) is not { } image) return;
+        BindThumbnail(image, entry);
+    }
+
+    private void ThumbnailContainerLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is GridViewItem { Content: WebDavEntry entry } container && FindThumbnail(container) is { } image)
+            BindThumbnail(image, entry);
+    }
+
+    private void BindThumbnail(Image image, WebDavEntry entry)
+    {
+        if (ReferenceEquals(image.Tag, entry)) { _ = LoadThumbnailAsync(image, entry); return; }
         CancelThumbnail(image);
         image.Source = null;
         image.Tag = entry;
@@ -229,7 +244,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
         bool picture = new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif", ".tif", ".tiff" }.Contains(extension);
         if (!video && !picture) return;
         long limit = (video ? 64L : 16L) * 1048576;
-        if (entry.Size > limit)
+        if (entry.Size > limit && string.IsNullOrWhiteSpace(_profile.ThumbnailMountPath))
         {
             ToolTipService.SetToolTip(image, "媒体较大，未自动下载缩略图；可点击文件预览。");
             return;
@@ -239,13 +254,38 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
             if (!previous.IsCancellationRequested) return;
         }
         using var request = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        request.CancelAfter(TimeSpan.FromSeconds(30));
         _thumbnailRequests[image] = request;
         bool acquired = false;
         try
         {
             await _thumbnailGate.WaitAsync(request.Token); acquired = true;
+            request.CancelAfter(TimeSpan.FromSeconds(30));
             request.Token.ThrowIfCancellationRequested();
+            if (!string.IsNullOrWhiteSpace(_profile.ThumbnailMountPath))
+            {
+                try
+                {
+                    var mountedPath = WebDavThumbnailPath.Resolve(_client.Root, entry.Uri, _profile.ThumbnailMountPath);
+                    if (mountedPath != null)
+                    {
+                        var mountedFile = await StorageFile.GetFileFromPathAsync(mountedPath).AsTask(request.Token);
+                        var properties = await mountedFile.GetBasicPropertiesAsync().AsTask(request.Token);
+                        if (entry.Size <= 0 || properties.Size == (ulong)entry.Size)
+                        {
+                            var mountedBitmap = await DecodeThumbnailAsync(mountedFile, video, request.Token);
+                            if (mountedBitmap != null)
+                            {
+                                if (!request.IsCancellationRequested && ReferenceEquals(image.Tag, entry) && image.IsLoaded)
+                                    image.Source = mountedBitmap;
+                                return;
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception) { /* Unavailable mount/handler: bounded DAV fallback below. */ }
+            }
+            if (entry.Size > limit) throw new IOException("挂载盘未返回预览；文件超过网络预览上限。");
             _thumbnailCache ??= new PreviewCache();
             var location = _thumbnailCache.GetLocation(new RemoteFileEntry
             {
@@ -260,28 +300,45 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
             _thumbnailCache.Prune(location.Directory);
             request.Token.ThrowIfCancellationRequested();
             var file = await StorageFile.GetFileFromPathAsync(location.FilePath);
-            Windows.Storage.FileProperties.StorageItemThumbnail? thumbnail = null;
-            try { thumbnail = await file.GetThumbnailAsync(video ? ThumbnailMode.VideosView : ThumbnailMode.PicturesView, 256); }
-            catch when (picture) { /* Missing Shell handler must not prevent direct image decoding. */ }
-            using var thumbnailLifetime = thumbnail;
-            var bitmap = new BitmapImage { DecodePixelWidth = 256 };
-            if (thumbnail != null && thumbnail.Type == ThumbnailType.Image)
-                await bitmap.SetSourceAsync(thumbnail);
-            else if (picture)
-            {
-                // Shell thumbnail handlers may be absent; decode supported images directly.
-                using var original = await file.OpenReadAsync();
-                await bitmap.SetSourceAsync(original);
-            }
-            else return;
+            var bitmap = await DecodeThumbnailAsync(file, video, request.Token);
+            if (bitmap == null) throw new IOException("Windows 未返回视频缩略图。");
             if (!request.IsCancellationRequested && ReferenceEquals(image.Tag, entry) && image.IsLoaded) image.Source = bitmap;
         }
-        catch (Exception) { /* Unsupported codecs, cancellation and network failure keep the placeholder usable. */ }
+        catch (OperationCanceledException)
+        {
+            if (!_lifetime.IsCancellationRequested && ReferenceEquals(image.Tag, entry) && image.IsLoaded)
+                ToolTipService.SetToolTip(image, "预览已暂停或超时；切换列表再回到宫格可重试。");
+        }
+        catch (Exception exception)
+        {
+            // Never expose signed URLs, accounts or raw network exceptions.
+            if (ReferenceEquals(image.Tag, entry) && image.IsLoaded)
+                ToolTipService.SetToolTip(image, $"预览未能加载（{exception.GetType().Name}）；请检查挂载目录、网络或系统媒体解码支持。切换列表再回到宫格可重试。");
+        }
         finally
         {
             if (acquired) _thumbnailGate.Release();
             if (_thumbnailRequests.TryGetValue(image, out var active) && active == request) _thumbnailRequests.Remove(image);
         }
+    }
+
+    private static async Task<BitmapImage?> DecodeThumbnailAsync(StorageFile file, bool video, CancellationToken token)
+    {
+        Windows.Storage.FileProperties.StorageItemThumbnail? thumbnail = null;
+        try { thumbnail = await file.GetThumbnailAsync(video ? ThumbnailMode.VideosView : ThumbnailMode.PicturesView,
+            256, ThumbnailOptions.ResizeThumbnail).AsTask(token); }
+        catch (OperationCanceledException) { throw; }
+        catch when (!video) { /* Direct image decoding works without a Shell thumbnail handler. */ }
+        using var thumbnailLifetime = thumbnail;
+        var bitmap = new BitmapImage { DecodePixelWidth = 256 };
+        if (thumbnail?.Type == ThumbnailType.Image) await bitmap.SetSourceAsync(thumbnail).AsTask(token);
+        else if (!video)
+        {
+            using var original = await file.OpenReadAsync().AsTask(token);
+            await bitmap.SetSourceAsync(original).AsTask(token);
+        }
+        else return null;
+        return bitmap;
     }
 
     private void ApplyView()
@@ -611,7 +668,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     private void ResumeVisibleThumbnails(DependencyObject root)
     {
         if (_gridFiles.Visibility != Visibility.Visible || _lifetime.IsCancellationRequested) return;
-        if (root is Image { Tag: WebDavEntry entry } image) { _ = LoadThumbnailAsync(image, entry); return; }
+        if (root is Image { Name: "MediaThumbnail", DataContext: WebDavEntry entry } image) { BindThumbnail(image, entry); return; }
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) ResumeVisibleThumbnails(VisualTreeHelper.GetChild(root, i));
     }
 

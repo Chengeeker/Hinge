@@ -32,14 +32,18 @@ class SmsReceiver : BroadcastReceiver() {
             ?.takeIf { it.isNotEmpty() }
             ?: "未知号码"
         val code = VerificationCodeExtractor.find(body)
+        val timestamp = messages.firstNotNullOfOrNull { message ->
+            message.timestampMillis.takeIf { it > 0L }
+        } ?: System.currentTimeMillis()
 
         SmsRelayBridge.emit(
             mapOf(
                 "messageId" to UUID.randomUUID().toString(),
                 "source" to "sms",
+                "origin" to "sms_broadcast",
                 "sender" to sender,
                 "body" to body,
-                "timestamp" to System.currentTimeMillis(),
+                "timestamp" to timestamp,
                 "isVerificationCode" to (code != null),
                 "verificationCode" to code,
             ),

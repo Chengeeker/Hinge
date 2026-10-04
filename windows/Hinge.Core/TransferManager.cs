@@ -11,6 +11,7 @@ namespace Hinge.Core;
 
 public class IncomingFileContext
 {
+    public string DeviceId { get; set; } = string.Empty;
     public FileOfferMessage Offer { get; set; } = new();
     public string TempFilePath { get; set; } = string.Empty;
     public string FinalFilePath { get; set; } = string.Empty;
@@ -64,6 +65,7 @@ public class TransferManager : IDisposable
     public event EventHandler<TextTransferMessage>? TextReceived;
     public event EventHandler<TransferProgress>? TransferProgressChanged;
     public event EventHandler<string>? FileReceived;
+    public event EventHandler<FileReceipt>? FileReceivedFromDevice;
     public event EventHandler<TransferFailure>? TransferFailed;
 
     public int ActiveTransfersCount => _incomingTransfers.Count;
@@ -73,7 +75,7 @@ public class TransferManager : IDisposable
     /// This is used by Windows previews; ordinary incoming transfers continue
     /// to use the user's Hinge download directory.
     /// </summary>
-    public IDisposable RegisterIncomingDirectory(string fileName, string directory)
+    public IDisposable RegisterIncomingDirectory(string fileName, string directory, string? deviceId = null)
     {
         var safeName = SanitizeFileName(fileName);
         if (string.IsNullOrWhiteSpace(safeName))
@@ -82,9 +84,10 @@ public class TransferManager : IDisposable
         }
 
         Directory.CreateDirectory(directory);
-        _incomingDirectories[safeName] = directory;
+        var key = (deviceId ?? "") + "\n" + safeName;
+        _incomingDirectories[key] = directory;
         return new IncomingDirectoryRegistration(
-            () => _incomingDirectories.TryRemove(safeName, out _));
+            () => _incomingDirectories.TryRemove(key, out _));
     }
 
     public TransferManager(string? downloadDirectory = null)
@@ -519,7 +522,9 @@ public class TransferManager : IDisposable
             throw new InvalidOperationException("收到的文件名无效。");
         }
 
-        var directory = _incomingDirectories.TryRemove(safeName, out var registeredDirectory)
+        var deviceId = conn.RemoteDeviceId ?? string.Empty;
+        var directory = (_incomingDirectories.TryRemove(deviceId + "\n" + safeName, out var registeredDirectory) ||
+            _incomingDirectories.TryRemove("\n" + safeName, out registeredDirectory))
             ? registeredDirectory
             : _downloadDirectory;
         Directory.CreateDirectory(directory);
@@ -549,6 +554,7 @@ public class TransferManager : IDisposable
 
         var context = new IncomingFileContext
         {
+            DeviceId = deviceId,
             Offer = offer,
             TempFilePath = tempPath,
             FinalFilePath = finalPath,
@@ -661,6 +667,7 @@ public class TransferManager : IDisposable
                 };
                 TransferProgressChanged?.Invoke(this, prog);
                 FileReceived?.Invoke(this, context.FinalFilePath);
+                FileReceivedFromDevice?.Invoke(this, new FileReceipt(context.DeviceId, context.FinalFilePath, complete.TransferId));
             }
             else
             {
@@ -765,6 +772,7 @@ public class TransferManager : IDisposable
             {
                 TransferId = transferId,
                 FileName = context.Offer.FileName,
+                DeviceId = context.DeviceId,
                 Error = error
             });
         }

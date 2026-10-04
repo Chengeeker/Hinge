@@ -49,6 +49,11 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="设备连接" FontSize="20" FontWeight="SemiBold" />
                     <StackPanel Spacing="8">
+                        <TextBlock Text="历史设备" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Text="清理旧版本或重装产生的同名旧记录。需确认属于同一台手机；保留最近记录、当前连接和未完成传输目标，清理前自动备份。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <Button x:Name="CleanDeviceHistoryButton" Content="清理重复历史设备" HorizontalAlignment="Left" />
+                    </StackPanel>
+                    <StackPanel Spacing="8">
                         <TextBlock Text="连接安全" FontSize="15" FontWeight="SemiBold" />
                         <TextBlock Text="设置后，其他设备连接到本机时需要输入这个 6 位数字；留空表示不启用。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                         <Grid ColumnSpacing="8">

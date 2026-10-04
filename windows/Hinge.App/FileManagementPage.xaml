@@ -74,6 +74,7 @@
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <Button x:Name="SelectFilesButton" Content="选择" Height="36" AutomationProperties.Name="选择文件" />
                         <Button x:Name="ImportFileButton" Content="导入电脑文件" Height="36" AutomationProperties.Name="导入电脑文件" />
+                        <Button x:Name="ReconnectPhoneButton" Content="重新连接" Height="36" Visibility="Collapsed" />
                         <ComboBox x:Name="FileViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" Height="36">
                             <ComboBoxItem Content="宫格" Tag="grid" />
                             <ComboBoxItem Content="列表" Tag="list" />

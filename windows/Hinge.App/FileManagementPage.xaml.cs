@@ -14,23 +14,34 @@ public sealed partial class FileManagementPage : Page
 {
     private readonly ObservableCollection<TabViewItem> _sourceTabs = new();
     private readonly Dictionary<string, (WebDavProfile Profile, WebDavBrowserView View)> _webDavViews = new();
-    private string _phoneName = "手机（未连接）";
+    private IReadOnlyList<PhoneDeviceTarget> _phones = Array.Empty<PhoneDeviceTarget>();
     private bool _rebuildingTabs;
     private WebDavBrowserView? _activeWebDavRemoteDrag;
     public bool IsSourceTabDragActive { get; private set; }
     public event EventHandler? SourceTabDragStarted;
     public event EventHandler? WebDavRemoteDragStarted;
-    public bool IsPhoneSelected => (SourceTabs.SelectedItem as TabViewItem)?.Tag as string is null or "phone";
+    public bool IsPhoneSelected => (SourceTabs.SelectedItem as TabViewItem)?.Tag is not string id || id == "phone" || id.StartsWith("phone:", StringComparison.Ordinal);
+    public string? SelectedPhoneDeviceId => (SourceTabs.SelectedItem as TabViewItem)?.Tag is string id && id.StartsWith("phone:", StringComparison.Ordinal) ? id[6..] : null;
     public event EventHandler? PhoneSelected;
+    public event EventHandler? SourceSelected;
     private WebDavBrowserView? SelectedWebDav => WebDavHost.Content as WebDavBrowserView;
 
     public void CancelWebDavRemoteDrag() => _activeWebDavRemoteDrag?.CancelOutgoingDrag();
 
-    public void SetPhoneName(string? name)
+    public void UpdatePhones(IReadOnlyList<PhoneDeviceTarget> phones)
     {
-        _phoneName = string.IsNullOrWhiteSpace(name) ? "手机（未连接）" : name;
-        var tab = _sourceTabs.FirstOrDefault(item => (string)item.Tag == "phone");
-        if (tab != null) tab.Header = CreateCenteredTabHeader(_phoneName);
+        if (_phones.SequenceEqual(phones)) return;
+        var selectedId = SelectedPhoneDeviceId;
+        var connectionChanged = _phones.FirstOrDefault(p => p.DeviceId == selectedId)?.IsConnected !=
+            phones.FirstOrDefault(p => p.DeviceId == selectedId)?.IsConnected;
+        _phones = phones;
+        RefreshSourceTabs(notifySelection: connectionChanged);
+    }
+
+    public void SelectPhone(string deviceId)
+    {
+        var tab = _sourceTabs.FirstOrDefault(item => (string)item.Tag == "phone:" + deviceId);
+        if (tab != null) SourceTabs.SelectedItem = tab;
     }
 
     public async Task UploadNativeDropAsync(IReadOnlyList<string> paths)
@@ -44,7 +55,9 @@ public sealed partial class FileManagementPage : Page
 
     private void WebDavSettingsChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(RefreshSourceTabs);
 
-    private void RefreshSourceTabs()
+    private void RefreshSourceTabs() => RefreshSourceTabs(notifySelection: true);
+
+    private void RefreshSourceTabs(bool notifySelection)
     {
         try
         {
@@ -59,8 +72,9 @@ public sealed partial class FileManagementPage : Page
                 }
             }
             _rebuildingTabs = true;
-            var tabs = new List<TabViewItem>
-            { new() { Header = CreateCenteredTabHeader(_phoneName), Tag = "phone", IsClosable = false } };
+            var tabs = _phones.Select(phone => new TabViewItem
+            { Header = CreateCenteredTabHeader(phone.DisplayName), Tag = "phone:" + phone.DeviceId, IsClosable = false }).ToList();
+            if (tabs.Count == 0) tabs.Add(new() { Header = CreateCenteredTabHeader("手机（未连接）"), Tag = "phone", IsClosable = false });
             tabs.AddRange(state.Profiles.Select(profile => new TabViewItem
             { Header = CreateCenteredTabHeader(profile.DisplayName), Tag = profile.Id, IsClosable = false }));
             foreach (var tab in tabs)
@@ -76,7 +90,8 @@ public sealed partial class FileManagementPage : Page
             foreach (var tab in tabs) _sourceTabs.Add(tab);
             SourceTabs.SelectedItem = tabs.FirstOrDefault(tab => (string)tab.Tag == selected) ?? tabs[0];
             _rebuildingTabs = false;
-            SelectSource();
+            if (notifySelection || (SourceTabs.SelectedItem as TabViewItem)?.Tag as string != selected)
+                SelectSource();
         }
         catch (Exception exception) { _rebuildingTabs = false; StatusText.Text = "WebDAV 配置读取失败：" + exception.Message; }
     }
@@ -98,8 +113,9 @@ public sealed partial class FileManagementPage : Page
     private async void SelectSource()
     {
         if (_rebuildingTabs || SourceTabs.SelectedItem is not TabViewItem tab) return;
+        SourceSelected?.Invoke(this, EventArgs.Empty);
         ClearExternalDragPreview();
-        if ((string)tab.Tag == "phone")
+        if (IsPhoneSelected)
         {
             DropRootGrid.Visibility = Visibility.Visible;
             WebDavHost.Visibility = Visibility.Collapsed;
@@ -167,6 +183,7 @@ public sealed partial class FileManagementPage : Page
     public TextBlock PathText => FilePathText;
     public TextBlock StatusText => FileManagementStatusText;
     public Button ImportFile => ImportFileButton;
+    public Button ReconnectPhone => ReconnectPhoneButton;
     public Button RefreshFiles => RefreshFilesButton;
     public Button NavigateBack => NavigateBackButton;
     public Button SelectFiles => SelectFilesButton;
@@ -445,7 +462,7 @@ public sealed partial class FileManagementPage : Page
             var destination = NormalizeFolderPath(entry.RelativePath);
             FilesDropped?.Invoke(
                 this,
-                new ComputerFilesDroppedEventArgs(paths, destination));
+                new ComputerFilesDroppedEventArgs(paths, destination, entry.SourceDeviceId));
             args.AcceptedOperation = DataPackageOperation.Copy;
             args.Handled = true;
         };
@@ -552,17 +569,17 @@ public sealed partial class FileManagementPage : Page
             return;
         }
 
-        var paths = await GetDroppedFilePathsAsync(e.DataView);
-        if (paths.Count == 0) return;
-
+        var deviceId = SelectedPhoneDeviceId;
         var destination = string.Equals(CurrentCategory, "storage", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(CurrentRelativePath)
             ? NormalizeFolderPath(CurrentRelativePath)
             : "Download/Hinge";
+        var paths = await GetDroppedFilePathsAsync(e.DataView);
+        if (paths.Count == 0) return;
 
         FilesDropped?.Invoke(
             this,
-            new ComputerFilesDroppedEventArgs(paths, destination));
+            new ComputerFilesDroppedEventArgs(paths, destination, deviceId));
         e.AcceptedOperation = DataPackageOperation.Copy;
         e.Handled = true;
     }

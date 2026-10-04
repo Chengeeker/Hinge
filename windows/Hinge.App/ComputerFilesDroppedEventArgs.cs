@@ -20,13 +20,16 @@ public sealed class ComputerFilesDroppedEventArgs : EventArgs
 {
     public ComputerFilesDroppedEventArgs(
         IReadOnlyList<string> filePaths,
-        string destinationPath)
+        string destinationPath,
+        string? deviceId = null)
     {
         FilePaths = filePaths;
         DestinationPath = destinationPath;
+        DeviceId = deviceId;
     }
 
     public IReadOnlyList<string> FilePaths { get; }
+    public string? DeviceId { get; }
 
     /// <summary>
     /// Relative path under the Android shared-storage root, for example

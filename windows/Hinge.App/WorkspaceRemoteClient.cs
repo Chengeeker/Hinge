@@ -7,6 +7,8 @@ namespace Hinge.App;
 
 public sealed class RemoteFileEntry
 {
+    [JsonIgnore]
+    public string SourceDeviceId { get; set; } = string.Empty;
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
@@ -333,6 +335,7 @@ public sealed class WorkspaceRemoteClient
                     JsonOptions);
                 if (entry != null)
                 {
+                    entry.SourceDeviceId = connection.RemoteDeviceId ?? string.Empty;
                     entries.Add(entry);
                 }
             }
@@ -395,6 +398,7 @@ public sealed class WorkspaceRemoteClient
             rawTotal.TryGetInt32(out var count)
             ? count
             : items.Count;
+        foreach (var item in items) item.SourceDeviceId = connection.RemoteDeviceId ?? string.Empty;
         return new RemoteFilePage { Entries = items, Total = total };
     }
 

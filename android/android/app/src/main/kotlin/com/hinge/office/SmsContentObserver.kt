@@ -119,6 +119,7 @@ class SmsContentObserver(context: Context) :
                         mapOf(
                             "messageId" to "sms-provider-$rowId",
                             "source" to "sms",
+                            "origin" to "sms_provider",
                             "sender" to sender,
                             "body" to body,
                             "timestamp" to timestamp,

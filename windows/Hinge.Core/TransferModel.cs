@@ -99,7 +99,10 @@ public class TransferProgress
 
 public sealed class TransferFailure
 {
+    public string DeviceId { get; init; } = string.Empty;
     public string TransferId { get; init; } = string.Empty;
     public string FileName { get; init; } = string.Empty;
     public string Error { get; init; } = string.Empty;
 }
+
+public sealed record FileReceipt(string DeviceId, string FilePath, string TransferId);

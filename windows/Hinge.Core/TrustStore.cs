@@ -95,6 +95,51 @@ public class TrustStore
         }
     }
 
+    // Names are only a cleanup suggestion, never proof of device identity.
+    public IReadOnlyList<TrustedDevice> GetDuplicateHistory(IEnumerable<string> protectedDeviceIds)
+    {
+        lock (_lock)
+        {
+            var keep = protectedDeviceIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return _trustedDevices.Values.Where(device => device.TrustState == TrustState.Trusted &&
+                    !string.IsNullOrWhiteSpace(device.Name))
+                .GroupBy(device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .SelectMany(group => group.OrderByDescending(device => device.LastSeen)
+                    .ThenByDescending(device => device.PairedAt).ThenBy(device => device.DeviceId)
+                    .Skip(1).Where(device => !keep.Contains(device.DeviceId)))
+                .ToArray();
+        }
+    }
+
+    public (int Removed, string? BackupPath) RemoveDuplicateHistory(
+        IEnumerable<string> confirmedNames, IEnumerable<string> protectedDeviceIds)
+    {
+        lock (_lock)
+        {
+            var names = confirmedNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var remove = GetDuplicateHistory(protectedDeviceIds)
+                .Where(device => names.Contains(device.Name.Trim())).Select(device => device.DeviceId).ToHashSet();
+            if (remove.Count == 0) return (0, null);
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            var before = _trustedDevices.Values.ToArray();
+            var remaining = before.Where(device => !remove.Contains(device.DeviceId)).ToArray();
+            var suffix = Guid.NewGuid().ToString("N");
+            var backup = _storagePath + ".backup-" + suffix + ".json";
+            var temporary = _storagePath + "." + suffix + ".tmp";
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_storagePath))!);
+            // If either the backup or durable replacement fails, leave memory unchanged.
+            File.WriteAllText(backup, JsonSerializer.Serialize(before, options));
+            try
+            {
+                File.WriteAllText(temporary, JsonSerializer.Serialize(remaining, options));
+                File.Move(temporary, _storagePath, overwrite: true);
+                foreach (var id in remove) _trustedDevices.Remove(id);
+                return (remove.Count, backup);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+    }
+
     private void Load()
     {
         lock (_lock)

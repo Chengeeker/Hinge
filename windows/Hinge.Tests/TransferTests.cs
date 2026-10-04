@@ -12,7 +12,7 @@ public class TransferTests
     [Fact]
     public async Task TransferManager_SendText_Dispatches_TextReceived()
     {
-        int port = 52880;
+        int port = 0;
         var store = new TrustStore(Path.Combine(Path.GetTempPath(), $"ts_{Guid.NewGuid()}.json"));
         var serverId = new DeviceIdentity { DeviceId = "server", Name = "Server" };
         using var serverSession = new SessionManager(serverId, store, port);
@@ -29,10 +29,15 @@ public class TransferTests
         };
 
         var clientId = new DeviceIdentity { DeviceId = "client", Name = "Client" };
-        using var clientSession = new SessionManager(clientId, store, port + 1);
-        using var clientConn = await clientSession.ConnectToPeerAsync(IPAddress.Loopback, port);
+        using var clientSession = new SessionManager(clientId, store, 0);
+        using var clientConn = await clientSession.ConnectToPeerAsync(IPAddress.Loopback, serverSession.ListeningPort);
 
         using var senderTransfer = new TransferManager();
+        var handshakeDeadline = DateTime.UtcNow.AddSeconds(5);
+        while ((!clientConn.IsSessionReady || serverSession.ConnectionForDevice("client") == null) && DateTime.UtcNow < handshakeDeadline)
+            await Task.Delay(20);
+        Assert.True(clientConn.IsSessionReady);
+        Assert.NotNull(serverSession.ConnectionForDevice("client"));
         await senderTransfer.SendTextAsync(clientConn, "Hello from Android to Windows 🚀", "text");
 
         var received = await Task.WhenAny(textTcs.Task, Task.Delay(3000));
@@ -77,6 +82,14 @@ public class TransferTests
         using var clientConn = await clientSession.ConnectToPeerAsync(IPAddress.Loopback, port);
 
         using var senderTransfer = new TransferManager();
+
+        // This assertion exercises negotiated streaming-hash capability, not
+        // the deliberately conservative pre-handshake compatibility path.
+        var handshakeDeadline = DateTime.UtcNow.AddSeconds(5);
+        while ((!clientConn.IsSessionReady || serverSession.ConnectionForDevice("client-file") == null) && DateTime.UtcNow < handshakeDeadline)
+            await Task.Delay(20);
+        Assert.True(clientConn.IsSessionReady);
+        Assert.NotNull(serverSession.ConnectionForDevice("client-file"));
 
         // Create a test file of 128KB (spanning multiple 64KB chunks)
         string testFile = Path.Combine(Path.GetTempPath(), $"sample_{Guid.NewGuid()}.bin");

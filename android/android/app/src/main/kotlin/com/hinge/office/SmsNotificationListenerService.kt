@@ -182,6 +182,7 @@ class SmsNotificationListenerService : NotificationListenerService() {
             mapOf(
                 "messageId" to "sms-notification-${posted.key}-$now",
                 "source" to "sms",
+                "origin" to "sms_notification",
                 "sender" to title.ifEmpty { "短信" },
                 "body" to body,
                 "timestamp" to posted.postTime,

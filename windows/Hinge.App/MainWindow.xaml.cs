@@ -96,6 +96,10 @@ public sealed partial class MainWindow : Window
     private string? _connectingDeviceId;
     private string _fileCategory = "recent";
     private string _filePath = string.Empty;
+    private sealed record PhoneBrowserState(string Category, string Path, int View, int Type, int Document, int Sort);
+    private readonly Dictionary<string, PhoneBrowserState> _phoneBrowserStates = new(StringComparer.OrdinalIgnoreCase);
+    private string? _filePhoneDeviceId;
+    private bool _restoringFilePhone;
     private IReadOnlyList<RemoteFileEntry> _visibleFileEntries = Array.Empty<RemoteFileEntry>();
     private int _hiddenSmallRecentFileCount;
     private int _loadedFileCount;
@@ -132,6 +136,7 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _remoteMediaReceiveGate = new(1, 1);
     private TaskCompletionSource<string>? _pendingRemoteMedia;
     private string? _pendingRemoteMediaName;
+    private string? _pendingRemoteMediaDeviceId;
     private bool _fileSaveInProgress;
     private bool _photoSaveInProgress;
     private IntPtr _nativeDropWindowHandle;
@@ -429,7 +434,7 @@ public sealed partial class MainWindow : Window
         _sessionManager.ClientConnected += OnClientConnected;
         _sessionManager.MessageReceived += OnMessageReceived;
         _transferManager.TransferProgressChanged += OnTransferProgress;
-        _transferManager.FileReceived += OnFileReceived;
+        _transferManager.FileReceivedFromDevice += OnFileReceived;
         _transferManager.TransferFailed += OnTransferFailed;
         _notificationManager.NotificationReceived += OnNotificationReceived;
         Closed += OnClosed;
@@ -779,8 +784,14 @@ public sealed partial class MainWindow : Window
     {
         if (_configuredPages.Add(page))
         {
+            _filePhoneDeviceId = null;
             page.NearEndReached += FilePage_NearEndReached;
-            page.PhoneSelected += (_, _) => QueueFileManagementRefresh();
+            page.PhoneSelected += (_, _) => SelectFilePhone(page);
+            page.SourceSelected += (_, _) =>
+            {
+                Interlocked.Increment(ref _fileLoadGeneration);
+                _fileLoadingCancellation?.Cancel();
+            };
             page.WebDavRemoteDragStarted += (_, _) => ShowInternalRemoteDragCancelZone(isWebDavFile: true);
             page.SourceTabDragStarted += (_, _) =>
             {
@@ -799,6 +810,7 @@ public sealed partial class MainWindow : Window
             page.DeleteSelectedFiles.Click += DeleteSelectedFilesButton_Click;
             page.CancelSelection.Click += CancelSelectionButton_Click;
             page.ImportFile.Click += BtnFiles_Click;
+            page.ReconnectPhone.Click += ReconnectFilePhone_Click;
             page.RefreshFiles.Click += BtnRefreshFiles_Click;
             page.NavigateBack.Click += BtnBackRemoteFolder_Click;
             page.TypeFilter.SelectionChanged += FileFilter_SelectionChanged;
@@ -811,6 +823,86 @@ public sealed partial class MainWindow : Window
         // a new page and the cached page. Never leave the XAML placeholder on
         // screen while waiting for an unrelated selection/Loaded event.
         page.StatusText.Text = "正在检查设备连接…";
+        RefreshFilePhoneSources();
+        if (page.IsPhoneSelected && page.SelectedPhoneDeviceId == null && _activeDevice != null)
+            page.SelectPhone(_activeDevice.DeviceId);
+        QueueFileManagementRefresh();
+    }
+
+    private async void ReconnectFilePhone_Click(object sender, RoutedEventArgs e)
+    {
+        if (_filePage?.SelectedPhoneDeviceId is not { } id) return;
+        if (!_registry.TryGetDevice(id, out var device) || device == null || device.NetworkAddresses.Count == 0)
+        {
+            await ShowStatusAsync("暂未发现此手机", "请打开手机上的 Hinge 并连接到同一局域网，然后在首页连接此手机。");
+            return;
+        }
+        _filePage.ReconnectPhone.IsEnabled = false;
+        try { await ConnectDeviceAsync(device, automatic: false); }
+        finally
+        {
+            if (_filePage != null) _filePage.ReconnectPhone.IsEnabled = true;
+            QueueFileManagementRefresh();
+        }
+    }
+
+    private IReadOnlyList<PhoneDeviceTarget> GetPhoneTargets(bool connectedOnly = false)
+    {
+        var live = _sessionManager.ActiveConnections.Where(c => c.IsSessionReady &&
+            !string.IsNullOrWhiteSpace(c.RemoteDeviceId) &&
+            string.Equals(c.PeerInfo?.Platform, "android", StringComparison.OrdinalIgnoreCase))
+            .Select(c => new PhoneDeviceTarget(c.RemoteDeviceId!,
+                _registry.TryGetDevice(c.RemoteDeviceId!, out var device) && device != null
+                    ? device.Name : c.PeerInfo?.Name ?? "Android 手机", true));
+        var known = _trustStore.GetAllTrustedDevices().Where(d => d.TrustState == TrustState.Trusted &&
+            (!_registry.TryGetDevice(d.DeviceId, out var device) || device?.Platform == DevicePlatform.Android))
+            .Select(d => new PhoneDeviceTarget(d.DeviceId, d.Name, false));
+        return PhoneDeviceTarget.Merge(live.Concat(known), connectedOnly);
+    }
+
+    private void RefreshFilePhoneSources() => _filePage?.UpdatePhones(GetPhoneTargets(connectedOnly: true));
+
+    private void SelectFilePhone(FileManagementPage page)
+    {
+        var id = page.SelectedPhoneDeviceId;
+        if (!string.Equals(id, _filePhoneDeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            if (_filePhoneDeviceId != null)
+                _phoneBrowserStates[_filePhoneDeviceId] = new(_fileCategory, _filePath, page.ViewMode.SelectedIndex,
+                    page.TypeFilter.SelectedIndex, page.DocumentFilter.SelectedIndex, page.SortOptions.SelectedIndex);
+            _filePhoneDeviceId = id;
+            var state = id != null && _phoneBrowserStates.TryGetValue(id, out var saved)
+                ? saved : new PhoneBrowserState("recent", "", 0, 0, 0, 5);
+            _restoringFilePhone = true;
+            try
+            {
+                _fileCategory = state.Category; _filePath = state.Path;
+                page.Categories.SelectedItem = page.Categories.Items.OfType<ListViewItem>()
+                    .FirstOrDefault(item => (string)item.Tag == state.Category);
+                ConfigureFileFilters(state.Category);
+                page.ViewMode.SelectedIndex = state.View;
+                page.TypeFilter.SelectedIndex = state.Type;
+                page.DocumentFilter.SelectedIndex = state.Document;
+                page.SortOptions.SelectedIndex = state.Sort;
+                page.ApplyViewMode();
+                page.ExitSelectionMode();
+                Interlocked.Increment(ref _fileLoadGeneration);
+                _fileLoadingCancellation?.Cancel();
+                ClearFileItemViews();
+                if (id != null && _sessionManager.ConnectionForDevice(id) is { } connection)
+                {
+                    _activeConnection = connection;
+                    _activeDevice = FindDeviceForConnection(connection);
+                }
+            }
+            finally { _restoringFilePhone = false; }
+        }
+        if (id != null && _sessionManager.ConnectionForDevice(id) is { } selectedConnection)
+        {
+            _activeConnection = selectedConnection;
+            _activeDevice = FindDeviceForConnection(selectedConnection);
+            SetHeroDevice(_activeDevice);
+        }
         QueueFileManagementRefresh();
     }
 
@@ -880,6 +972,8 @@ public sealed partial class MainWindow : Window
         if (_filePage == null) return;
         var entries = _filePage.GetSelectedEntries();
         if (entries.Count == 0) return;
+        var connection = GetFileConnection(entries[0]);
+        var generation = _fileLoadGeneration;
 
         var dialog = new ContentDialog
         {
@@ -892,7 +986,6 @@ public sealed partial class MainWindow : Window
         };
         if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
 
-        var connection = GetConnectedConnection();
         if (connection == null)
         {
             await ShowDialogAsync("无法删除", "设备会话已断开，请重新连接手机。", false);
@@ -905,9 +998,12 @@ public sealed partial class MainWindow : Window
             var deleted = await _workspaceRemoteClient.DeleteFilesAsync(
                 connection,
                 entries.Select(entry => entry.Uri).ToArray());
-            _filePage.ExitSelectionMode();
-            await RefreshRemoteFilesAsync(_fileCategory, _filePath, forceRefresh: true);
-            FileManagementStatusText.Text = $"已删除 {deleted} 个文件";
+            if (generation == _fileLoadGeneration)
+            {
+                _filePage.ExitSelectionMode();
+                await RefreshRemoteFilesAsync(_fileCategory, _filePath, forceRefresh: true);
+                FileManagementStatusText.Text = $"已删除 {deleted} 个文件";
+            }
         }
         catch (Exception exception)
         {
@@ -956,6 +1052,58 @@ public sealed partial class MainWindow : Window
         page.SavePairingCode.Click += SavePairingCode_Click;
         page.ClearPairingCode.Click += ClearPairingCode_Click;
         page.StartBlePairing.Click += StartBlePairing_Click;
+        page.CleanDeviceHistory.Click += CleanDeviceHistory_Click;
+    }
+
+    private IEnumerable<string> ProtectedHistoryDeviceIds() =>
+        _sessionManager.ActiveConnections.Select(connection => connection.RemoteDeviceId ?? "")
+            .Concat(_pendingFileSendStore.GetAll().Select(task => task.DeviceId))
+            .Concat(_transferHistoryStore.GetAll().Where(record => record.CanCancel).Select(record => record.DeviceId));
+
+    private async void CleanDeviceHistory_Click(object sender, RoutedEventArgs e)
+    {
+        var candidates = _trustStore.GetDuplicateHistory(ProtectedHistoryDeviceIds());
+        if (candidates.Count == 0)
+        {
+            await ShowStatusAsync("无需清理", "没有可清理的同名旧记录。当前连接和未完成传输目标不会被清理。");
+            return;
+        }
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "仅勾选你确认属于同一台手机的名称。两台同型号手机不要勾选；清理只移除旧信任记录，不合并文件、Relay 身份或传输历史。每个名称保留最近记录，当前连接及未完成任务也会保留。",
+            TextWrapping = TextWrapping.Wrap
+        });
+        var choices = candidates.GroupBy(device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => new CheckBox { Content = $"{group.Key}：清理 {group.Count()} 条旧记录", Tag = group.Key }).ToArray();
+        foreach (var choice in choices) content.Children.Add(choice);
+        var dialog = new ContentDialog
+        {
+            Title = "清理重复历史设备", Content = new ScrollViewer { Content = content, MaxHeight = 420 },
+            PrimaryButtonText = "清理并备份", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close,
+            IsPrimaryButtonEnabled = false, XamlRoot = ((FrameworkElement)Content).XamlRoot
+        };
+        foreach (var choice in choices)
+        {
+            choice.Checked += (_, _) => dialog.IsPrimaryButtonEnabled = choices.Any(item => item.IsChecked == true);
+            choice.Unchecked += (_, _) => dialog.IsPrimaryButtonEnabled = choices.Any(item => item.IsChecked == true);
+        }
+        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
+        try
+        {
+            // Re-evaluate protection after the user confirmation; sessions may have changed.
+            var result = _trustStore.RemoveDuplicateHistory(choices.Where(item => item.IsChecked == true)
+                .Select(item => (string)item.Tag), ProtectedHistoryDeviceIds());
+            RefreshDeviceList(_registry.GetAllDevices());
+            RefreshExplorerSendMenu();
+            await ShowStatusAsync("历史设备已清理", result.Removed > 0
+                ? $"已清理 {result.Removed} 条旧记录。备份保存于：{result.BackupPath}"
+                : "记录状态已变化，没有需要清理的旧记录。");
+        }
+        catch (Exception)
+        {
+            await ShowStatusAsync("未完成清理", "无法备份或保存信任记录，未移除内存中的历史设备。请检查本机存储权限。" );
+        }
     }
 
     private void ConfigureCloudRelaySettingsPage(CloudRelaySettingsPage page)
@@ -3231,22 +3379,20 @@ public sealed partial class MainWindow : Window
 
     private async Task TryAutoConnectHistoricalDeviceAsync(IReadOnlyList<Device> devices)
     {
-        if (_activeConnection?.IsSessionReady == true ||
-            _sessionManager.ActiveConnections.Any(connection =>
-                connection.IsSessionReady) ||
-            _connectingDeviceId != null)
+        if (_connectingDeviceId != null)
         {
             return;
         }
 
+        DateTime now = DateTime.UtcNow;
         Device? candidate = devices.FirstOrDefault(device =>
             device.ConnectionState != ConnectionState.Disconnected &&
             device.NetworkAddresses.Count > 0 &&
             _trustStore.IsTrusted(device.DeviceId) &&
-            !IsHistoricalReconnectSuppressed(device.DeviceId));
+            _sessionManager.ConnectionForDevice(device.DeviceId) == null &&
+            !IsHistoricalReconnectSuppressed(device.DeviceId) &&
+            (!_automaticConnectAttempts.TryGetValue(device.DeviceId, out var attempt) || now - attempt >= TimeSpan.FromSeconds(5)));
         if (candidate == null) return;
-
-        DateTime now = DateTime.UtcNow;
         if (_automaticConnectAttempts.TryGetValue(candidate.DeviceId, out var lastAttempt) &&
             now - lastAttempt < TimeSpan.FromSeconds(5))
         {
@@ -3261,6 +3407,7 @@ public sealed partial class MainWindow : Window
         if (_sessionManager.ConnectionForDevice(candidate.DeviceId) != null)
         {
             _automaticConnectAttempts.Remove(candidate.DeviceId);
+            ScheduleHistoricalReconnect();
         }
         else
         {
@@ -3342,9 +3489,11 @@ public sealed partial class MainWindow : Window
             StatusText.Text = $"正在传输：{progress.FileName} · {progress.Percentage:F0}%{rate}");
     }
 
-    private void OnFileReceived(object? sender, string path)
+    private void OnFileReceived(object? sender, FileReceipt receipt)
     {
+        var path = receipt.FilePath;
         if (_pendingRemoteMedia != null &&
+            string.Equals(receipt.DeviceId, _pendingRemoteMediaDeviceId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(
                 Path.GetFileName(path),
                 Path.GetFileName(_pendingRemoteMediaName),
@@ -3354,7 +3503,7 @@ public sealed partial class MainWindow : Window
         }
         DispatcherQueue.TryEnqueue(() =>
         {
-            RecordReceivedTransfer(path);
+            RecordReceivedTransfer(path, receipt.DeviceId, receipt.TransferId);
             StatusText.Text = $"已接收文件：{Path.GetFileName(path)}";
         });
     }
@@ -3362,6 +3511,7 @@ public sealed partial class MainWindow : Window
     private void OnTransferFailed(object? sender, TransferFailure failure)
     {
         if (_pendingRemoteMedia != null &&
+            string.Equals(failure.DeviceId, _pendingRemoteMediaDeviceId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(
                 Path.GetFileName(failure.FileName),
                 Path.GetFileName(_pendingRemoteMediaName),
@@ -3376,8 +3526,8 @@ public sealed partial class MainWindow : Window
             _transferHistoryStore.Upsert(new TransferHistoryRecord
             {
                 Id = $"receive-{failure.TransferId}",
-                DeviceId = _activeConnection?.RemoteDeviceId ?? string.Empty,
-                DeviceName = _activeDevice?.Name ?? "Android 设备",
+                DeviceId = failure.DeviceId,
+                DeviceName = GetPhoneTargets().FirstOrDefault(d => d.DeviceId == failure.DeviceId)?.Name ?? "Android 手机",
                 FileName = failure.FileName,
                 TransferId = failure.TransferId,
                 Direction = TransferDirection.Receive,
@@ -3397,15 +3547,16 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() => _homePage?.SetTransferHistory(records));
     }
 
-    private void RecordReceivedTransfer(string path)
+    private void RecordReceivedTransfer(string path, string deviceId, string transferId)
     {
         if (!File.Exists(path)) return;
         var fileInfo = new FileInfo(path);
         _transferHistoryStore.Upsert(new TransferHistoryRecord
         {
-            Id = $"receive-{Guid.NewGuid():N}",
-            DeviceId = _activeConnection?.RemoteDeviceId ?? string.Empty,
-            DeviceName = _activeDevice?.Name ?? "Android 设备",
+            Id = $"receive-{transferId}",
+            TransferId = transferId,
+            DeviceId = deviceId,
+            DeviceName = GetPhoneTargets().FirstOrDefault(d => d.DeviceId == deviceId)?.Name ?? "Android 手机",
             FileName = fileInfo.Name,
             FilePath = path,
             Direction = TransferDirection.Receive,
@@ -3517,6 +3668,7 @@ public sealed partial class MainWindow : Window
 
     private void RefreshDeviceList(IReadOnlyList<Device> devices)
     {
+        RefreshFilePhoneSources();
         DeviceCountText.Text = devices.Count == 0 ? "正在搜索附近设备" : $"发现 {devices.Count} 台设备";
         DiscoveryInfoBar.Title = devices.Count == 0 ? "正在搜索附近设备" : $"已发现 {devices.Count} 台设备";
         DiscoveryInfoBar.Message = devices.Count == 0
@@ -3691,7 +3843,8 @@ public sealed partial class MainWindow : Window
 
         _registry.MarkSessionDisconnected(device.DeviceId);
         StatusText.Text = $"已断开 {device.Name}";
-        HeaderStatusText.Text = "局域网就绪";
+        var connectedCount = GetPhoneTargets().Count(phone => phone.IsConnected);
+        HeaderStatusText.Text = connectedCount > 0 ? $"已连接 {connectedCount} 台手机" : "局域网就绪";
         RefreshDeviceList(_registry.GetAllDevices());
     }
 
@@ -4042,13 +4195,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var connection = GetConnectedConnection();
-        bool isActiveDevice = _activeDevice?.DeviceId == device.DeviceId ||
-            string.Equals(connection?.RemoteDeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase);
-        if (isActiveDevice && connection != null)
+        var connection = _sessionManager.ConnectionForDevice(device.DeviceId);
+        if (connection != null)
         {
             _activeConnection = connection;
+            _activeDevice = device;
             ShowFileManagement();
+            _filePage?.SelectPhone(device.DeviceId);
         }
         else
         {
@@ -4279,7 +4432,7 @@ public sealed partial class MainWindow : Window
             connection.StateChanged += OnConnectionStateChanged;
             connection.PeerIdentified += OnPeerIdentified;
         }
-        _activeConnection = connection;
+        if (_activeConnection?.IsSessionReady != true) _activeConnection = connection;
         if (connection.PeerInfo is { } peer)
         {
             OnPeerIdentified(connection, peer);
@@ -4347,17 +4500,22 @@ public sealed partial class MainWindow : Window
             device.TrustState = TrustState.Trusted;
             device.PairingRequired = peer.PairingRequired;
 
-            _activeConnection = connection;
-            SetActiveDevice(device);
-            SetHeroDevice(device);
-            HeaderStatusText.Text = $"已连接 {device.Name}";
+            if (_activeConnection?.IsSessionReady != true || ReferenceEquals(_activeConnection, connection))
+            {
+                _activeConnection = connection;
+                SetActiveDevice(device);
+                SetHeroDevice(device);
+            }
+            else RefreshDeviceList(_registry.GetAllDevices());
+            var connectedCount = GetPhoneTargets().Count(phone => phone.IsConnected);
+            HeaderStatusText.Text = connectedCount > 1 ? $"已连接 {connectedCount} 台手机" : $"已连接 {device.Name}";
             StatusText.Text = $"已建立局域网会话 · {DateTime.Now:HH:mm:ss}";
             ActivityInfoBar.Title = "设备连接正常";
             ActivityInfoBar.Message = $"已连接到 {device.Name}，双向身份握手已完成。";
             ActivityInfoBar.Severity = InfoBarSeverity.Success;
             Home.ApplyThemePalette();
             RefreshExplorerSendMenu();
-            RefreshCurrentWorkspacePage(connection);
+            if (ReferenceEquals(_activeConnection, connection)) RefreshCurrentWorkspacePage(connection);
             _ = ProcessPendingShellSendsAsync();
         });
 
@@ -4491,6 +4649,7 @@ public sealed partial class MainWindow : Window
         {
             RefreshDeviceList(_registry.GetAllDevices());
             RefreshExplorerSendMenu();
+            ScheduleHistoricalReconnect(disconnectedDeviceId);
         });
 
         var wasActiveConnection = ReferenceEquals(_activeConnection, connection) ||
@@ -4505,16 +4664,24 @@ public sealed partial class MainWindow : Window
 
             DispatcherQueue.TryEnqueue(() =>
             {
+                if (_activeConnection != null && !ReferenceEquals(_activeConnection, connection)) return;
                 _activeConnection = null;
                 _activeDevice = null;
-                SetHeroDevice(null);
-                HeaderStatusText.Text = "局域网就绪";
+                var remainingConnection = _sessionManager.ActiveConnections.FirstOrDefault(c => c.IsSessionReady);
+                if (remainingConnection != null)
+                {
+                    _activeConnection = remainingConnection;
+                    _activeDevice = FindDeviceForConnection(remainingConnection);
+                }
+                SetHeroDevice(_activeDevice);
+                var connectedCount = GetPhoneTargets().Count(phone => phone.IsConnected);
+                HeaderStatusText.Text = connectedCount > 0 ? $"已连接 {connectedCount} 台手机" : "局域网就绪";
                 StatusText.Text = "设备连接已断开";
-                ActivityInfoBar.Title = "等待设备连接";
-                ActivityInfoBar.Message = "设备会继续在局域网内被发现。";
+                ActivityInfoBar.Title = connectedCount > 0 ? "其他手机仍已连接" : "等待设备连接";
+                ActivityInfoBar.Message = "仅断开此手机，不影响其他手机；设备会继续在局域网内被发现。";
                 ActivityInfoBar.Severity = InfoBarSeverity.Informational;
                 Home.ApplyThemePalette();
-                RefreshCurrentWorkspacePage(null);
+                RefreshCurrentWorkspacePage(_activeConnection);
             });
         }
     }
@@ -4563,9 +4730,9 @@ public sealed partial class MainWindow : Window
     {
         _activeDevice = device;
         device.ConnectionState = ConnectionState.Connected;
-        if (_filePage != null)
+        if (_filePage?.IsPhoneSelected == true &&
+            string.Equals(_filePage.SelectedPhoneDeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase))
         {
-            _filePage.PathText.Text = "最近文件";
             _filePage.StatusText.Text = $"已连接 · {device.Name}";
         }
         RefreshDeviceList(_registry.GetAllDevices());
@@ -4573,7 +4740,7 @@ public sealed partial class MainWindow : Window
 
     private void SetHeroDevice(Device? device)
     {
-        _filePage?.SetPhoneName(device?.Name);
+        RefreshFilePhoneSources();
         if (device == null)
         {
             HeroDeviceName.Text = _localIdentity.Name;
@@ -4645,19 +4812,12 @@ public sealed partial class MainWindow : Window
 
         ContentFrame.Navigate(typeof(FileManagementPage));
         PageTitle.Text = "文件管理";
-        ConfigureFileFilters(_fileCategory);
-        if (FileCategoryList.SelectedIndex < 0)
-        {
-            FileCategoryList.SelectedIndex = 0;
-        }
-        else
-        {
-            _ = RefreshRemoteFilesAsync(_fileCategory, _filePath);
-        }
+        if (_activeDevice != null) _filePage?.SelectPhone(_activeDevice.DeviceId);
     }
 
     private void FileCategory_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_restoringFilePhone) return;
         if (FileCategoryList.SelectedItem is not ListViewItem { Tag: string category })
         {
             return;
@@ -4686,6 +4846,7 @@ public sealed partial class MainWindow : Window
 
     private void FileFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_restoringFilePhone) return;
         if (_filePage == null || string.IsNullOrWhiteSpace(_fileCategory)) return;
         _ = RefreshRemoteFilesAsync(_fileCategory, _filePath);
     }
@@ -4708,6 +4869,7 @@ public sealed partial class MainWindow : Window
 
     private void FileViewMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_restoringFilePhone) return;
         _filePage?.ApplyViewMode();
         _ = RefreshRemoteFilesAsync(_fileCategory, _filePath);
     }
@@ -4717,8 +4879,11 @@ public sealed partial class MainWindow : Window
         var filePage = _filePage;
         if (filePage == null) return;
 
-        filePage.SetPhoneName(_activeDevice?.Name);
         if (!filePage.IsPhoneSelected) return;
+
+        if (filePage.SelectedPhoneDeviceId is { } sourceId)
+            _phoneBrowserStates[sourceId] = new(category, path, filePage.ViewMode.SelectedIndex,
+                filePage.TypeFilter.SelectedIndex, filePage.DocumentFilter.SelectedIndex, filePage.SortOptions.SelectedIndex);
 
         filePage.SetLocation(category, path);
 
@@ -4742,9 +4907,12 @@ public sealed partial class MainWindow : Window
         var connection = GetConnectedConnection();
         if (connection == null)
         {
-            FileManagementStatusText.Text = "请先连接手机";
+            ClearFileItemViews();
+            filePage.ReconnectPhone.Visibility = filePage.SelectedPhoneDeviceId == null ? Visibility.Collapsed : Visibility.Visible;
+            FileManagementStatusText.Text = filePage.SelectedPhoneDeviceId == null ? "请先连接手机" : "此手机已离线；重新连接后可浏览，发送文件可使用 Cloud Relay。";
             return;
         }
+        filePage.ReconnectPhone.Visibility = Visibility.Collapsed;
 
         _activeConnection = connection;
 
@@ -5030,7 +5198,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            _fileBatchLoading = false;
+            if (generation == _fileLoadGeneration) _fileBatchLoading = false;
         }
     }
 
@@ -5244,7 +5412,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var connection = GetConnectedConnection();
+        var connection = GetFileConnection(entry);
         if (connection == null || string.IsNullOrWhiteSpace(entry.Uri))
         {
             args.Cancel = true;
@@ -5326,11 +5494,11 @@ public sealed partial class MainWindow : Window
         string progressText,
         string? destinationDirectory = null)
     {
+        var connection = GetFileConnection(entry);
         await _remoteMediaReceiveGate.WaitAsync();
         try
         {
-            var connection = GetConnectedConnection();
-            if (connection == null)
+            if (connection?.IsSessionReady != true)
             {
                 throw new InvalidOperationException("设备会话已断开，请重新连接手机。");
             }
@@ -5343,7 +5511,8 @@ public sealed partial class MainWindow : Window
                 throw new InvalidOperationException("另一个文件正在接收，请稍后再试。");
             }
 
-            if (_filePage != null)
+            if (_filePage?.IsPhoneSelected == true &&
+                string.Equals(_filePage.SelectedPhoneDeviceId, connection.RemoteDeviceId, StringComparison.OrdinalIgnoreCase))
             {
                 _filePage.StatusText.Text = progressText;
             }
@@ -5351,10 +5520,12 @@ public sealed partial class MainWindow : Window
                 TaskCreationOptions.RunContinuationsAsynchronously);
             _pendingRemoteMedia = completion;
             _pendingRemoteMediaName = entry.Name;
+            _pendingRemoteMediaDeviceId = connection.RemoteDeviceId;
             var targetDirectory = destinationDirectory ?? _receiveDirectory;
             using var incomingDirectory = _transferManager.RegisterIncomingDirectory(
                 entry.Name,
-                targetDirectory);
+                targetDirectory,
+                connection.RemoteDeviceId);
             try
             {
                 await _workspaceRemoteClient.SendMediaToComputerAsync(
@@ -5370,6 +5541,7 @@ public sealed partial class MainWindow : Window
                 {
                     _pendingRemoteMedia = null;
                     _pendingRemoteMediaName = null;
+                    _pendingRemoteMediaDeviceId = null;
                 }
             }
         }
@@ -5383,7 +5555,11 @@ public sealed partial class MainWindow : Window
         RemoteFileEntry entry,
         string progressText)
     {
-        var location = _previewCache.GetLocation(entry);
+        var location = _previewCache.GetLocation(new RemoteFileEntry
+        {
+            Name = entry.Name, Uri = (entry.SourceDeviceId.Length > 0 ? entry.SourceDeviceId : GetFileConnection(entry)?.RemoteDeviceId) + ":" + entry.Uri,
+            SizeBytes = entry.SizeBytes, ModifiedAt = entry.ModifiedAt
+        });
         if (_previewCache.IsUsable(location, entry.SizeBytes))
         {
             return location.FilePath;
@@ -5408,7 +5584,8 @@ public sealed partial class MainWindow : Window
 
     private async Task SaveSelectedFilesAsync(IReadOnlyList<RemoteFileEntry> entries)
     {
-        var connection = GetConnectedConnection();
+        var generation = _fileLoadGeneration;
+        var connection = entries.Count > 0 ? GetFileConnection(entries[0]) : null;
         if (connection == null)
         {
             await ShowDialogAsync("无法保存", "设备会话已断开，请重新连接手机。", false);
@@ -5433,11 +5610,14 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        _filePage?.ExitSelectionMode();
         var destination = _receiveDirectory;
-        FileManagementStatusText.Text = failures.Count == 0
-            ? $"已保存 {completed} 个文件到 {destination}"
-            : $"已保存 {completed} 个文件，{failures.Count} 个失败";
+        if (generation == _fileLoadGeneration)
+        {
+            _filePage?.ExitSelectionMode();
+            FileManagementStatusText.Text = failures.Count == 0
+                ? $"已保存 {completed} 个文件到 {destination}"
+                : $"已保存 {completed} 个文件，{failures.Count} 个失败";
+        }
         if (failures.Count > 0)
         {
             await ShowDialogAsync(
@@ -5539,7 +5719,7 @@ public sealed partial class MainWindow : Window
     private async Task<RemoteMediaMetadata?> TryLoadRemoteMediaMetadataAsync(
         RemoteFileEntry entry)
     {
-        var connection = GetConnectedConnection();
+        var connection = GetFileConnection(entry);
         if (connection == null || string.IsNullOrWhiteSpace(entry.Uri)) return null;
         try
         {
@@ -5676,7 +5856,7 @@ public sealed partial class MainWindow : Window
         int generation,
         CancellationToken cancellation)
     {
-        var connection = GetConnectedConnection();
+        var connection = GetFileConnection(entry);
         if (connection == null ||
             string.IsNullOrWhiteSpace(entry.Uri) ||
             generation != _fileLoadGeneration ||
@@ -6318,8 +6498,8 @@ public sealed partial class MainWindow : Window
         ComputerFilesDroppedEventArgs args,
         CancellationToken cancellationToken)
     {
-        var connection = GetConnectedConnection();
-        var cloudDeviceId = connection?.RemoteDeviceId ?? GetPreferredTrustedDeviceId();
+        var connection = args.DeviceId != null ? _sessionManager.ConnectionForDevice(args.DeviceId) : GetConnectedConnection();
+        var cloudDeviceId = args.DeviceId ?? connection?.RemoteDeviceId ?? GetPreferredTrustedDeviceId();
         if (connection == null && cloudDeviceId == null)
         {
             await ShowDialogAsync("无法发送文件", "请先连接或信任一台 Android 设备，并在设置中配置 Cloud Relay。", false);
@@ -6341,7 +6521,8 @@ public sealed partial class MainWindow : Window
 
         if (result != null && result.Completed > 0)
         {
-            if (ContentFrame.Content is FileManagementPage)
+            if (ContentFrame.Content is FileManagementPage files &&
+                string.Equals(files.SelectedPhoneDeviceId, cloudDeviceId, StringComparison.OrdinalIgnoreCase))
             {
                 _ = RefreshRemoteFilesAsync(_fileCategory, _filePath, forceRefresh: true);
             }
@@ -7234,41 +7415,19 @@ public sealed partial class MainWindow : Window
 
     private void RefreshExplorerSendMenu()
     {
-        // The shell menu is a single-target shortcut, not a history browser.
-        // Keep only the most recently connected trusted device so old Android
-        // IDs do not accumulate as duplicate model entries. The latest trusted
-        // record remains visible while offline, which lets the shell click be
-        // persisted as a pending send for that same device.
-        var latestTrusted = _trustStore.GetAllTrustedDevices()
-            .Where(device => device.TrustState == TrustState.Trusted &&
-                !string.IsNullOrWhiteSpace(device.DeviceId))
+        var lastDeviceId = _trustStore.GetAllTrustedDevices()
+            .Where(device => device.TrustState == TrustState.Trusted)
             .OrderByDescending(device => device.LastSeen)
             .ThenByDescending(device => device.PairedAt)
-            .FirstOrDefault();
-
-        if (latestTrusted == null)
-        {
-            ExplorerSendMenu.Refresh(Environment.ProcessPath, Array.Empty<ExplorerSendDevice>());
-            return;
-        }
-
-        var connected = _sessionManager.ActiveConnections.FirstOrDefault(connection =>
-            connection.IsSessionReady &&
-            string.Equals(connection.RemoteDeviceId, latestTrusted.DeviceId,
-                StringComparison.OrdinalIgnoreCase));
-        var latestDevice = new ExplorerSendDevice(
-            latestTrusted.DeviceId,
-            connected?.PeerInfo?.Name ?? NormalizeExplorerDeviceName(latestTrusted.Name));
-        ExplorerSendMenu.Refresh(Environment.ProcessPath, new[] { latestDevice });
-        return;
-
+            .Select(device => device.DeviceId).FirstOrDefault();
+        ExplorerSendMenu.Refresh(Environment.ProcessPath, PhoneDeviceTarget.ForSendMenu(GetPhoneTargets(), lastDeviceId)
+            .Select(device => new ExplorerSendDevice(device.DeviceId, device.DisplayName)));
     }
-
-    private static string NormalizeExplorerDeviceName(string? name) =>
-        string.IsNullOrWhiteSpace(name) ? "已配对设备" : name.Trim();
 
     private string? GetPreferredTrustedDeviceId()
     {
+        if (ContentFrame.Content is FileManagementPage { IsPhoneSelected: true } files)
+            return files.SelectedPhoneDeviceId;
         return _trustStore.GetAllTrustedDevices()
             .Where(device => device.TrustState == TrustState.Trusted &&
                 !string.IsNullOrWhiteSpace(device.DeviceId))
@@ -7280,6 +7439,9 @@ public sealed partial class MainWindow : Window
 
     private SessionConnection? GetConnectedConnection()
     {
+        // An offline selected phone must never silently route operations to another phone.
+        if (ContentFrame.Content is FileManagementPage { IsPhoneSelected: true } files)
+            return files.SelectedPhoneDeviceId is { } id ? _sessionManager.ConnectionForDevice(id) : null;
         if (_activeConnection?.IsSessionReady == true &&
             !string.IsNullOrWhiteSpace(_activeConnection.RemoteDeviceId))
         {
@@ -7302,6 +7464,9 @@ public sealed partial class MainWindow : Window
         }
         return connection;
     }
+
+    private SessionConnection? GetFileConnection(RemoteFileEntry entry) =>
+        string.IsNullOrWhiteSpace(entry.SourceDeviceId) ? GetConnectedConnection() : _sessionManager.ConnectionForDevice(entry.SourceDeviceId);
 
     private async Task<ContentDialogResult> ShowContentDialogAsync(ContentDialog dialog)
     {

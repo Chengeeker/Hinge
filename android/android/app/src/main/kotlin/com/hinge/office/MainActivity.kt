@@ -1914,6 +1914,7 @@ class MainActivity : FlutterActivity() {
             mapOf(
                 "messageId" to "sms-test-${System.currentTimeMillis()}",
                 "source" to "sms",
+                "origin" to "sms_test",
                 "sender" to "Hinge 测试",
                 "body" to "验证码 123456，用于验证 Android 到 Windows 的短信同步链路。",
                 "timestamp" to System.currentTimeMillis(),

@@ -2587,12 +2587,31 @@ class _DevicesScreenState extends State<DevicesScreen>
       await _refreshStorage();
       _showMessage('已连接 ${device.name}');
     } catch (error) {
-      if (connection?.pairingError?.isNotEmpty == true) {
-        _remotePairingCodes.remove(device.deviceId);
+      // A direct-address attempt can fail after a simultaneous reverse
+      // connection has already completed. The authenticated live session is
+      // authoritative; do not replace its connected UI with a stale failure
+      // banner or discard a pairing code based on the losing attempt.
+      final liveConnection = widget.sessionManager.connectionForDevice(
+        device.deviceId,
+      );
+      final livePeer = liveConnection?.peerInfo;
+      final hasAuthenticatedSession =
+          liveConnection?.isReady == true &&
+          livePeer?.deviceId == device.deviceId;
+      if (hasAuthenticatedSession) {
+        if (mounted) {
+          _watchIncomingConnection(liveConnection!);
+        }
+      } else if (attemptGeneration == _connectionAttemptGeneration) {
+        if (connection?.pairingError?.isNotEmpty == true) {
+          _remotePairingCodes.remove(device.deviceId);
+        }
+        _showMessage('连接 ${device.name} 失败：$error');
       }
-      _showMessage('连接 ${device.name} 失败：$error');
     } finally {
-      if (mounted) setState(() => _connectingDeviceId = null);
+      if (mounted && _connectingDeviceId == device.deviceId) {
+        setState(() => _connectingDeviceId = null);
+      }
     }
   }
 

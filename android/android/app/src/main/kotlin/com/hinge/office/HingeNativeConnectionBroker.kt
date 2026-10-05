@@ -242,6 +242,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
     private val reconnectAttempts = ConcurrentHashMap<String, Int>()
     private val incomingTransfers = ConcurrentHashMap<String, NativeIncomingTransfer>()
     private val taskDirectory = File(appContext.filesDir, "hinge_transfer_queue")
+    private val transferReceiptLock = Any()
 
     @Volatile
     private var listener: ServerSocket? = null
@@ -578,12 +579,13 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 "transfer_queued",
                 mapOf("task" to task.id, "bytes" to source.length()),
             )
-            HingeNativeConnectionEvents.emit(
+            emitTransferReceipt(
                 mapOf(
                     "event" to "transfer_queued",
                     "taskId" to task.id,
                     "name" to task.name,
                     "targetDeviceId" to task.targetDeviceId,
+                    "localFilePath" to task.path,
                     "totalBytes" to source.length(),
                 ),
             )
@@ -610,6 +612,56 @@ class HingeNativeConnectionBroker(private val context: Context) {
     fun clearDiagnostics() = diagnostics.clear()
 
     fun emitCurrentSnapshotForFlutter() = emitSnapshot()
+
+    fun pendingTransferReceipts(): List<Map<String, Any?>> = synchronized(transferReceiptLock) {
+        val raw = preferences.getString(TRANSFER_RECEIPTS_KEY, "[]") ?: "[]"
+        val receipts = runCatching { JSONArray(raw) }.getOrNull() ?: return@synchronized emptyList()
+        (0 until receipts.length()).mapNotNull { index ->
+            val item = receipts.optJSONObject(index) ?: return@mapNotNull null
+            val receipt = LinkedHashMap<String, Any?>()
+            val keys = item.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val value = item.opt(key)
+                receipt[key] = if (value == JSONObject.NULL) null else value
+            }
+            receipt
+        }
+    }
+
+    fun acknowledgeTransferReceipts(receiptIds: Set<String>) {
+        if (receiptIds.isEmpty()) return
+        synchronized(transferReceiptLock) {
+            val raw = preferences.getString(TRANSFER_RECEIPTS_KEY, "[]") ?: "[]"
+            val receipts = runCatching { JSONArray(raw) }.getOrNull() ?: JSONArray()
+            val remaining = JSONArray()
+            for (index in 0 until receipts.length()) {
+                val item = receipts.optJSONObject(index) ?: continue
+                if (item.optString("receiptId") !in receiptIds) remaining.put(item)
+            }
+            preferences.edit().putString(TRANSFER_RECEIPTS_KEY, remaining.toString()).commit()
+        }
+    }
+
+    private fun emitTransferReceipt(event: Map<String, Any?>) {
+        val durableEvent = event + mapOf(
+            "occurredAtMs" to System.currentTimeMillis(),
+            "receiptId" to UUID.randomUUID().toString(),
+        )
+        val receipt = JSONObject()
+        durableEvent.forEach { (key, value) -> receipt.put(key, value) }
+        synchronized(transferReceiptLock) {
+            val raw = preferences.getString(TRANSFER_RECEIPTS_KEY, "[]") ?: "[]"
+            val receipts = runCatching { JSONArray(raw) }.getOrNull() ?: JSONArray()
+            receipts.put(receipt)
+            while (receipts.length() > MAX_TRANSFER_RECEIPTS) receipts.remove(0)
+            // Lifecycle events are rare (enqueue/completion/failure), so a
+            // synchronous commit makes them survive process death without
+            // adding disk work to the per-chunk progress path.
+            preferences.edit().putString(TRANSFER_RECEIPTS_KEY, receipts.toString()).commit()
+        }
+        HingeNativeConnectionEvents.emit(durableEvent)
+    }
 
     /**
      * Returns transfer IDs still owned by this foreground service. The history
@@ -1127,17 +1179,21 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     ),
                 ),
             )
-            HingeNativeConnectionEvents.emit(
-                mapOf(
+            val receivedEvent = mapOf(
                     "event" to "file_received",
                     "connectionId" to connection.connectionId,
+                    "deviceId" to connection.peer?.deviceId.orEmpty(),
+                    "deviceName" to connection.peer?.name.orEmpty(),
                     "path" to transfer.finalFile.absolutePath,
                     "name" to transfer.fileName,
                     "transferId" to transfer.transferId,
                     "bytesTransferred" to transfer.fileSize,
                     "totalBytes" to transfer.fileSize,
-                ),
-            )
+                )
+            emitTransferReceipt(receivedEvent)
+            runCatching {
+                HingeFileTransferNotifier.show(appContext, transfer.finalFile.absolutePath)
+            }
             true
         } catch (error: Exception) {
             runCatching { transfer.output.close() }
@@ -1153,10 +1209,12 @@ class HingeNativeConnectionBroker(private val context: Context) {
         transfer: NativeIncomingTransfer,
         reason: String,
     ) {
-        HingeNativeConnectionEvents.emit(
+        emitTransferReceipt(
             mapOf(
                 "event" to "file_transfer_failed",
                 "connectionId" to connection.connectionId,
+                "deviceId" to connection.peer?.deviceId.orEmpty(),
+                "deviceName" to connection.peer?.name.orEmpty(),
                 "transferId" to transfer.transferId,
                 "name" to transfer.fileName,
                 "bytesTransferred" to transfer.bytesReceived,
@@ -1380,6 +1438,10 @@ class HingeNativeConnectionBroker(private val context: Context) {
                         mapOf(
                             "event" to "transfer_progress",
                             "taskId" to task.id,
+                            "name" to task.name,
+                            "targetDeviceId" to task.targetDeviceId,
+                            "localFilePath" to task.path,
+                            "bytesTransferred" to bytesSent,
                             "bytes" to bytesSent,
                             "totalBytes" to fileLength,
                         ),
@@ -1413,18 +1475,30 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     "bytesPerSecond" to bytesPerSecond(fileLength, elapsedMs),
                 ),
             )
-            HingeNativeConnectionEvents.emit(
-                mapOf("event" to "transfer_completed", "taskId" to task.id),
+            emitTransferReceipt(
+                mapOf(
+                    "event" to "transfer_completed",
+                    "taskId" to task.id,
+                    "name" to task.name,
+                    "targetDeviceId" to task.targetDeviceId,
+                    "localFilePath" to task.path,
+                    "bytesTransferred" to fileLength,
+                    "totalBytes" to fileLength,
+                ),
             )
         } catch (error: Exception) {
             diagnostics.log(
                 "transfer_failed",
                 mapOf("task" to task.id, "reason" to error.javaClass.simpleName),
             )
-            HingeNativeConnectionEvents.emit(
+            emitTransferReceipt(
                 mapOf(
                     "event" to "transfer_failed",
                     "taskId" to task.id,
+                    "name" to task.name,
+                    "targetDeviceId" to task.targetDeviceId,
+                    "localFilePath" to task.path,
+                    "totalBytes" to file.length(),
                     "reason" to error.javaClass.simpleName,
                 ),
             )
@@ -1567,6 +1641,11 @@ class HingeNativeConnectionBroker(private val context: Context) {
 
     private fun normalizeCode(value: String?): String =
         value?.trim()?.takeIf { it.matches(Regex("\\d{6}")) } ?: ""
+
+    private companion object {
+        const val TRANSFER_RECEIPTS_KEY = "pending_transfer_receipts"
+        const val MAX_TRANSFER_RECEIPTS = 100
+    }
 
     private inner class NativeConnection(
         val connectionId: String,

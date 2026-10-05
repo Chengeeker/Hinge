@@ -569,6 +569,20 @@ class MainActivity : FlutterActivity() {
                     result.success(broker.activeTransferHistoryIds())
                 }
             }
+            "pendingNativeTransferReceipts" -> {
+                val receipts: List<Map<String, Any?>> =
+                    HingeForegroundService.current?.connectionBroker()
+                        ?.pendingTransferReceipts() ?: emptyList()
+                result.success(receipts)
+            }
+            "ackNativeTransferReceipts" -> {
+                val receiptIds = (call.argument<List<String>>("receiptIds") ?: emptyList())
+                    .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+                    .toSet()
+                HingeForegroundService.current?.connectionBroker()
+                    ?.acknowledgeTransferReceipts(receiptIds)
+                result.success(true)
+            }
             "readConnectionDiagnostics" -> result.success(
                 HingeForegroundService.current?.connectionBroker()?.readDiagnostics() ?: "",
             )
@@ -1940,34 +1954,8 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun showFileReceivedNotification(call: MethodCall, result: MethodChannel.Result) {
-        if (!hasNotificationPermission()) {
-            result.success(false)
-            return
-        }
         val path = call.argument<String>("path")?.trim().orEmpty()
-        if (path.isEmpty()) {
-            result.success(false)
-            return
-        }
-        val file = File(path)
-        createFileNotificationChannel()
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, FILE_CHANNEL_ID)
-        } else {
-            Notification.Builder(this)
-        }
-        val mimeType = guessMimeType(file.name)
-        val notification = builder
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("收到文件")
-            .setContentText("${file.name} · 点击使用默认应用打开")
-            .setCategory(Notification.CATEGORY_PROGRESS)
-            .setAutoCancel(true)
-            .setContentIntent(receivedFileIntent(path, mimeType))
-            .build()
-        getSystemService(NotificationManager::class.java)
-            .notify(path.hashCode(), notification)
-        result.success(true)
+        result.success(HingeFileTransferNotifier.show(this, path))
     }
 
     private fun showCloudRelayTransferProgress(
@@ -4529,12 +4517,12 @@ class MainActivity : FlutterActivity() {
         private const val ACTION_OPEN_RECEIVED_DIRECTORY =
             "com.hinge.office.OPEN_RECEIVED_DIRECTORY"
         private const val ACTION_OPEN_RECEIVED_FILE =
-            "com.hinge.office.OPEN_RECEIVED_FILE"
+            HingeFileTransferNotifier.ACTION_OPEN_RECEIVED_FILE
         private const val EXTRA_RECEIVED_FILE_PATH =
-            "com.hinge.office.RECEIVED_FILE_PATH"
+            HingeFileTransferNotifier.EXTRA_RECEIVED_FILE_PATH
         private const val EXTRA_RECEIVED_FILE_MIME =
-            "com.hinge.office.RECEIVED_FILE_MIME"
-        private const val FILE_CHANNEL_ID = "hinge_file_transfer"
+            HingeFileTransferNotifier.EXTRA_RECEIVED_FILE_MIME
+        private const val FILE_CHANNEL_ID = HingeFileTransferNotifier.CHANNEL_ID
         private const val DEFAULT_APPS_PREFS = "default_apps"
     }
 }

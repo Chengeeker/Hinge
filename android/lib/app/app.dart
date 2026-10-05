@@ -83,6 +83,8 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   late final WorkspaceCommandRouter _commandRouter;
   StreamSubscription<void>? _networkPolicySubscription;
   StreamSubscription<Map<String, dynamic>>? _nativeFileTransferSubscription;
+  final Map<String, DateTime> _lastNativeHistoryProgressAt = {};
+  bool _drainingNativeTransferReceipts = false;
   bool _ownsDiscovery = false;
   bool _ownsTransfer = false;
   bool _ownsWorkspace = false;
@@ -150,7 +152,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
       _networkPolicySubscription = _sessionManager.onNetworkPolicyChanged
           .listen((_) => unawaited(_discoveryService.refreshNetwork()));
       _nativeFileTransferSubscription = _sessionManager.onNativeFileTransfer
-          .listen(_transferManager.handleNativeTransferEvent);
+          .listen(_handleNativeFileTransferEvent);
     }
     _dataService = WorkspaceDataService();
     WidgetsBinding.instance.pointerRouter.addGlobalRoute(_handleGlobalPointer);
@@ -180,6 +182,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
       // SessionManager records its own error and discovery can still start.
     }
     if (Platform.isAndroid) {
+      await _drainNativeTransferReceipts();
       final activeTransferIds = await _sessionManager
           .activeTransferHistoryIds();
       if (mounted && activeTransferIds != null) {
@@ -221,6 +224,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (Platform.isAndroid && state == AppLifecycleState.resumed) {
       unawaited(_discoveryService.setAppForeground(true));
+      unawaited(_drainNativeTransferReceipts());
     } else if (Platform.isAndroid &&
         (state == AppLifecycleState.hidden ||
             state == AppLifecycleState.paused)) {
@@ -371,6 +375,147 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
     final root = widget.persistentDataDirectory?.trim();
     if (root == null || root.isEmpty) return null;
     return '$root${Platform.pathSeparator}$fileName';
+  }
+
+  void _handleNativeFileTransferEvent(Map<String, dynamic> event) {
+    _transferManager.handleNativeTransferEvent(event);
+    _recordNativeTransferHistory(event);
+    final receiptId = '${event['receiptId'] ?? ''}'.trim();
+    if (receiptId.isNotEmpty) {
+      unawaited(_sessionManager.acknowledgeTransferReceipts([receiptId]));
+    }
+  }
+
+  Future<void> _drainNativeTransferReceipts() async {
+    if (!Platform.isAndroid || _drainingNativeTransferReceipts || !mounted) {
+      return;
+    }
+    _drainingNativeTransferReceipts = true;
+    try {
+      final receipts = await _sessionManager.pendingTransferReceipts();
+      if (!mounted || receipts.isEmpty) return;
+      final acknowledged = <String>[];
+      for (final event in receipts) {
+        _recordNativeTransferHistory(event);
+        final receiptId = '${event['receiptId'] ?? ''}'.trim();
+        if (receiptId.isNotEmpty) acknowledged.add(receiptId);
+      }
+      await _sessionManager.acknowledgeTransferReceipts(acknowledged);
+    } finally {
+      _drainingNativeTransferReceipts = false;
+    }
+  }
+
+  void _recordNativeTransferHistory(Map<String, dynamic> event) {
+    final eventType = '${event['event'] ?? ''}';
+    final isOutgoing = eventType.startsWith('transfer_');
+    final isIncoming =
+        eventType == 'file_received' ||
+        eventType == 'file_transfer_started' ||
+        eventType == 'file_transfer_progress' ||
+        eventType == 'file_transfer_failed';
+    if (!isOutgoing && !isIncoming) return;
+
+    final rawTransferId = isOutgoing ? event['taskId'] : event['transferId'];
+    final transferId = '${rawTransferId ?? ''}'.trim();
+    if (transferId.isEmpty) return;
+    final id = '${isOutgoing ? 'native' : 'lan'}-$transferId';
+    TransferHistoryRecord? existing;
+    for (final record in _transferHistoryStore.records) {
+      if (record.id == id) {
+        existing = record;
+        break;
+      }
+    }
+    final fileName = '${event['name'] ?? existing?.fileName ?? ''}'.trim();
+    if (fileName.isEmpty) return;
+    final now = DateTime.now();
+    final occurredAtMs = (event['occurredAtMs'] as num?)?.toInt();
+    final eventTime = occurredAtMs == null
+        ? now
+        : DateTime.fromMillisecondsSinceEpoch(occurredAtMs);
+    final bytes =
+        (event['bytesTransferred'] as num?)?.toInt() ??
+        (event['bytes'] as num?)?.toInt() ??
+        existing?.bytesTransferred ??
+        0;
+    final totalBytes =
+        (event['totalBytes'] as num?)?.toInt() ?? existing?.totalBytes ?? 0;
+    final status = switch (eventType) {
+      'file_received' ||
+      'transfer_completed' => TransferHistoryStatus.completed,
+      'file_transfer_failed' => TransferHistoryStatus.failed,
+      'transfer_failed' || 'transfer_queued' => TransferHistoryStatus.queued,
+      _ => TransferHistoryStatus.transferring,
+    };
+    // Out-of-order queued/progress callbacks must not move a completed row
+    // backwards after a durable completion receipt has been restored.
+    if (existing?.status == TransferHistoryStatus.completed &&
+        status != TransferHistoryStatus.completed) {
+      return;
+    }
+    if (status == TransferHistoryStatus.transferring &&
+        eventType.endsWith('_progress')) {
+      final previous = _lastNativeHistoryProgressAt[id];
+      final reachedEnd = totalBytes > 0 && bytes >= totalBytes;
+      final advanced =
+          existing != null &&
+          bytes - existing.bytesTransferred >= 2 * 1024 * 1024;
+      if (previous != null &&
+          now.difference(previous) < const Duration(milliseconds: 500) &&
+          !reachedEnd &&
+          !advanced) {
+        return;
+      }
+      _lastNativeHistoryProgressAt[id] = now;
+    }
+
+    final deviceId =
+        '${event['deviceId'] ?? event['targetDeviceId'] ?? existing?.deviceId ?? ''}'
+            .trim();
+    var deviceName = '${event['deviceName'] ?? existing?.deviceName ?? ''}'
+        .trim();
+    if (deviceName.isEmpty) {
+      for (final device in _registry.devices) {
+        if (device.deviceId == deviceId) {
+          deviceName = device.name;
+          break;
+        }
+      }
+    }
+    if (deviceName.isEmpty) {
+      deviceName = deviceId.isEmpty ? '已连接设备' : '已配对设备';
+    }
+    final localFilePath =
+        '${event['localFilePath'] ?? event['path'] ?? existing?.localFilePath ?? ''}'
+            .trim();
+    final isCompleted = status == TransferHistoryStatus.completed;
+    final savedBytes = isCompleted && totalBytes > 0 ? totalBytes : bytes;
+    final error = status == TransferHistoryStatus.failed
+        ? '${event['reason'] ?? '接收失败'}'
+        : status == TransferHistoryStatus.queued &&
+              eventType == 'transfer_failed'
+        ? '${event['reason'] ?? '暂时失败'}，系统将自动重试'
+        : '';
+    _transferHistoryStore.upsert(
+      TransferHistoryRecord(
+        id: id,
+        transferId: transferId,
+        deviceId: deviceId,
+        deviceName: deviceName,
+        fileName: fileName,
+        localFilePath: localFilePath,
+        direction: isOutgoing
+            ? TransferHistoryDirection.send
+            : TransferHistoryDirection.receive,
+        status: status,
+        bytesTransferred: savedBytes,
+        totalBytes: totalBytes,
+        createdAt: existing?.createdAt ?? eventTime,
+        updatedAt: now,
+        error: error,
+      ),
+    );
   }
 }
 
@@ -751,7 +896,6 @@ class _DevicesScreenState extends State<DevicesScreen>
   _connectionRequestSubscription;
   StreamSubscription<String>? _fileReceivedSubscription;
   StreamSubscription<TransferProgress>? _transferProgressSubscription;
-  StreamSubscription<Map<String, dynamic>>? _nativeQueueHistorySubscription;
   StreamSubscription<List<SharedFile>>? _sharedFileSubscription;
   final List<StreamSubscription<dynamic>> _incomingPeerSubscriptions = [];
   final Set<SessionConnection> _watchedConnections = <SessionConnection>{};
@@ -878,10 +1022,6 @@ class _DevicesScreenState extends State<DevicesScreen>
     _transferProgressSubscription = widget.transferManager.progressStream
         .listen(_recordTransferProgress);
     if (Platform.isAndroid) {
-      _nativeQueueHistorySubscription = widget
-          .sessionManager
-          .onNativeFileTransfer
-          .listen(_recordNativeQueuedTransferEvent);
       _sharedFileSubscription = widget.dataService.sharedFilesStream.listen(
         _enqueueSharedFiles,
         onError: (Object error, StackTrace stackTrace) {
@@ -933,7 +1073,6 @@ class _DevicesScreenState extends State<DevicesScreen>
     _connectionRequestSubscription?.cancel();
     _fileReceivedSubscription?.cancel();
     _transferProgressSubscription?.cancel();
-    _nativeQueueHistorySubscription?.cancel();
     _sharedFileSubscription?.cancel();
     _listenerStatusTimer?.cancel();
     _listenerStatusTimer = null;
@@ -1288,86 +1427,43 @@ class _DevicesScreenState extends State<DevicesScreen>
         )) {
       return;
     }
+    final localFilePath = progress.localFilePath.isNotEmpty
+        ? progress.localFilePath
+        : existing?.localFilePath ?? '';
+    final deviceId = progress.deviceId.isNotEmpty
+        ? progress.deviceId
+        : existing?.deviceId ?? '';
+    final deviceName = progress.deviceName.isNotEmpty
+        ? progress.deviceName
+        : existing?.deviceName ?? '';
+    if (existing != null &&
+        existing.status == status &&
+        existing.bytesTransferred == progress.bytesTransferred &&
+        existing.totalBytes == progress.totalBytes &&
+        existing.direction ==
+            (progress.direction == FileTransferDirection.send
+                ? TransferHistoryDirection.send
+                : TransferHistoryDirection.receive) &&
+        existing.localFilePath == localFilePath) {
+      return;
+    }
     widget.transferHistoryStore.upsert(
       TransferHistoryRecord(
         id: id,
         transferId: progress.transferId,
-        deviceId: progress.deviceId.isNotEmpty
-            ? progress.deviceId
-            : existing?.deviceId ?? '',
-        deviceName: progress.deviceName.isNotEmpty
-            ? progress.deviceName
-            : existing?.deviceName ?? '',
+        deviceId: deviceId,
+        deviceName: deviceName,
         fileName: progress.fileName,
         direction: progress.direction == FileTransferDirection.send
             ? TransferHistoryDirection.send
             : TransferHistoryDirection.receive,
-        localFilePath: progress.localFilePath.isNotEmpty
-            ? progress.localFilePath
-            : existing?.localFilePath ?? '',
+        localFilePath: localFilePath,
         status: status,
         bytesTransferred: progress.bytesTransferred,
         totalBytes: progress.totalBytes,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
         error: progress.error,
-      ),
-    );
-  }
-
-  void _recordNativeQueuedTransferEvent(Map<String, dynamic> event) {
-    final eventType = '${event['event'] ?? ''}';
-    if (!eventType.startsWith('transfer_')) return;
-    final taskId = '${event['taskId'] ?? ''}'.trim();
-    if (taskId.isEmpty) return;
-    final id = 'native-$taskId';
-    final existing = _findTransferHistory(id);
-    final fileName = '${event['name'] ?? existing?.fileName ?? ''}'.trim();
-    if (fileName.isEmpty) return;
-    final now = DateTime.now();
-    final targetDeviceId =
-        '${event['targetDeviceId'] ?? existing?.deviceId ?? ''}'.trim();
-    final bytes =
-        (event['bytesTransferred'] as num?)?.toInt() ??
-        (event['bytes'] as num?)?.toInt() ??
-        existing?.bytesTransferred ??
-        0;
-    final totalBytes =
-        (event['totalBytes'] as num?)?.toInt() ?? existing?.totalBytes ?? 0;
-    final state = switch (eventType) {
-      'transfer_progress' => TransferHistoryStatus.transferring,
-      'transfer_completed' => TransferHistoryStatus.completed,
-      // The native queue retries failed sends automatically. Keep the row
-      // active and make that retry visible instead of claiming it is terminal.
-      'transfer_failed' => TransferHistoryStatus.queued,
-      _ => existing?.status ?? TransferHistoryStatus.queued,
-    };
-    if (eventType == 'transfer_progress' &&
-        !_shouldPersistTransferProgress(id, now, bytes, totalBytes, existing)) {
-      return;
-    }
-    final reason = eventType == 'transfer_failed'
-        ? '${event['reason'] ?? '暂时失败'}，系统将自动重试'
-        : (state == TransferHistoryStatus.completed
-              ? ''
-              : existing?.error ?? '');
-    widget.transferHistoryStore.upsert(
-      TransferHistoryRecord(
-        id: id,
-        transferId: taskId,
-        deviceId: targetDeviceId,
-        deviceName: _transferDeviceName(targetDeviceId),
-        fileName: fileName,
-        direction: TransferHistoryDirection.send,
-        localFilePath: existing?.localFilePath ?? '',
-        status: state,
-        bytesTransferred: state == TransferHistoryStatus.completed
-            ? (totalBytes > 0 ? totalBytes : bytes)
-            : bytes,
-        totalBytes: totalBytes,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-        error: reason,
       ),
     );
   }

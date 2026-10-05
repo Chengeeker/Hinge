@@ -685,6 +685,32 @@ class _NativeSessionBridge {
       return null;
     }
   }
+
+  Future<List<Map<String, dynamic>>> pendingTransferReceipts() async {
+    try {
+      final result = await _methodChannel.invokeMethod<dynamic>(
+        'pendingNativeTransferReceipts',
+      );
+      if (result is! List) return const <Map<String, dynamic>>[];
+      return result
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<void> acknowledgeTransferReceipts(List<String> receiptIds) async {
+    if (receiptIds.isEmpty) return;
+    try {
+      await _methodChannel.invokeMethod<void>('ackNativeTransferReceipts', {
+        'receiptIds': receiptIds,
+      });
+    } catch (_) {
+      // Keep receipts on the native side if Flutter cannot confirm the write.
+    }
+  }
 }
 
 class _NativeSessionConnection extends SessionConnection {
@@ -1001,6 +1027,18 @@ class SessionManager {
     final bridge = _nativeBridge;
     if (bridge == null) return null;
     return bridge.activeTransferHistoryIds();
+  }
+
+  Future<List<Map<String, dynamic>>> pendingTransferReceipts() async {
+    final bridge = _nativeBridge;
+    if (bridge == null) return const <Map<String, dynamic>>[];
+    return bridge.pendingTransferReceipts();
+  }
+
+  Future<void> acknowledgeTransferReceipts(List<String> receiptIds) async {
+    final bridge = _nativeBridge;
+    if (bridge == null || receiptIds.isEmpty) return;
+    await bridge.acknowledgeTransferReceipts(receiptIds);
   }
 
   SessionManager({

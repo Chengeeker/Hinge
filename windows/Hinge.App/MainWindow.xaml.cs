@@ -85,7 +85,7 @@ public sealed partial class MainWindow : Window
     private readonly CloudRelayTransferService _cloudRelayTransferService;
     private const int InitialFileBatchSize = 200;
     private const int AdditionalFileBatchSize = 200;
-    private const int ThumbnailBudgetPerBatch = 80;
+    private readonly SemaphoreSlim _fileThumbnailGate = new(GetFileThumbnailConcurrency());
     private readonly HashSet<SessionConnection> _observedConnections = new();
     private readonly Dictionary<string, DateTime> _automaticConnectAttempts = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _manualDisconnectSuppressedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
@@ -97,16 +97,34 @@ public sealed partial class MainWindow : Window
     private string _fileCategory = "recent";
     private string _filePath = string.Empty;
     private sealed record PhoneBrowserState(string Category, string Path, int View, int Type, int Document, int Sort);
+    private sealed class FileThumbnailRequestState
+    {
+        public FileThumbnailRequestState(
+            RemoteFileEntry entry,
+            int generation,
+            CancellationToken cancellation)
+        {
+            Entry = entry;
+            Generation = generation;
+            Cancellation = cancellation;
+        }
+
+        public RemoteFileEntry Entry { get; }
+        public int Generation { get; }
+        public CancellationToken Cancellation { get; }
+        public bool Started { get; set; }
+    }
+
     private readonly Dictionary<string, PhoneBrowserState> _phoneBrowserStates = new(StringComparer.OrdinalIgnoreCase);
     private string? _filePhoneDeviceId;
     private bool _restoringFilePhone;
     private IReadOnlyList<RemoteFileEntry> _visibleFileEntries = Array.Empty<RemoteFileEntry>();
-    private int _hiddenSmallRecentFileCount;
     private int _loadedFileCount;
     private int _remoteFileOffset;
     private int _remoteFileTotal;
     private int _fileLoadGeneration;
     private bool _fileBatchLoading;
+    private bool _fileThumbnailResumeQueued;
     private CancellationTokenSource? _fileLoadingCancellation;
     private HomePage? _homePage;
     private FileManagementPage? _filePage;
@@ -802,6 +820,8 @@ public sealed partial class MainWindow : Window
             page.Categories.SelectionChanged += FileCategory_SelectionChanged;
             page.Files.ItemClick += FileListView_ItemClick;
             page.GridFiles.ItemClick += FileListView_ItemClick;
+            page.GridFiles.Loaded += FileGridView_Loaded;
+            page.GridFiles.SizeChanged += FileGridView_SizeChanged;
             page.ViewMode.SelectionChanged += FileViewMode_SelectionChanged;
             page.ApplyViewMode();
             page.SelectionStateChanged += FileSelectionStateChanged;
@@ -928,6 +948,68 @@ public sealed partial class MainWindow : Window
     {
         if (_filePage?.IsPhoneSelected != true) return;
         _ = AppendNextFileBatchAsync();
+    }
+
+    private void FileGridView_Loaded(object sender, RoutedEventArgs e) =>
+        ScheduleFileThumbnailResume();
+
+    private void FileGridView_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ScheduleFileThumbnailResume();
+
+    private void ScheduleFileThumbnailResume()
+    {
+        if (_fileThumbnailResumeQueued) return;
+        _fileThumbnailResumeQueued = true;
+        if (!DispatcherQueue.TryEnqueue(() =>
+            {
+                _fileThumbnailResumeQueued = false;
+                if (_filePage is not { IsPhoneSelected: true, IsGridMode: true } page ||
+                    page.GridFiles.Visibility != Visibility.Visible)
+                {
+                    return;
+                }
+
+                ResumeFileThumbnails(page.GridFiles);
+            }))
+        {
+            _fileThumbnailResumeQueued = false;
+        }
+    }
+
+    private void ResumeFileThumbnails(DependencyObject root)
+    {
+        if (root is Image image)
+        {
+            StartFileThumbnailRequest(image);
+            return;
+        }
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            ResumeFileThumbnails(VisualTreeHelper.GetChild(root, index));
+        }
+    }
+
+    private void FileThumbnail_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Image image) StartFileThumbnailRequest(image);
+    }
+
+    private void StartFileThumbnailRequest(Image image)
+    {
+        if (!image.IsLoaded || image.Source != null ||
+            image.Tag is not FileThumbnailRequestState request || request.Started ||
+            request.Generation != _fileLoadGeneration || request.Cancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
+        request.Started = true;
+        _ = LoadRemoteFileThumbnailAsync(
+            image,
+            request.Entry,
+            request.Generation,
+            request.Cancellation);
     }
 
     private void FileSelectionStateChanged(object? sender, EventArgs e)
@@ -1284,25 +1366,155 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowAboutDialogAsync()
     {
-        var content = new StackPanel { Spacing = 12 };
+        var owner = (FrameworkElement)Content;
+        var content = new StackPanel { Spacing = 14 };
+
+        content.Children.Add(new Border
+        {
+            Width = 76,
+            Height = 76,
+            Padding = new Thickness(10),
+            CornerRadius = new CornerRadius(20),
+            Background = ThemeBrushes.MutedSurface(owner),
+            BorderBrush = ThemeBrushes.Border(owner),
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Child = new Image
+            {
+                Source = new BitmapImage(new Uri("ms-appx:///Assets/app_icon.png")),
+                Stretch = Stretch.Uniform
+            }
+        });
+
+        var titleRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Spacing = 10
+        };
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = "Hinge",
+            FontSize = 26,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        titleRow.Children.Add(new Border
+        {
+            Padding = new Thickness(10, 5, 10, 5),
+            CornerRadius = new CornerRadius(999),
+            Background = ThemeBrushes.MutedSurface(owner),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = $"v{Constants.AppVersion}",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = ThemeBrushes.AccentText(owner),
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        });
+        content.Children.Add(titleRow);
+
         content.Children.Add(new TextBlock
         {
-            Text = "Hinge\n局域网优先的跨设备办公套件\n\nWindows 端：WinUI 3 + Windows App SDK\nAndroid 端：Flutter + Material 3 Expressive\n\n数据默认只在局域网设备之间传输。",
+            Text = "局域网优先的跨设备办公套件",
+            FontSize = 16,
+            Foreground = ThemeBrushes.Secondary(owner),
+            TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap
         });
-        content.Children.Add(new HyperlinkButton
+        content.Children.Add(new TextBlock
         {
-            Content = "访问 GitHub 项目主页",
+            Text = "Windows：WinUI 3　·　Android：Flutter + Material 3",
+            FontSize = 12,
+            Foreground = ThemeBrushes.Muted(owner),
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        void AddFeature(Symbol symbol, string description)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 12
+            };
+            row.Children.Add(new SymbolIcon(symbol)
+            {
+                Width = 22,
+                Height = 22,
+                Foreground = ThemeBrushes.AccentText(owner),
+                VerticalAlignment = VerticalAlignment.Top
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = description,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            content.Children.Add(row);
+        }
+
+        AddFeature(Symbol.Phone, "设备发现、连接与文件访问");
+        AddFeature(Symbol.AllApps, "笔记、待办、日历与相册工作区");
+        AddFeature(Symbol.Save, "数据默认保存在设备本地；文件可通过局域网或自建 Cloud Relay 传输");
+
+        var projectInfo = new Grid { ColumnSpacing = 16 };
+        projectInfo.ColumnDefinitions.Add(new ColumnDefinition
+        {
+            Width = new GridLength(1, GridUnitType.Star)
+        });
+        projectInfo.ColumnDefinitions.Add(new ColumnDefinition
+        {
+            Width = GridLength.Auto
+        });
+
+        var projectDetails = new StackPanel
+        {
+            Spacing = 4,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        projectDetails.Children.Add(new TextBlock
+        {
+            Text = "GitHub 开源项目",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        projectDetails.Children.Add(new TextBlock
+        {
+            Text = "github.com/Chengeeker/Hinge",
+            FontSize = 12,
+            Foreground = ThemeBrushes.Secondary(owner),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+        projectInfo.Children.Add(projectDetails);
+
+        var projectHomeLink = new HyperlinkButton
+        {
+            Content = "访问项目主页",
             NavigateUri = new Uri("https://github.com/Chengeeker/Hinge"),
-            HorizontalAlignment = HorizontalAlignment.Left
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(12, 8, 12, 8)
+        };
+        Grid.SetColumn(projectHomeLink, 1);
+        projectInfo.Children.Add(projectHomeLink);
+
+        content.Children.Add(new Border
+        {
+            Padding = new Thickness(14),
+            CornerRadius = new CornerRadius(14),
+            Background = ThemeBrushes.MutedSurface(owner),
+            BorderBrush = ThemeBrushes.Border(owner),
+            BorderThickness = new Thickness(1),
+            Child = projectInfo
         });
 
         var dialog = new ContentDialog
         {
-            Title = "关于 Hinge",
+            Title = null,
             Content = content,
-            CloseButtonText = "关闭",
-            XamlRoot = ((FrameworkElement)Content).XamlRoot
+            CloseButtonText = "我知道了",
+            XamlRoot = owner.XamlRoot
         };
         await ShowContentDialogAsync(dialog);
     }
@@ -4898,7 +5110,6 @@ public sealed partial class MainWindow : Window
         var cancellation = new CancellationTokenSource();
         _fileLoadingCancellation = cancellation;
         _visibleFileEntries = Array.Empty<RemoteFileEntry>();
-        _hiddenSmallRecentFileCount = 0;
         _loadedFileCount = 0;
         _remoteFileOffset = 0;
         _remoteFileTotal = 0;
@@ -4943,9 +5154,8 @@ public sealed partial class MainWindow : Window
             cancellation.Token.ThrowIfCancellationRequested();
             if (generation != _fileLoadGeneration) return;
 
-            _remoteFileOffset = page.Entries.Count;
+            _remoteFileOffset = Math.Max(page.ScannedCount, page.Entries.Count);
             _remoteFileTotal = page.Total;
-            _hiddenSmallRecentFileCount = CountSmallRecentFiles(page.Entries, category);
             var visibleEntries = ApplyFileFilters(page.Entries, category);
             _visibleFileEntries = visibleEntries;
             _loadedFileCount = 0;
@@ -5103,15 +5313,15 @@ public sealed partial class MainWindow : Window
                 cancellation.ThrowIfCancellationRequested();
                 if (generation != _fileLoadGeneration) return;
 
-                if (nextPage.Entries.Count == 0)
+                var scannedCount = Math.Max(nextPage.ScannedCount, nextPage.Entries.Count);
+                if (scannedCount <= 0)
                 {
                     _remoteFileOffset = _remoteFileTotal;
                     break;
                 }
 
-                _remoteFileOffset += nextPage.Entries.Count;
                 _remoteFileTotal = Math.Max(_remoteFileTotal, nextPage.Total);
-                _hiddenSmallRecentFileCount += CountSmallRecentFiles(nextPage.Entries, _fileCategory);
+                _remoteFileOffset = Math.Min(_remoteFileTotal, _remoteFileOffset + scannedCount);
                 _visibleFileEntries = _visibleFileEntries
                     .Concat(ApplyFileFilters(nextPage.Entries, _fileCategory))
                     .ToArray();
@@ -5123,7 +5333,6 @@ public sealed partial class MainWindow : Window
                 .Skip(start)
                 .Take(batchSize)
                 .ToList();
-            var thumbnailItems = new List<(Image Image, RemoteFileEntry Entry)>();
             var gridMode = _filePage?.IsGridMode == true;
             var appended = 0;
 
@@ -5145,6 +5354,14 @@ public sealed partial class MainWindow : Window
                 else
                 {
                     var tile = BuildRemoteFileTile(entry);
+                    if (tile.Thumbnail != null)
+                    {
+                        tile.Thumbnail.Tag = new FileThumbnailRequestState(
+                            entry,
+                            generation,
+                            cancellation);
+                        tile.Thumbnail.Loaded += FileThumbnail_Loaded;
+                    }
                     var gridItem = new GridViewItem
                     {
                         Tag = entry,
@@ -5152,11 +5369,6 @@ public sealed partial class MainWindow : Window
                     };
                     ConfigureRemoteFileItem(gridItem, entry);
                     _filePage?.GridFiles.Items.Add(gridItem);
-                    if (tile.Thumbnail != null &&
-                        thumbnailItems.Count < ThumbnailBudgetPerBatch)
-                    {
-                        thumbnailItems.Add((tile.Thumbnail, entry));
-                    }
                 }
 
                 appended++;
@@ -5171,26 +5383,20 @@ public sealed partial class MainWindow : Window
             _loadedFileCount += batch.Count;
             if (batch.Count == 0 && _loadedFileCount == 0 && _remoteFileOffset >= _remoteFileTotal)
             {
-                ShowEmptyFileState(_hiddenSmallRecentFileCount > 0
-                    ? $"没有可显示的文件（最近文件已默认隐藏 {_hiddenSmallRecentFileCount} 个小于 10 KB 的文件）。"
+                var recentFilterSummary = GetRecentFileFilterSummary();
+                ShowEmptyFileState(recentFilterSummary.Length > 0
+                    ? $"没有可显示的文件（{recentFilterSummary}）。"
                     : "这个分类暂时没有可显示的内容。");
             }
             var loadingSuffix = _remoteFileOffset < _remoteFileTotal
                 ? $" · 已扫描 {_remoteFileOffset}/{_remoteFileTotal} 项，继续滚动加载"
                 : " · 已加载全部";
+            var recentFileFilterSummary = GetRecentFileFilterSummary();
             FileManagementStatusText.Text =
                 $"已显示 {_visibleFileEntries.Count} 项" +
-                (_hiddenSmallRecentFileCount > 0 ? $" · 最近文件已隐藏 {_hiddenSmallRecentFileCount} 个小于 10 KB 的文件" : string.Empty) +
+                (recentFileFilterSummary.Length > 0 ? $" · {recentFileFilterSummary}" : string.Empty) +
                 loadingSuffix;
             _filePage?.ResetNearEndTrigger();
-
-            if (thumbnailItems.Count > 0)
-            {
-                _ = LoadRemoteFileThumbnailsAsync(
-                    thumbnailItems,
-                    generation,
-                    cancellation);
-            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -5813,60 +6019,25 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    private async Task LoadRemoteFileThumbnailsAsync(
-        IReadOnlyList<(Image Image, RemoteFileEntry Entry)> items,
-        int generation,
-        CancellationToken cancellation)
-    {
-        using var gate = new SemaphoreSlim(GetFileThumbnailConcurrency());
-        try
-        {
-            await Task.WhenAll(items.Select(async item =>
-            {
-                var acquired = false;
-                try
-                {
-                    await gate.WaitAsync(cancellation);
-                    acquired = true;
-                    await LoadRemoteFileThumbnailAsync(
-                        item.Image,
-                        item.Entry,
-                        generation,
-                        cancellation);
-                }
-                catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-                {
-                    // A newer listing owns the page now.
-                }
-                finally
-                {
-                    if (acquired) gate.Release();
-                }
-            }));
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-            // Cancellation is expected when changing category or filter.
-        }
-    }
-
     private async Task LoadRemoteFileThumbnailAsync(
         Image image,
         RemoteFileEntry entry,
         int generation,
         CancellationToken cancellation)
     {
-        var connection = GetFileConnection(entry);
-        if (connection == null ||
-            string.IsNullOrWhiteSpace(entry.Uri) ||
-            generation != _fileLoadGeneration ||
-            cancellation.IsCancellationRequested)
-        {
-            return;
-        }
-
+        var acquired = false;
         try
         {
+            await _fileThumbnailGate.WaitAsync(cancellation);
+            acquired = true;
+            if (generation != _fileLoadGeneration || cancellation.IsCancellationRequested ||
+                string.IsNullOrWhiteSpace(entry.Uri))
+            {
+                return;
+            }
+
+            var connection = GetFileConnection(entry);
+            if (connection == null) return;
             var bytes = await _workspaceRemoteClient.LoadPhotoThumbnailBytesAsync(
                 connection,
                 entry.Uri);
@@ -5894,6 +6065,10 @@ public sealed partial class MainWindow : Window
         catch
         {
             // A missing/unsupported thumbnail keeps the file tile usable.
+        }
+        finally
+        {
+            if (acquired) _fileThumbnailGate.Release();
         }
     }
 
@@ -5950,7 +6125,11 @@ public sealed partial class MainWindow : Window
             // zero-byte record. Recent files must never surface directories;
             // directory navigation remains available in phone storage.
             filtered = filtered.Where(entry => !entry.IsDirectory &&
-                !IsRecentCacheNoise(entry) && entry.SizeBytes >= 10 * 1024);
+                !RecentFileFilterRules.ShouldHide(
+                    entry.Name,
+                    entry.RelativePath,
+                    entry.MimeType,
+                    entry.SizeBytes));
         }
         if (category.Equals("documents", StringComparison.OrdinalIgnoreCase))
         {
@@ -5981,96 +6160,10 @@ public sealed partial class MainWindow : Window
         return filtered.ToList();
     }
 
-    private static int CountSmallRecentFiles(IEnumerable<RemoteFileEntry> entries, string category) =>
-        category.Equals("recent", StringComparison.OrdinalIgnoreCase)
-            ? entries.Count(entry => !entry.IsDirectory && entry.SizeBytes >= 0 && entry.SizeBytes < 10 * 1024)
-            : 0;
-
-    private static bool IsRecentCacheNoise(RemoteFileEntry entry)
-    {
-        if (entry.IsDirectory) return false;
-
-        var name = entry.Name.Trim();
-        var path = $"{entry.RelativePath}/{name}"
-            .Replace('\\', '/')
-            .Trim('/')
-            .ToLowerInvariant();
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        var fileName = Path.GetFileName(name).ToLowerInvariant();
-
-        // Classify by source path/name, never by size. Small logs and other
-        // meaningful user files in normal folders remain visible.
-        if (segments.Any(segment => segment is "cache" or ".cache" or "code_cache" or
-                "app_webview" or ".thumbnails" or "thumbnails" or "tmp" or "temp" or
-                "logs" or "log" or "databases" or "shared_prefs" or "no_backup" ||
-                segment.StartsWith("cache_") || segment.StartsWith("thumb")))
-        {
-            return true;
-        }
-
-        if (path.Contains("/android/data/") || path.Contains("/android/obb/"))
-        {
-            return true;
-        }
-
-        if (fileName.StartsWith(".")) return true;
-
-        if (fileName is "cache" or ".nomedia" || fileName.StartsWith(".thumbdata"))
-        {
-            return true;
-        }
-
-        // MediaProvider and chat applications often persist web thumbnails
-        // with the URL percent-encoded into the filename. They are useful
-        // inside their owning app, but are not meaningful entries in a
-        // user-facing "recent files" view. The rule is name/path based so a
-        // legitimate small document is not removed merely because of size.
-        if (fileName.Contains("%3a%2f%2f") ||
-            fileName.Contains("%3a%252f%252f") ||
-            fileName.Contains("%2f%2f"))
-        {
-            return true;
-        }
-
-        if (fileName.StartsWith("cache_") || fileName.StartsWith("thumb_") ||
-            fileName.StartsWith("thumbnail_") || fileName.StartsWith("temp_") ||
-            fileName.StartsWith("tmp_"))
-        {
-            return true;
-        }
-
-        // The recent view is for user-facing content, not diagnostic or
-        // database sidecar files. Keep these hidden here only; they remain
-        // available in their original folder views.
-        if (fileName.EndsWith(".log") || fileName.EndsWith(".trace") ||
-            fileName.EndsWith(".db-shm") || fileName.EndsWith(".db-wal") ||
-            fileName.EndsWith(".lock") || fileName.EndsWith(".lck"))
-        {
-            return true;
-        }
-
-        var appPrivatePath = path.Contains("/android/data/") ||
-            path.Contains("/android/obb/") || path.Contains("/android/media/");
-        if (appPrivatePath && (fileName.EndsWith(".log") ||
-            fileName.EndsWith(".json") || fileName.StartsWith("log_")))
-        {
-            return true;
-        }
-
-        // A few OEM providers expose zero-byte bookkeeping placeholders with
-        // generic names. Keep arbitrary small user files, but hide only the
-        // well-known placeholder names in the recent view.
-        if (entry.SizeBytes == 0 && fileName is "file" or "文件" or "thumb" or "thumbnail")
-        {
-            return true;
-        }
-
-        return fileName.EndsWith(".tmp") ||
-            fileName.EndsWith(".temp") ||
-            fileName.EndsWith(".part") ||
-            fileName.EndsWith(".crdownload") ||
-            fileName.EndsWith(".download");
-    }
+    private string GetRecentFileFilterSummary() =>
+        _fileCategory.Equals("recent", StringComparison.OrdinalIgnoreCase)
+            ? "最近文件已过滤无扩展名、小于 10 KiB 及高置信度缓存项"
+            : string.Empty;
 
     private static string SelectedTag(ComboBox? comboBox, string fallback = "all") =>
         (comboBox?.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? fallback;

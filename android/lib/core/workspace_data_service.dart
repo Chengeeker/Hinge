@@ -305,8 +305,13 @@ class StorageEntry {
 class StorageDirectoryPage {
   final List<StorageEntry> items;
   final int total;
+  final int scannedCount;
 
-  const StorageDirectoryPage({required this.items, required this.total});
+  const StorageDirectoryPage({
+    required this.items,
+    required this.total,
+    this.scannedCount = 0,
+  });
 
   factory StorageDirectoryPage.fromJson(Map<dynamic, dynamic> json) {
     final rawItems = json['items'];
@@ -315,6 +320,9 @@ class StorageDirectoryPage {
           ? rawItems.whereType<Map>().map(StorageEntry.fromJson).toList()
           : const [],
       total: (json['total'] as num?)?.toInt() ?? 0,
+      scannedCount:
+          (json['scannedCount'] as num?)?.toInt() ??
+          (rawItems is List ? rawItems.length : 0),
     );
   }
 }
@@ -1300,6 +1308,7 @@ class WorkspaceCommandRouter {
         return <String, dynamic>{
           'items': page.items.map((entry) => entry.toJson()).toList(),
           'total': page.total,
+          'scannedCount': page.scannedCount,
         };
       case 'deleteFiles':
         final uris =

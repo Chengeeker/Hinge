@@ -3625,13 +3625,13 @@ class MainActivity : FlutterActivity() {
         cacheKey: String,
     ): Map<String, Any?> {
         if (category == "deleted" && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0)
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0, "scannedCount" to 0)
         }
         if (category == "images" && !hasPhotosPermission()) {
-            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0)
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0, "scannedCount" to 0)
         }
         if ((category == "videos" || category == "audio") && !hasMediaPermission()) {
-            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0)
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0, "scannedCount" to 0)
         }
 
         val collection = when (category) {
@@ -3706,6 +3706,7 @@ class MainActivity : FlutterActivity() {
                 )
             }
         val entries = ArrayList<Map<String, Any?>>()
+        var scannedCount = 0
         val cursor = queryMediaStorePage(
             collection,
             projection,
@@ -3724,6 +3725,7 @@ class MainActivity : FlutterActivity() {
             val pathIndex = it.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
             val dataIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
             while (it.moveToNext()) {
+                scannedCount++
                 val id = it.getLong(idIndex)
                 val name = if (nameIndex >= 0) {
                     it.getString(nameIndex).orEmpty()
@@ -3760,7 +3762,8 @@ class MainActivity : FlutterActivity() {
                     isDirectoryPath(sourcePath, relativePath)) {
                     continue
                 }
-                if (category == "recent" && isRecentCacheNoise(name, sourcePath, sizeBytes)) {
+                if (category == "recent" &&
+                    isRecentCacheNoise(name, sourcePath, mimeType, sizeBytes)) {
                     continue
                 }
                 entries.add(
@@ -3787,7 +3790,7 @@ class MainActivity : FlutterActivity() {
             val fallback = scanDocumentFiles()
             return storageDirectoryPagePayload(fallback, offset, limit)
         }
-        return mapOf("items" to entries, "total" to total)
+        return mapOf("items" to entries, "total" to total, "scannedCount" to scannedCount)
     }
 
     private fun querySocialAlbumPage(
@@ -3947,6 +3950,7 @@ class MainActivity : FlutterActivity() {
         return mapOf(
             "items" to entries.subList(safeOffset, end),
             "total" to entries.size,
+            "scannedCount" to (end - safeOffset),
         )
     }
 
@@ -4162,7 +4166,8 @@ class MainActivity : FlutterActivity() {
                     isDirectoryPath(sourcePath, relativePath)) {
                     continue
                 }
-                if (category == "recent" && isRecentCacheNoise(name, sourcePath, sizeBytes)) {
+                if (category == "recent" &&
+                    isRecentCacheNoise(name, sourcePath, mimeType, sizeBytes)) {
                     continue
                 }
                 entries.add(
@@ -4380,70 +4385,113 @@ class MainActivity : FlutterActivity() {
     private fun isRecentCacheNoise(
         name: String,
         relativePath: String,
+        mimeType: String,
         sizeBytes: Long,
     ): Boolean {
-        val normalizedPath = "$relativePath/$name"
+        val fileName = name.trim().replace('\\', '/').substringAfterLast('/')
+        val lastDot = fileName.lastIndexOf('.')
+        val extensionless = lastDot <= 0 || lastDot == fileName.lastIndex
+        val smallerThanTenKiB = sizeBytes >= 0L && sizeBytes < 10L * 1024L
+        return extensionless || smallerThanTenKiB ||
+            recentCacheSuspicionScore(name, relativePath, mimeType, sizeBytes) >= 80
+    }
+
+    private fun recentCacheSuspicionScore(
+        name: String,
+        relativePath: String,
+        mimeType: String,
+        sizeBytes: Long,
+    ): Int {
+        val normalizedPath = relativePath
             .replace('\\', '/')
             .trim('/')
             .lowercase(Locale.ROOT)
-        val segments = normalizedPath.split('/').filter { it.isNotBlank() }
         val fileName = name.trim().lowercase(Locale.ROOT)
-        if (segments.any {
-                it == "cache" || it == ".cache" || it == "code_cache" ||
-                    it == "app_webview" || it == ".thumbnails" ||
-                    it == "thumbnails" || it == "tmp" || it == "temp" ||
-                    it == "logs" || it == "log" || it == "databases" ||
-                    it == "shared_prefs" || it == "no_backup" ||
-                    it.startsWith("cache_") || it.startsWith("thumb")
-            }) {
-            return true
+        val segments = normalizedPath.split('/').filter { it.isNotBlank() }.toMutableList()
+        if (segments.lastOrNull() == fileName) segments.removeAt(segments.lastIndex)
+
+        val strongCachePath = segments.any {
+            it in RECENT_STRONG_CACHE_DIRECTORIES
         }
-        if (normalizedPath.contains("/android/data/") ||
-            normalizedPath.contains("/android/obb/")) {
-            return true
+        val definitiveName = fileName == ".nomedia" || fileName == "cache" ||
+            fileName.startsWith(".thumbdata")
+        var score = 0
+        if (strongCachePath) score += 100
+        if (segments.any { it == "tmp" || it == "temp" }) score += 80
+        if (segments.any { it == "logs" || it == "log" }) score += 40
+        if (segments.any { it == "databases" || it == "shared_prefs" || it == "no_backup" }) score += 40
+        if (hasAdjacentPathSegments(segments, "android", RECENT_PRIVATE_DATA_DIRECTORIES)) {
+            score += 30
         }
-        if (fileName.startsWith(".")) return true
-        if (fileName == "cache" || fileName == ".nomedia" ||
-            fileName.startsWith(".thumbdata")) {
-            return true
-        }
-        // Web thumbnails from chat/browser providers are often stored as
-        // URL-percent-encoded names. They are implementation artifacts, not
-        // user files, and should not dominate the recent list.
-        if (fileName.contains("%3a%2f%2f") ||
-            fileName.contains("%3a%252f%252f") ||
-            fileName.contains("%2f%2f")) {
-            return true
-        }
+        if (definitiveName) score += 100
+
         if (fileName.startsWith("cache_") || fileName.startsWith("thumb_") ||
             fileName.startsWith("thumbnail_") || fileName.startsWith("temp_") ||
             fileName.startsWith("tmp_")) {
-            return true
+            score += 70
         }
-        // The recent view is for user-facing content, not diagnostics or
-        // database sidecar files. Keep these hidden only in this view; they
-        // remain available in their original storage directory.
-        if (fileName.endsWith(".log") || fileName.endsWith(".trace") ||
-            fileName.endsWith(".db-shm") || fileName.endsWith(".db-wal") ||
-            fileName.endsWith(".lock") || fileName.endsWith(".lck")) {
-            return true
+        if (fileName.contains("%3a%2f%2f") || fileName.contains("%3a%252f%252f") ||
+            fileName.contains("%2f%2f")) {
+            score += 70
         }
-        val appPrivatePath = normalizedPath.contains("/android/data/") ||
-            normalizedPath.contains("/android/obb/") ||
-            normalizedPath.contains("/android/media/")
-        if (appPrivatePath && (fileName.endsWith(".log") ||
-            fileName.endsWith(".json") || fileName.startsWith("log_"))) {
-            return true
+        if (RECENT_TEMPORARY_SUFFIXES.any { fileName.endsWith(it) }) {
+            score += 70
         }
-        // Hide only well-known zero-byte bookkeeping placeholders. Do not use
-        // a general size threshold because small user documents are valid.
-        if (sizeBytes == 0L &&
-            fileName in setOf("file", "文件", "thumb", "thumbnail")) {
-            return true
+        if (fileName.endsWith(".log") || fileName.endsWith(".trace")) score += 40
+        if (RECENT_SIDECAR_SUFFIXES.any { fileName.endsWith(it) }) {
+            score += 70
         }
-        return fileName.endsWith(".tmp") || fileName.endsWith(".temp") ||
-            fileName.endsWith(".part") || fileName.endsWith(".crdownload") ||
-            fileName.endsWith(".download")
+        if (fileName.startsWith(".")) score += 30
+
+        val stem = fileName.substringBeforeLast('.', fileName)
+        if (isUuidLike(stem) || isUuidLike(fileName) || isHexLike(stem, 32, 32)) {
+            score += 25
+        }
+        if (isHexLike(stem, 16, 64)) score += 20
+        val dot = fileName.lastIndexOf('.')
+        if (dot <= 0 || dot == fileName.lastIndex) score += 10
+        if (sizeBytes >= 0L && sizeBytes < 4L * 1024L) score += 10
+
+        val normalizedMimeType = mimeType.trim().lowercase(Locale.ROOT)
+        val knownMimeType = normalizedMimeType.contains('/') &&
+            normalizedMimeType !in RECENT_GENERIC_MIME_TYPES
+        if (knownMimeType) score -= 20
+        if (segments.any { it in RECENT_USER_CONTENT_DIRECTORIES }) {
+            score -= 40
+        }
+
+        // Strong cache-directory and bookkeeping-file evidence is decisive;
+        // a MIME type or a public parent folder must not cancel it.
+        if (strongCachePath || definitiveName) score = maxOf(score, 80)
+        return score
+    }
+
+    private fun hasAdjacentPathSegments(
+        segments: List<String>,
+        first: String,
+        following: Set<String>,
+    ): Boolean {
+        for (index in 0 until segments.lastIndex) {
+            if (segments[index] == first && segments[index + 1] in following) return true
+        }
+        return false
+    }
+
+    private fun isHexLike(value: String, minimumLength: Int, maximumLength: Int): Boolean {
+        if (value.length !in minimumLength..maximumLength) return false
+        return value.all { it in '0'..'9' || it in 'a'..'f' }
+    }
+
+    private fun isUuidLike(value: String): Boolean {
+        if (value.length != 36) return false
+        for (index in value.indices) {
+            if (index == 8 || index == 13 || index == 18 || index == 23) {
+                if (value[index] != '-') return false
+            } else if (value[index] !in '0'..'9' && value[index] !in 'a'..'f') {
+                return false
+            }
+        }
+        return true
     }
 
     private fun isDirectoryPath(vararg candidates: String): Boolean {
@@ -4514,6 +4562,20 @@ class MainActivity : FlutterActivity() {
     }
 
     companion object {
+        private val RECENT_STRONG_CACHE_DIRECTORIES = setOf(
+            "cache", ".cache", "code_cache", "app_webview", ".thumbnails", "thumbnails",
+        )
+        private val RECENT_PRIVATE_DATA_DIRECTORIES = setOf("data", "obb")
+        private val RECENT_USER_CONTENT_DIRECTORIES = setOf(
+            "download", "downloads", "documents", "dcim", "pictures", "movies", "music",
+        )
+        private val RECENT_TEMPORARY_SUFFIXES = setOf(
+            ".tmp", ".temp", ".cache", ".part", ".crdownload", ".download",
+        )
+        private val RECENT_SIDECAR_SUFFIXES = setOf(".db-shm", ".db-wal", ".lock", ".lck")
+        private val RECENT_GENERIC_MIME_TYPES = setOf(
+            "application/octet-stream", "binary/octet-stream", "unknown/unknown",
+        )
         private const val ACTION_OPEN_RECEIVED_DIRECTORY =
             "com.hinge.office.OPEN_RECEIVED_DIRECTORY"
         private const val ACTION_OPEN_RECEIVED_FILE =

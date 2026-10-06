@@ -86,6 +86,7 @@ public sealed class RemoteFilePage
 {
     public IReadOnlyList<RemoteFileEntry> Entries { get; init; } = Array.Empty<RemoteFileEntry>();
     public int Total { get; init; }
+    public int ScannedCount { get; init; }
 }
 
 public sealed class RemoteCalendarEvent
@@ -381,7 +382,8 @@ public sealed class WorkspaceRemoteClient
             return new RemoteFilePage
             {
                 Entries = entries.Skip(offset).Take(limit).ToArray(),
-                Total = entries.Count
+                Total = entries.Count,
+                ScannedCount = Math.Min(limit, Math.Max(0, entries.Count - offset))
             };
         }
 
@@ -398,8 +400,12 @@ public sealed class WorkspaceRemoteClient
             rawTotal.TryGetInt32(out var count)
             ? count
             : items.Count;
+        var scannedCount = raw.TryGetProperty("scannedCount", out var rawScannedCount) &&
+            rawScannedCount.TryGetInt32(out var scanned)
+            ? Math.Max(items.Count, scanned)
+            : items.Count;
         foreach (var item in items) item.SourceDeviceId = connection.RemoteDeviceId ?? string.Empty;
-        return new RemoteFilePage { Entries = items, Total = total };
+        return new RemoteFilePage { Entries = items, Total = total, ScannedCount = scannedCount };
     }
 
     private static IReadOnlyList<RemoteFileEntry> DeserializeFileEntries(JsonElement raw)

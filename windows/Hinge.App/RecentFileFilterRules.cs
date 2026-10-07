@@ -39,6 +39,7 @@ internal static class RecentFileFilterRules
         var lowerName = fileName.ToLowerInvariant();
         var stem = GetStem(lowerName);
         var directories = GetDirectorySegments(relativePath, lowerName);
+        var temporaryName = HasTemporaryNameMarker(fileName);
         var score = 0;
 
         var strongCachePath = directories.Any(StrongCacheDirectories.Contains);
@@ -86,9 +87,12 @@ internal static class RecentFileFilterRules
         if (HasKnownMimeType(mimeType)) score -= 20;
         if (directories.Any(UserContentDirectories.Contains)) score -= 40;
 
-        // Strong cache-directory and bookkeeping-file evidence is decisive;
-        // a recognized MIME type or a public parent folder must not cancel it.
-        if (strongCachePath || definitiveName) score = Math.Max(score, HideThreshold);
+        // Explicit temp markers, cache paths, and bookkeeping files are decisive;
+        // a MIME type or public parent folder must not cancel them.
+        if (strongCachePath || definitiveName || temporaryName)
+        {
+            score = Math.Max(score, HideThreshold);
+        }
         return score;
     }
 
@@ -103,6 +107,29 @@ internal static class RecentFileFilterRules
     {
         var dot = fileName.LastIndexOf('.');
         return dot > 0 ? fileName[..dot] : fileName;
+    }
+
+    private static bool HasTemporaryNameMarker(string fileName)
+    {
+        for (var start = 0; start <= fileName.Length - 4;)
+        {
+            var marker = fileName.IndexOf("temp", start, StringComparison.OrdinalIgnoreCase);
+            if (marker < 0) return false;
+
+            var markerLength = fileName.AsSpan(marker)
+                .StartsWith("temporary", StringComparison.OrdinalIgnoreCase) ? 9 : 4;
+            var end = marker + markerLength;
+            var hasLeftBoundary = marker == 0 || !char.IsLetterOrDigit(fileName[marker - 1]) ||
+                char.IsLower(fileName[marker - 1]) && char.IsUpper(fileName[marker]);
+            var hasRightBoundary = end == fileName.Length || !char.IsLetterOrDigit(fileName[end]) ||
+                char.IsDigit(fileName[end]) ||
+                char.IsLower(fileName[end - 1]) && char.IsUpper(fileName[end]);
+            if (hasLeftBoundary && hasRightBoundary) return true;
+
+            start = marker + 4;
+        }
+
+        return false;
     }
 
     private static string[] GetDirectorySegments(string? path, string fileName)

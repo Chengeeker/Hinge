@@ -58,6 +58,8 @@ public sealed partial class MainWindow : Window
     private const string UserSettingsRegistryPath = @"Software\Hinge";
     private const string ReceiveDirectorySettingName = "ReceiveDirectory";
     private const string PairingCodeSettingName = "PairingCode";
+    private const string WirelessAdbHostSettingName = "WirelessAdbHost";
+    private const string WirelessAdbConnectPortSettingName = "WirelessAdbConnectPort";
     private const string CloudRelayEnabledSettingName = "CloudRelayEnabled";
     private const string CloudRelayEndpointSettingName = "CloudRelayEndpoint";
     private const string CloudRelayDeviceTokenSettingName = "CloudRelayDeviceToken";
@@ -1135,6 +1137,109 @@ public sealed partial class MainWindow : Window
         page.ClearPairingCode.Click += ClearPairingCode_Click;
         page.StartBlePairing.Click += StartBlePairing_Click;
         page.CleanDeviceHistory.Click += CleanDeviceHistory_Click;
+        page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
+        page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
+        page.WirelessAdbPair.Click += WirelessAdbPair_Click;
+        page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
+        page.WirelessAdbPullLogs.Click += WirelessAdbPullLogs_Click;
+    }
+
+    private async void WirelessAdbPair_Click(object sender, RoutedEventArgs e)
+    {
+        if (_transferSettingsPage == null) return;
+        var page = _transferSettingsPage;
+        var host = page.WirelessAdbHost.Text.Trim();
+        var connectPort = page.WirelessAdbConnectPort.Text.Trim();
+        var code = page.WirelessAdbPairingCode.Password;
+        page.WirelessAdbPairingCode.Password = string.Empty;
+        SaveWirelessAdbEndpoint(host, connectPort);
+        SetWirelessAdbBusy(page, true);
+        try
+        {
+            await WirelessAdbClient.PairAndConnectAsync(
+                host,
+                page.WirelessAdbPairingPort.Text,
+                code,
+                connectPort);
+            page.Status.Text = "无线 ADB 已配对并连接。配对码已清除，后续可直接连接或提取日志。";
+        }
+        catch (Exception exception)
+        {
+            page.Status.Text = $"无线 ADB 配对/连接失败：{exception.Message}";
+        }
+        finally
+        {
+            SetWirelessAdbBusy(page, false);
+        }
+    }
+
+    private async void WirelessAdbConnect_Click(object sender, RoutedEventArgs e)
+    {
+        if (_transferSettingsPage == null) return;
+        var page = _transferSettingsPage;
+        var host = page.WirelessAdbHost.Text.Trim();
+        var port = page.WirelessAdbConnectPort.Text.Trim();
+        SetWirelessAdbBusy(page, true);
+        try
+        {
+            await WirelessAdbClient.ConnectAsync(host, port);
+            SaveWirelessAdbEndpoint(host, port);
+            page.Status.Text = "无线 ADB 已连接；主机密钥由 Android Platform-Tools 保存。";
+        }
+        catch (Exception exception)
+        {
+            page.Status.Text = $"无线 ADB 连接失败：{exception.Message}";
+        }
+        finally
+        {
+            SetWirelessAdbBusy(page, false);
+        }
+    }
+
+    private async void WirelessAdbPullLogs_Click(object sender, RoutedEventArgs e)
+    {
+        if (_transferSettingsPage == null) return;
+        var page = _transferSettingsPage;
+        var host = page.WirelessAdbHost.Text.Trim();
+        var port = page.WirelessAdbConnectPort.Text.Trim();
+        SetWirelessAdbBusy(page, true);
+        try
+        {
+            await WirelessAdbClient.ConnectAsync(host, port);
+            SaveWirelessAdbEndpoint(host, port);
+            var path = await WirelessAdbClient.PullDiagnosticsAsync(host, port);
+            page.Status.Text = $"Hinge 手机连接诊断日志已保存：{path}";
+        }
+        catch (Exception exception)
+        {
+            page.Status.Text = $"提取 Hinge 日志失败：{exception.Message}";
+        }
+        finally
+        {
+            SetWirelessAdbBusy(page, false);
+        }
+    }
+
+    private static void SaveWirelessAdbEndpoint(string host, string port)
+    {
+        try
+        {
+            ApplicationData.Current.LocalSettings.Values[WirelessAdbHostSettingName] = host;
+            ApplicationData.Current.LocalSettings.Values[WirelessAdbConnectPortSettingName] = port;
+        }
+        catch
+        {
+            // The registry copy below persists settings for the unpackaged build.
+        }
+        WriteUserSetting(WirelessAdbHostSettingName, host);
+        WriteUserSetting(WirelessAdbConnectPortSettingName, port);
+    }
+
+    private static void SetWirelessAdbBusy(TransferSettingsPage page, bool busy)
+    {
+        page.WirelessAdbPair.IsEnabled = !busy;
+        page.WirelessAdbConnect.IsEnabled = !busy;
+        page.WirelessAdbPullLogs.IsEnabled = !busy;
     }
 
     private IEnumerable<string> ProtectedHistoryDeviceIds() =>

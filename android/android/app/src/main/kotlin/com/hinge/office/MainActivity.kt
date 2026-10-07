@@ -4406,13 +4406,15 @@ class MainActivity : FlutterActivity() {
             .replace('\\', '/')
             .trim('/')
             .lowercase(Locale.ROOT)
-        val fileName = name.trim().lowercase(Locale.ROOT)
+        val originalFileName = name.trim().replace('\\', '/').substringAfterLast('/')
+        val fileName = originalFileName.lowercase(Locale.ROOT)
         val segments = normalizedPath.split('/').filter { it.isNotBlank() }.toMutableList()
         if (segments.lastOrNull() == fileName) segments.removeAt(segments.lastIndex)
 
         val strongCachePath = segments.any {
             it in RECENT_STRONG_CACHE_DIRECTORIES
         }
+        val temporaryName = hasRecentTemporaryNameMarker(originalFileName)
         val definitiveName = fileName == ".nomedia" || fileName == "cache" ||
             fileName.startsWith(".thumbdata")
         var score = 0
@@ -4460,10 +4462,30 @@ class MainActivity : FlutterActivity() {
             score -= 40
         }
 
-        // Strong cache-directory and bookkeeping-file evidence is decisive;
-        // a MIME type or a public parent folder must not cancel it.
-        if (strongCachePath || definitiveName) score = maxOf(score, 80)
+        // Explicit temp markers, cache paths, and bookkeeping files are decisive;
+        // a MIME type or public parent folder must not cancel them.
+        if (strongCachePath || definitiveName || temporaryName) score = maxOf(score, 80)
         return score
+    }
+
+    private fun hasRecentTemporaryNameMarker(fileName: String): Boolean {
+        var start = 0
+        while (start <= fileName.length - 4) {
+            val marker = fileName.indexOf("temp", startIndex = start, ignoreCase = true)
+            if (marker < 0) return false
+
+            val markerLength = if (fileName.regionMatches(marker, "temporary", 0, 9, ignoreCase = true)) 9 else 4
+            val end = marker + markerLength
+            val hasLeftBoundary = marker == 0 || !fileName[marker - 1].isLetterOrDigit() ||
+                fileName[marker - 1].isLowerCase() && fileName[marker].isUpperCase()
+            val hasRightBoundary = end == fileName.length || !fileName[end].isLetterOrDigit() ||
+                fileName[end].isDigit() ||
+                fileName[end - 1].isLowerCase() && fileName[end].isUpperCase()
+            if (hasLeftBoundary && hasRightBoundary) return true
+
+            start = marker + 4
+        }
+        return false
     }
 
     private fun hasAdjacentPathSegments(

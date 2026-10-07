@@ -121,6 +121,11 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/hinge_file_paths" />
         </provider>
+        <provider
+            android:name=".HingeDiagnosticsProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="true"
+            android:readPermission="android.permission.DUMP" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

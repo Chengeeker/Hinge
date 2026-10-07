@@ -73,6 +73,25 @@
                         <TextBlock Text="右键发送文件时，先用短暂 BLE 广播唤醒已绑定的 Android Hinge，再沿用局域网连接传输。广播不承载文件或配对码。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                         <Button x:Name="StartBlePairingButton" Content="开启 60 秒 BLE 配对广播" HorizontalAlignment="Left" />
                     </StackPanel>
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Android 无线调试" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock Text="手机开启开发者选项中的无线调试后，首次输入配对地址、配对端口和 6 位码。电脑需安装 Android SDK Platform-Tools；保存的 ADB 主机密钥会继续使用，配对码不会保存。连接端口可能在手机重启后变化。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <TextBox x:Name="WirelessAdbHostTextBox" PlaceholderText="手机 IP 地址，例如 192.168.1.20" HorizontalAlignment="Stretch" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="WirelessAdbPairingPortTextBox" Grid.Column="0" PlaceholderText="配对端口" />
+                            <TextBox x:Name="WirelessAdbConnectPortTextBox" Grid.Column="1" PlaceholderText="连接端口" />
+                        </Grid>
+                        <PasswordBox x:Name="WirelessAdbPairingCodeTextBox" MaxLength="6" PlaceholderText="首次配对时输入 6 位码" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="WirelessAdbPairButton" Content="配对并连接" />
+                            <Button x:Name="WirelessAdbConnectButton" Content="连接" />
+                            <Button x:Name="WirelessAdbPullLogsButton" Content="提取 Hinge 日志" />
+                        </StackPanel>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

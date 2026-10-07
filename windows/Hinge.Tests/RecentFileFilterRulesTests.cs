@@ -80,4 +80,23 @@ public sealed class RecentFileFilterRulesTests
         Assert.False(RecentFileFilterRules.ShouldHide(
             "draft.tmp", "Documents/draft.tmp", "text/plain", 100 * 1024));
     }
+
+    [Theory]
+    [InlineData("photo_temp_123.jpg")]
+    [InlineData("PhotoTemp123.jpg")]
+    [InlineData("temporary-Photo.jpg")]
+    public void TempNameMarkersHideEvenWithKnownMimeAndPublicFolder(string name)
+    {
+        Assert.True(RecentFileFilterRules.ShouldHide(
+            name, $"Downloads/{name}", "image/jpeg", 128 * 1024));
+    }
+
+    [Theory]
+    [InlineData("template.docx")]
+    [InlineData("attempt-report.pdf")]
+    public void TempInsideAnotherWordDoesNotHideUserFiles(string name)
+    {
+        Assert.False(RecentFileFilterRules.ShouldHide(
+            name, $"Documents/{name}", "application/pdf", 128 * 1024));
+    }
 }

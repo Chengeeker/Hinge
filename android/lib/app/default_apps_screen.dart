@@ -68,7 +68,6 @@ class _DefaultAppsScreenState extends State<DefaultAppsScreen> {
             children: [
               ListTile(
                 title: const Text('系统询问'),
-                subtitle: const Text('每次点击通知时选择打开方式'),
                 leading: Icon(
                   Symbols.help_outline_rounded,
                   color: Theme.of(sheetContext).colorScheme.primary,
@@ -133,11 +132,6 @@ class _DefaultAppsScreenState extends State<DefaultAppsScreen> {
                 ],
               ],
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '如果未指定应用，点击通知时会由 Android 显示可用的打开方式。',
-            style: Theme.of(context).textTheme.bodyMedium,
           ),
         ],
       ),

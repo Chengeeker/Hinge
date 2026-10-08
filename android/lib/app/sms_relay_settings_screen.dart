@@ -173,7 +173,6 @@ class _SmsRelaySettingsScreenState extends State<SmsRelaySettingsScreen>
                     color: scheme.primary,
                   ),
                   title: const Text('打开应用权限设置'),
-                  subtitle: const Text('可在系统页面重新检查短信和彩信权限'),
                   trailing: const Icon(Symbols.chevron_right_rounded),
                   onTap: widget.dataService.openAppSettings,
                 ),

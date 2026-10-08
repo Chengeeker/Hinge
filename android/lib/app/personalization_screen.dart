@@ -112,7 +112,6 @@ class PersonalizationScreen extends StatelessWidget {
                 RadioListTile<AppThemePreference>(
                   value: AppThemePreference.system,
                   title: Text('跟随系统'),
-                  subtitle: Text('自动匹配系统深色 / 浅色设置'),
                   contentPadding: EdgeInsets.zero,
                 ),
                 RadioListTile<AppThemePreference>(
@@ -128,12 +127,10 @@ class PersonalizationScreen extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1),
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
             secondary: const Icon(Symbols.contrast_rounded),
             title: const Text('纯黑深色模式'),
-            subtitle: const Text('深色模式下使用纯黑背景，适合 OLED 屏幕'),
             value: state.pureBlackDarkMode,
             onChanged: state.setPureBlackDarkMode,
           ),
@@ -154,11 +151,7 @@ class PersonalizationScreen extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             secondary: const Icon(Symbols.auto_awesome_rounded),
             title: const Text('壁纸动态取色'),
-            subtitle: Text(
-              isDesktop
-                  ? 'Windows 使用系统强调色；安卓端不可用'
-                  : '开启后从 Android 壁纸提取系统色；关闭后使用下方预置配色',
-            ),
+            subtitle: isDesktop ? const Text('Windows 使用系统强调色；安卓端不可用') : null,
             value: state.dynamicColorEnabled,
             onChanged: isDesktop ? null : state.setDynamicColorEnabled,
           ),
@@ -168,7 +161,6 @@ class PersonalizationScreen extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               leading: Icon(Symbols.wallpaper_rounded, color: scheme.primary),
               title: const Text('正在使用壁纸色彩'),
-              subtitle: const Text('关闭动态取色后可选择下方预置主题'),
             )
           else ...[
             Text('预置主题配色', style: Theme.of(context).textTheme.bodyLarge),
@@ -286,7 +278,6 @@ class PersonalizationScreen extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               secondary: const Icon(Symbols.vibration_rounded),
               title: const Text('震动反馈'),
-              subtitle: const Text('点击按钮、切换页面时提供轻微触感反馈'),
               value: hapticFeedbackEnabled,
               onChanged: (value) {
                 onHapticFeedbackChanged(value);
@@ -312,7 +303,6 @@ class PersonalizationScreen extends StatelessWidget {
                 RadioListTile<int>(
                   value: level,
                   title: Text(_fontWeightLabel(level)),
-                  subtitle: Text(_fontWeightDescription(level)),
                   contentPadding: EdgeInsets.zero,
                 ),
             ],
@@ -342,23 +332,6 @@ class PersonalizationScreen extends StatelessWidget {
         return '加粗';
       default:
         return '默认';
-    }
-  }
-
-  String _fontWeightDescription(int level) {
-    switch (level) {
-      case 1:
-        return '轻盈精炼视觉，适合大字号阅读';
-      case 0:
-        return '默认略粗，兼顾清晰度与排版';
-      case 2:
-        return '适度加深笔触，更清晰明朗';
-      case 3:
-        return '粗体质感，信息层级更醒目';
-      case 4:
-        return '极致浓郁，强调视觉冲击力';
-      default:
-        return '';
     }
   }
 }

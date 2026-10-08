@@ -575,6 +575,41 @@ ColorScheme? _nativeDynamicScheme(
   );
 }
 
+class _SlidingOverlayPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _SlidingOverlayPageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 320);
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 220);
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+
+    final curvedAnimation = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    final startX = Directionality.of(context) == TextDirection.ltr ? 1.0 : -1.0;
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: Offset(startX, 0),
+        end: Offset.zero,
+      ).animate(curvedAnimation),
+      child: child,
+    );
+  }
+}
+
 ThemeData _hingeTheme(
   WorkspaceState state, {
   required Brightness brightness,
@@ -698,6 +733,13 @@ ThemeData _hingeTheme(
     useMaterial3: true,
     colorScheme: scheme,
     textTheme: textTheme,
+    pageTransitionsTheme: Platform.isAndroid
+        ? const PageTransitionsTheme(
+            builders: {
+              TargetPlatform.android: _SlidingOverlayPageTransitionsBuilder(),
+            },
+          )
+        : null,
     splashFactory: InkRipple.splashFactory,
     // Windows does not ship Roboto as a system font.  Use the native Chinese
     // UI font there; Flutter's null family keeps Android on its system font.
@@ -948,6 +990,9 @@ class _DevicesScreenState extends State<DevicesScreen>
   Timer? _listenerStatusTimer;
   bool _showMobileWorkspaceOverview = false;
   String? _mobileWorkspaceFocus;
+  bool _useHorizontalWorkspaceSlide = false;
+  bool _workspaceBackNavigationTransition = false;
+  int _workspaceSlideDirection = 1;
   bool _permissionPromptShown = false;
   // A manual disconnect is an explicit user decision for this process
   // lifetime. Keep it per device so one device cannot suppress another, and
@@ -2017,6 +2062,8 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   void _setPage(int index) {
+    _useHorizontalWorkspaceSlide = false;
+    _workspaceBackNavigationTransition = false;
     if (!_isDesktop) {
       setState(() {
         _showMobileWorkspaceOverview = false;
@@ -2028,6 +2075,8 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _openMobileWorkspaceSection(String section) {
     if (_isDesktop) return;
+    _useHorizontalWorkspaceSlide = false;
+    _workspaceBackNavigationTransition = false;
     setState(() {
       _showMobileWorkspaceOverview = false;
       _mobileWorkspaceFocus = section;
@@ -2040,6 +2089,12 @@ class _DevicesScreenState extends State<DevicesScreen>
       _setPage(index);
       return;
     }
+    final direction = index < _selectedNavigationIndex ? -1 : 1;
+    _workspaceSlideDirection = Directionality.of(context) == TextDirection.rtl
+        ? -direction
+        : direction;
+    _useHorizontalWorkspaceSlide = true;
+    _workspaceBackNavigationTransition = false;
     switch (index) {
       case 0:
         setState(() {
@@ -2078,6 +2133,8 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _handleMobileBack() {
     if (_isDesktop) return;
+    _useHorizontalWorkspaceSlide = false;
+    _workspaceBackNavigationTransition = true;
     if (_workspaceState.currentTabIndex == 5 && _selectedAlbumId != null) {
       setState(() {
         _selectedAlbumId = null;
@@ -3625,12 +3682,26 @@ class _DevicesScreenState extends State<DevicesScreen>
     final pageKey = ValueKey<String>(
       '${_workspaceState.currentTabIndex}-$_showMobileWorkspaceOverview-$_mobileWorkspaceFocus',
     );
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final duration = _isDesktop
+        ? 280
+        : _useHorizontalWorkspaceSlide
+        ? 260
+        : 320;
+    final reverseDuration = _isDesktop
+        ? 220
+        : _useHorizontalWorkspaceSlide
+        ? 260
+        : 220;
     return AnimatedSwitcher(
-      // Keep one consistent page-level motion for navigation destinations.
-      // The previous 180ms/2.5% transition was too subtle on phones and made
-      // a page switch feel like a hard cut when a page was also loading data.
-      duration: const Duration(milliseconds: 280),
-      reverseDuration: const Duration(milliseconds: 220),
+      // Match Lurk: normal page changes slide over the previous page, while
+      // bottom navigation translates the outgoing and incoming pages together.
+      duration: Duration(
+        milliseconds: !_isDesktop && reduceMotion ? 0 : duration,
+      ),
+      reverseDuration: Duration(
+        milliseconds: !_isDesktop && reduceMotion ? 0 : reverseDuration,
+      ),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
       layoutBuilder: (currentChild, previousChildren) => Stack(
@@ -3642,21 +3713,57 @@ class _DevicesScreenState extends State<DevicesScreen>
         ],
       ),
       transitionBuilder: (child, animation) {
-        final curvedAnimation = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
-        final slide = Tween<Offset>(
-          begin: const Offset(0.04, 0),
-          end: Offset.zero,
-        ).animate(curvedAnimation);
-        return FadeTransition(
-          opacity: curvedAnimation,
-          child: SlideTransition(position: slide, child: child),
+        if (_isDesktop) {
+          final desktopAnimation = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          final slide = Tween<Offset>(
+            begin: const Offset(0.04, 0),
+            end: Offset.zero,
+          ).animate(desktopAnimation);
+          return FadeTransition(
+            opacity: desktopAnimation,
+            child: SlideTransition(position: slide, child: child),
+          );
+        }
+        if (reduceMotion) return child;
+
+        final startX = Directionality.of(context) == TextDirection.ltr
+            ? 1.0
+            : -1.0;
+        final bottomNavigation = _useHorizontalWorkspaceSlide;
+        final backNavigation = _workspaceBackNavigationTransition;
+        final direction = _workspaceSlideDirection.toDouble();
+        return ClipRect(
+          child: AnimatedBuilder(
+            animation: animation,
+            child: child,
+            builder: (context, child) {
+              final outgoing = animation.status == AnimationStatus.reverse;
+              final progress = 1 - animation.value;
+              final offset = bottomNavigation
+                  ? Offset((outgoing ? -direction : direction) * progress, 0)
+                  : backNavigation
+                  ? Offset(outgoing ? startX * progress : 0, 0)
+                  : Offset(outgoing ? 0 : startX * progress, 0);
+              return FractionalTranslation(translation: offset, child: child);
+            },
+          ),
         );
       },
-      child: RepaintBoundary(key: pageKey, child: _buildPage()),
+      child: RepaintBoundary(
+        key: pageKey,
+        child: _isDesktop
+            ? _buildPage()
+            : ColoredBox(
+                // Page bodies use transparent scroll views; the incoming
+                // surface must cover the outgoing page during overlay motion.
+                color: Theme.of(context).scaffoldBackgroundColor,
+                child: _buildPage(),
+              ),
+      ),
     );
   }
 
@@ -3773,6 +3880,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     return HingePageBody(
       reserveFloatingNavigation:
           !_isDesktop && _workspaceState.floatingCapsuleNavigation,
+      horizontalPadding: _isDesktop ? 24 : 16,
       child: child,
     );
   }
@@ -3787,7 +3895,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           _buildWelcomeHeader(selected),
           const SizedBox(height: 16),
           _buildSectionTitle('设备', '管理当前会话，或在局域网中连接新设备'),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Card(
             child: Column(
               children: [
@@ -3811,12 +3919,12 @@ class _DevicesScreenState extends State<DevicesScreen>
             const SizedBox(height: 16),
             _buildDeviceSummaryCard(selected),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           _buildSectionTitle(
             '设备操作',
             selected == null ? '查看最近的文件收发记录' : '查看文件传输进度和历史记录',
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _buildOperationsCard(),
         ],
       ),
@@ -3831,14 +3939,18 @@ class _DevicesScreenState extends State<DevicesScreen>
   }) {
     final scheme = Theme.of(context).colorScheme;
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: scheme.primaryContainer,
-        foregroundColor: scheme.onPrimaryContainer,
-        child: Icon(icon),
+      leading: Icon(icon, size: 24, color: scheme.onSurfaceVariant),
+      title: Text(title, style: Theme.of(context).textTheme.titleMedium),
+      subtitle: Text(
+        subtitle,
+        style: Theme.of(context).textTheme.bodyMedium
+            ?.copyWith(color: scheme.onSurfaceVariant),
       ),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Symbols.chevron_right_rounded),
+      trailing: Icon(
+        Symbols.chevron_right_rounded,
+        size: 20,
+        color: scheme.onSurfaceVariant,
+      ),
       onTap: onTap,
     );
   }
@@ -3850,43 +3962,56 @@ class _DevicesScreenState extends State<DevicesScreen>
         children: [
           Text(
             '笔记、待办、日历和相册集中在这里',
-            style: Theme.of(context).textTheme.bodyLarge,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 16),
-          _mobileWorkspaceEntry(
-            icon: Symbols.note_rounded,
-            title: '笔记',
-            subtitle: '${_notes.length} 篇笔记，支持新建、编辑和删除',
-            onTap: () => _openMobileWorkspaceSection('notes'),
-          ),
-          _mobileWorkspaceEntry(
-            icon: Symbols.checklist_rounded,
-            title: '待办',
-            subtitle:
-                '${_tasks.where((task) => !task.completed).length} 项待完成任务',
-            onTap: () => _openMobileWorkspaceSection('tasks'),
-          ),
-          _mobileWorkspaceEntry(
-            icon: Symbols.calendar_month_rounded,
-            title: '日历',
-            subtitle: '${_calendarEvents.length} 项手机日程',
-            onTap: () => _setPage(4),
-          ),
-          _mobileWorkspaceEntry(
-            icon: Symbols.photo_library_rounded,
-            title: '相册',
-            subtitle: '${_photoAlbums.length} 个相册集，按最新照片显示封面',
-            onTap: () => _setPage(5),
-          ),
-          _mobileWorkspaceEntry(
-            icon: Symbols.notifications_rounded,
-            title: '通知历史',
-            subtitle: '收集手机应用通知，支持按时间和应用筛选',
-            onTap: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    NotificationHistoryScreen(dataService: widget.dataService),
-              ),
+          Card(
+            child: Column(
+              children: [
+                _mobileWorkspaceEntry(
+                  icon: Symbols.note_rounded,
+                  title: '笔记',
+                  subtitle: '${_notes.length} 篇笔记，支持新建、编辑和删除',
+                  onTap: () => _openMobileWorkspaceSection('notes'),
+                ),
+                const Divider(height: 1),
+                _mobileWorkspaceEntry(
+                  icon: Symbols.checklist_rounded,
+                  title: '待办',
+                  subtitle:
+                      '${_tasks.where((task) => !task.completed).length} 项待完成任务',
+                  onTap: () => _openMobileWorkspaceSection('tasks'),
+                ),
+                const Divider(height: 1),
+                _mobileWorkspaceEntry(
+                  icon: Symbols.calendar_month_rounded,
+                  title: '日历',
+                  subtitle: '${_calendarEvents.length} 项手机日程',
+                  onTap: () => _setPage(4),
+                ),
+                const Divider(height: 1),
+                _mobileWorkspaceEntry(
+                  icon: Symbols.photo_library_rounded,
+                  title: '相册',
+                  subtitle: '${_photoAlbums.length} 个相册集，按最新照片显示封面',
+                  onTap: () => _setPage(5),
+                ),
+                const Divider(height: 1),
+                _mobileWorkspaceEntry(
+                  icon: Symbols.notifications_rounded,
+                  title: '通知历史',
+                  subtitle: '收集手机应用通知，支持按时间和应用筛选',
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => NotificationHistoryScreen(
+                        dataService: widget.dataService,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -3901,25 +4026,21 @@ class _DevicesScreenState extends State<DevicesScreen>
     required VoidCallback onTap,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Card(
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 18,
-            vertical: 8,
-          ),
-          leading: CircleAvatar(
-            backgroundColor: scheme.secondaryContainer,
-            foregroundColor: scheme.onSecondaryContainer,
-            child: Icon(icon),
-          ),
-          title: Text(title),
-          subtitle: Text(subtitle),
-          trailing: const Icon(Symbols.chevron_right_rounded),
-          onTap: onTap,
-        ),
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      leading: Icon(icon, size: 24, color: scheme.onSurfaceVariant),
+      title: Text(title, style: Theme.of(context).textTheme.titleMedium),
+      subtitle: Text(
+        subtitle,
+        style: Theme.of(context).textTheme.bodyMedium
+            ?.copyWith(color: scheme.onSurfaceVariant),
       ),
+      trailing: Icon(
+        Symbols.chevron_right_rounded,
+        size: 20,
+        color: scheme.onSurfaceVariant,
+      ),
+      onTap: onTap,
     );
   }
 
@@ -3955,7 +4076,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     return Card(
       color: Theme.of(context).colorScheme.primaryContainer,
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(_isDesktop ? 24 : 16),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3965,19 +4086,31 @@ class _DevicesScreenState extends State<DevicesScreen>
                 children: [
                   Text(
                     'Hinge Work',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style:
+                        (_isDesktop
+                                ? Theme.of(context).textTheme.headlineSmall
+                                : Theme.of(context).textTheme.titleLarge)
+                            ?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     selected == null
                         ? '连接手机后，在一处查看文件、日程和工作内容。'
                         : '当前设备 · $name',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    ),
+                    style:
+                        (_isDesktop
+                                ? Theme.of(context).textTheme.bodyLarge
+                                : Theme.of(context).textTheme.bodyMedium)
+                            ?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                            ),
                   ),
                 ],
               ),
@@ -4053,21 +4186,23 @@ class _DevicesScreenState extends State<DevicesScreen>
     final online = _isSessionConnected(selected);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(_isDesktop ? 24 : 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                _deviceIcon(selected.platform, size: 40),
-                const SizedBox(width: 14),
+                _deviceIcon(selected.platform, size: _isDesktop ? 40 : 32),
+                SizedBox(width: _isDesktop ? 14 : 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         selected.name,
-                        style: Theme.of(context).textTheme.titleLarge,
+                        style: _isDesktop
+                            ? Theme.of(context).textTheme.titleLarge
+                            : Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -4166,7 +4301,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   Widget _buildOperationsCard() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.all(_isDesktop ? 20 : 16),
         child: Wrap(
           spacing: 12,
           runSpacing: 12,
@@ -4744,7 +4879,79 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _buildSettingsPage() {
+    final theme = Theme.of(context);
     final scheme = Theme.of(context).colorScheme;
+    Widget settingTile({
+      required IconData icon,
+      required String title,
+      required VoidCallback onTap,
+      String? subtitle,
+    }) {
+      return ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        leading: SizedBox(
+          width: 40,
+          child: Center(
+            child: Icon(icon, size: 24, color: scheme.onSurfaceVariant),
+          ),
+        ),
+        title: Text(
+          title,
+          style: theme.textTheme.bodyLarge?.copyWith(
+            fontSize: 16,
+            color: scheme.onSurface,
+          ),
+        ),
+        subtitle: subtitle == null
+            ? null
+            : Text(
+                subtitle,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 14,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+        trailing: Icon(
+          Symbols.chevron_right_rounded,
+          size: 20,
+          color: scheme.onSurfaceVariant,
+        ),
+        onTap: onTap,
+      );
+    }
+
+    Widget settingsSection(String title, List<Widget> tiles) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                title,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontSize: 15,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              child: Column(
+                children: [
+                  for (var index = 0; index < tiles.length; index++) ...[
+                    tiles[index],
+                    if (index < tiles.length - 1) const Divider(height: 1),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Theme(
       // Settings cards are rounded surfaces. The default ink splash can be
       // painted by an un-clipped ancestor as a sharp rectangle on long press,
@@ -4755,65 +4962,39 @@ class _DevicesScreenState extends State<DevicesScreen>
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '管理应用偏好、外观与数据存储',
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: ListTile(
-                leading: Icon(Symbols.palette_rounded, color: scheme.primary),
-                title: const Text('个性化'),
-                subtitle: Text(
-                  '${_themePreferenceLabel(_workspaceState.themePreference)} · ${_navigationStyleLabel(_isDesktop ? _workspaceState.navigationStyle : AppNavigationStyle.bottom)}',
-                ),
-                trailing: const Icon(Symbols.chevron_right_rounded),
+            settingsSection('常规', [
+              settingTile(
+                icon: Symbols.palette_rounded,
+                title: '个性化',
+                subtitle:
+                    '${_themePreferenceLabel(_workspaceState.themePreference)} · ${_navigationStyleLabel(_isDesktop ? _workspaceState.navigationStyle : AppNavigationStyle.bottom)}',
                 onTap: _openPersonalizationPage,
               ),
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: ListTile(
-                leading: Icon(Symbols.password_rounded, color: scheme.primary),
-                title: const Text('连接安全'),
-                subtitle: Text(
-                  _workspaceState.localPairingCode.isEmpty
-                      ? '未启用本机配对码'
-                      : '已启用 6 位本机配对码；连接本机时需要验证',
-                ),
-                trailing: const Icon(Symbols.chevron_right_rounded),
+              settingTile(
+                icon: Symbols.password_rounded,
+                title: '连接安全',
+                subtitle: _workspaceState.localPairingCode.isEmpty
+                    ? '未启用本机配对码'
+                    : '已启用 6 位本机配对码',
                 onTap: _showPairingCodeSettingsDialog,
               ),
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: ListTile(
-                leading: Icon(
-                  Symbols.folder_special_rounded,
-                  color: scheme.primary,
-                ),
-                title: const Text('存储设置'),
-                subtitle: Text(
-                  _workspaceState.fileStoragePath.isEmpty
-                      ? '使用默认的 Hinge 文件夹'
-                      : '图片、视频和其他文件的保存位置已自定义',
-                ),
-                trailing: const Icon(Symbols.chevron_right_rounded),
+              settingTile(
+                icon: Symbols.folder_special_rounded,
+                title: '存储设置',
+                subtitle: _workspaceState.fileStoragePath.isEmpty
+                    ? '使用默认保存位置'
+                    : '已自定义保存位置',
                 onTap: _showStorageSettingsDialog,
               ),
-            ),
+            ]),
             if (!_isDesktop) ...[
-              const SizedBox(height: 16),
-              Card(
-                child: ListTile(
-                  leading: Icon(Symbols.cloud_rounded, color: scheme.primary),
-                  title: const Text('Cloud Relay'),
-                  subtitle: Text(
-                    _workspaceState.cloudRelaySettings.isConfigured
-                        ? '已配置，可在局域网不可用时异步中转文件'
-                        : '可选的 Cloudflare Worker + R2 文件中转',
-                  ),
-                  trailing: const Icon(Symbols.chevron_right_rounded),
+              settingsSection('手机服务', [
+                settingTile(
+                  icon: Symbols.cloud_rounded,
+                  title: 'Cloud Relay',
+                  subtitle: _workspaceState.cloudRelaySettings.isConfigured
+                      ? '已配置'
+                      : '未配置',
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => CloudRelaySettingsScreen(
@@ -4824,14 +5005,9 @@ class _DevicesScreenState extends State<DevicesScreen>
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Card(
-                child: ListTile(
-                  leading: Icon(Symbols.shield_rounded, color: scheme.primary),
-                  title: const Text('保活设置'),
-                  subtitle: const Text('通知、电池优化和厂商后台保护引导'),
-                  trailing: const Icon(Symbols.chevron_right_rounded),
+                settingTile(
+                  icon: Symbols.shield_rounded,
+                  title: '保活设置',
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => KeepAliveSettingsScreen(
@@ -4840,17 +5016,9 @@ class _DevicesScreenState extends State<DevicesScreen>
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Card(
-                child: ListTile(
-                  leading: Icon(
-                    Symbols.open_in_new_rounded,
-                    color: scheme.primary,
-                  ),
-                  title: const Text('默认应用'),
-                  subtitle: const Text('选择通知中的图片、视频和文件打开方式'),
-                  trailing: const Icon(Symbols.chevron_right_rounded),
+                settingTile(
+                  icon: Symbols.open_in_new_rounded,
+                  title: '默认应用',
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) =>
@@ -4858,14 +5026,9 @@ class _DevicesScreenState extends State<DevicesScreen>
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Card(
-                child: ListTile(
-                  leading: Icon(Symbols.sms_rounded, color: scheme.primary),
-                  title: const Text('短信同步'),
-                  subtitle: const Text('将新短信和验证码转发到 Windows'),
-                  trailing: const Icon(Symbols.chevron_right_rounded),
+                settingTile(
+                  icon: Symbols.sms_rounded,
+                  title: '短信同步',
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => SmsRelaySettingsScreen(
@@ -4874,20 +5037,16 @@ class _DevicesScreenState extends State<DevicesScreen>
                     ),
                   ),
                 ),
-              ),
+              ]),
             ],
-            const SizedBox(height: 16),
-            Card(
-              child: ListTile(
-                leading: Icon(Symbols.info_rounded, color: scheme.primary),
-                title: const Text('关于应用'),
-                subtitle: Text(
-                  '${AppConstants.appName} ${AppConstants.appVersion}',
-                ),
-                trailing: const Icon(Symbols.chevron_right_rounded),
+            settingsSection('关于', [
+              settingTile(
+                icon: Symbols.info_rounded,
+                title: '关于应用',
+                subtitle: '${AppConstants.appName} ${AppConstants.appVersion}',
                 onTap: _showAboutDialog,
               ),
-            ),
+            ]),
           ],
         ),
       ),
@@ -5334,7 +5493,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                         ],
                       ),
                     ),
-                    const Divider(),
                     SwitchListTile.adaptive(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('纯黑深色模式'),
@@ -6262,7 +6420,11 @@ class _DevicesScreenState extends State<DevicesScreen>
   }
 
   Widget _buildSectionTitle(String title, String subtitle) {
-    return HingeSectionTitle(title: title, subtitle: subtitle);
+    return HingeSectionTitle(
+      title: title,
+      subtitle: subtitle,
+      compact: !_isDesktop,
+    );
   }
 
   Widget _statusCard({
@@ -6352,18 +6514,24 @@ class _DevicesScreenState extends State<DevicesScreen>
   }) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(28),
+        padding: EdgeInsets.all(_isDesktop ? 28 : 16),
         child: Column(
           children: [
             Icon(icon, size: 42, color: Theme.of(context).colorScheme.primary),
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge,
+              style: _isDesktop
+                  ? Theme.of(context).textTheme.titleLarge
+                  : Theme.of(context).textTheme.titleMedium,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
-            Text(message, textAlign: TextAlign.center),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: _isDesktop ? null : Theme.of(context).textTheme.bodyMedium,
+            ),
             if (action != null) ...[const SizedBox(height: 18), action],
           ],
         ),

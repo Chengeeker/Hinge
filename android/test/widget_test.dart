@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hinge/app/app.dart';
 import 'package:hinge/app/app_message_snackbar.dart';
+import 'package:hinge/app/page_components.dart';
+import 'package:hinge/app/personalization_screen.dart';
 import 'package:hinge/core/device_identity_manager.dart';
 import 'package:hinge/core/device_model.dart';
 import 'package:hinge/core/device_registry.dart';
@@ -164,6 +166,69 @@ void main() {
 
       expect(find.text('Hinge Work'), findsOneWidget);
       expect(find.text('工作区'), findsOneWidget);
+    });
+
+    testWidgets('Settings remain readable on a compact large-text surface', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(360, 740);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const identity = DeviceIdentity(
+        deviceId: 'settings-large-text-device',
+        name: 'Settings Test Phone',
+      );
+      final service = DiscoveryService(
+        localIdentity: identity,
+        registry: DeviceRegistry(),
+      );
+      final workspaceState = WorkspaceState()
+        ..cycleThemePreference()
+        ..cycleThemePreference()
+        ..setTabIndex(6);
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+          child: HingeApp(
+            identity: identity,
+            discoveryService: service,
+            workspaceState: workspaceState,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('常规'), findsOneWidget);
+      expect(find.text('个性化'), findsOneWidget);
+      expect(find.text('关于应用'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('个性化'));
+      await tester.pumpAndSettle();
+      expect(find.text('纯黑深色模式'), findsOneWidget);
+      expect(find.byType(Divider), findsNothing);
+      expect(find.text('自动匹配系统深色 / 浅色设置'), findsNothing);
+      expect(find.text('深色模式下使用纯黑背景，适合 OLED 屏幕'), findsNothing);
+      expect(find.text('正在使用壁纸色彩'), findsOneWidget);
+      expect(find.text('关闭动态取色后可选择下方预置主题'), findsNothing);
+      expect(find.text('轻盈精炼视觉，适合大字号阅读'), findsNothing);
+      expect(find.text('点击按钮、切换页面时提供轻微触感反馈'), findsNothing);
+    });
+
+    testWidgets('Android page body uses the 16dp M3 side inset', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: HingePageBody(child: SizedBox.shrink())),
+      );
+
+      final scrollView = tester.widget<SingleChildScrollView>(
+        find.byType(SingleChildScrollView),
+      );
+      expect(scrollView.padding, const EdgeInsets.fromLTRB(16, 8, 16, 32));
     });
 
     test('Device model serialization and deserialization', () {
@@ -336,5 +401,50 @@ void main() {
         }
       },
     );
+  });
+
+  testWidgets('Personalization hides captions repeated by feature titles', (
+    tester,
+  ) async {
+    final state = WorkspaceState();
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PersonalizationScreen(
+          state: state,
+          isDesktop: false,
+          hapticFeedbackEnabled: false,
+          onHapticFeedbackChanged: (_) async {},
+        ),
+      ),
+    );
+
+    expect(find.text('自动匹配系统深色 / 浅色设置'), findsNothing);
+    expect(find.text('深色模式下使用纯黑背景，适合 OLED 屏幕'), findsNothing);
+    expect(find.text('开启后从 Android 壁纸提取系统色；关闭后使用下方预置配色'), findsNothing);
+    expect(find.text('关闭动态取色后可选择下方预置主题'), findsNothing);
+    expect(find.byType(Divider), findsNothing);
+
+    final scrollable = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(
+      find.text('震动反馈'),
+      250,
+      scrollable: scrollable,
+    );
+    expect(find.text('点击按钮、切换页面时提供轻微触感反馈'), findsNothing);
+
+    await tester.drag(scrollable, const Offset(0, 1500));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('自定义应用字体粗细'),
+      250,
+      scrollable: scrollable,
+    );
+    await tester.ensureVisible(find.text('自定义应用字体粗细'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义应用字体粗细'));
+    await tester.pumpAndSettle();
+    expect(find.text('轻盈精炼视觉，适合大字号阅读'), findsNothing);
   });
 }

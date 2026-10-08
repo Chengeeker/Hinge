@@ -6,11 +6,13 @@ import 'package:flutter/material.dart';
 class HingePageBody extends StatelessWidget {
   final Widget child;
   final bool reserveFloatingNavigation;
+  final double horizontalPadding;
 
   const HingePageBody({
     super.key,
     required this.child,
     this.reserveFloatingNavigation = false,
+    this.horizontalPadding = 16,
   });
 
   @override
@@ -19,7 +21,12 @@ class HingePageBody extends StatelessWidget {
         ? 136 + MediaQuery.viewPaddingOf(context).bottom
         : 32.0;
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(24, 8, 24, bottomPadding),
+      padding: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        8,
+        horizontalPadding,
+        bottomPadding,
+      ),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1180),
@@ -33,11 +40,13 @@ class HingePageBody extends StatelessWidget {
 class HingeSectionTitle extends StatelessWidget {
   final String title;
   final String subtitle;
+  final bool compact;
 
   const HingeSectionTitle({
     super.key,
     required this.title,
     required this.subtitle,
+    this.compact = false,
   });
 
   @override
@@ -45,13 +54,24 @@ class HingeSectionTitle extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: Theme.of(context).textTheme.headlineSmall),
+        Text(
+          title,
+          style: compact
+              ? Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(fontSize: 16, fontWeight: FontWeight.w600)
+              : Theme.of(context).textTheme.headlineSmall,
+        ),
         const SizedBox(height: 4),
         Text(
           subtitle,
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: compact
+              ? Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                )
+              : TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
         ),
       ],
     );

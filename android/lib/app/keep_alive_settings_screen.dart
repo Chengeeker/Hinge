@@ -150,7 +150,6 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                       color: scheme.primary,
                     ),
                     title: const Text('常驻通知'),
-                    subtitle: const Text('在通知中心保留 Hinge 的后台状态，并提供点击唤醒入口'),
                     value: _persistentNotification,
                     onChanged: _setPersistentNotification,
                   ),

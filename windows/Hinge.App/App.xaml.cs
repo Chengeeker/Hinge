@@ -70,7 +70,15 @@ public partial class App : Application
         }
 
         bool startSilently = MainWindow.ShouldStartSilently(launchArguments);
-        _window = new MainWindow();
+        try
+        {
+            _window = new MainWindow();
+        }
+        catch (Exception exception)
+        {
+            LogException(exception);
+            throw;
+        }
         LogLifecycle("main-window-created");
         if (_window is MainWindow mainWindow && mainWindow.HandleActivationArguments(launchArguments))
         {

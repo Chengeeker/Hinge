@@ -12,6 +12,7 @@ using Windows.Foundation;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
@@ -60,6 +61,7 @@ public sealed partial class MainWindow : Window
     private const string PairingCodeSettingName = "PairingCode";
     private const string WirelessAdbHostSettingName = "WirelessAdbHost";
     private const string WirelessAdbConnectPortSettingName = "WirelessAdbConnectPort";
+    private const string WirelessAdbClipboardSyncSettingName = "WirelessAdbClipboardSync";
     private const string CloudRelayEnabledSettingName = "CloudRelayEnabled";
     private const string CloudRelayEndpointSettingName = "CloudRelayEndpoint";
     private const string CloudRelayDeviceTokenSettingName = "CloudRelayDeviceToken";
@@ -88,10 +90,18 @@ public sealed partial class MainWindow : Window
     private const int InitialFileBatchSize = 200;
     private const int AdditionalFileBatchSize = 200;
     private readonly SemaphoreSlim _fileThumbnailGate = new(GetFileThumbnailConcurrency());
+    private readonly SemaphoreSlim _wirelessAdbClipboardSyncGate = new(1, 1);
     private readonly HashSet<SessionConnection> _observedConnections = new();
     private readonly Dictionary<string, DateTime> _automaticConnectAttempts = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _manualDisconnectSuppressedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _historicalReconnectTimer;
+    private CancellationTokenSource? _wirelessAdbClipboardSyncCancellation;
+    private Task? _wirelessAdbClipboardSyncTask;
+    private WirelessAdbClipboardBridge? _wirelessAdbClipboardBridge;
+    private string? _lastAndroidClipboardText;
+    private string _wirelessAdbClipboardStatus = "无线 ADB 剪贴板同步已关闭。";
+    private int _wirelessAdbClipboardGeneration;
+    private int _desktopClipboardChangeGeneration;
     private int _connectionAttemptGeneration;
     private Device? _activeDevice;
     private SessionConnection? _activeConnection;
@@ -458,6 +468,20 @@ public sealed partial class MainWindow : Window
         _transferManager.TransferFailed += OnTransferFailed;
         _notificationManager.NotificationReceived += OnNotificationReceived;
         Closed += OnClosed;
+
+        if (LoadWirelessAdbClipboardSync())
+        {
+            var adbHost = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
+            var adbPort = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(adbHost) && !string.IsNullOrWhiteSpace(adbPort))
+            {
+                _ = ConfigureWirelessAdbClipboardSyncAsync(true, adbHost, adbPort);
+            }
+            else
+            {
+                _wirelessAdbClipboardStatus = "请填写手机 IP 和连接端口以恢复剪贴板同步。";
+            }
+        }
 
         try
         {
@@ -1139,6 +1163,9 @@ public sealed partial class MainWindow : Window
         page.CleanDeviceHistory.Click += CleanDeviceHistory_Click;
         page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
         page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
+        page.WirelessAdbClipboardSync.IsOn = LoadWirelessAdbClipboardSync();
+        page.WirelessAdbStatus.Text = _wirelessAdbClipboardStatus;
+        page.WirelessAdbClipboardSync.Toggled += WirelessAdbClipboardSync_Toggled;
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
         page.WirelessAdbPullLogs.Click += WirelessAdbPullLogs_Click;
@@ -1161,11 +1188,15 @@ public sealed partial class MainWindow : Window
                 page.WirelessAdbPairingPort.Text,
                 code,
                 connectPort);
-            page.Status.Text = "无线 ADB 已配对并连接。配对码已清除，后续可直接连接或提取日志。";
+            page.WirelessAdbStatus.Text = "无线 ADB 已配对并连接。配对码已清除，后续可直接连接或提取日志。";
+            if (page.WirelessAdbClipboardSync.IsOn)
+            {
+                await ConfigureWirelessAdbClipboardSyncAsync(true, host, connectPort);
+            }
         }
         catch (Exception exception)
         {
-            page.Status.Text = $"无线 ADB 配对/连接失败：{exception.Message}";
+            page.WirelessAdbStatus.Text = $"无线 ADB 配对/连接失败：{exception.Message}";
         }
         finally
         {
@@ -1184,11 +1215,15 @@ public sealed partial class MainWindow : Window
         {
             await WirelessAdbClient.ConnectAsync(host, port);
             SaveWirelessAdbEndpoint(host, port);
-            page.Status.Text = "无线 ADB 已连接；主机密钥由 Android Platform-Tools 保存。";
+            page.WirelessAdbStatus.Text = "无线 ADB 已连接；主机密钥由 Android Platform-Tools 保存。";
+            if (page.WirelessAdbClipboardSync.IsOn)
+            {
+                await ConfigureWirelessAdbClipboardSyncAsync(true, host, port);
+            }
         }
         catch (Exception exception)
         {
-            page.Status.Text = $"无线 ADB 连接失败：{exception.Message}";
+            page.WirelessAdbStatus.Text = $"无线 ADB 连接失败：{exception.Message}";
         }
         finally
         {
@@ -1208,11 +1243,11 @@ public sealed partial class MainWindow : Window
             await WirelessAdbClient.ConnectAsync(host, port);
             SaveWirelessAdbEndpoint(host, port);
             var path = await WirelessAdbClient.PullDiagnosticsAsync(host, port);
-            page.Status.Text = $"Hinge 手机连接诊断日志已保存：{path}";
+            page.WirelessAdbStatus.Text = $"Hinge 手机连接诊断日志已保存：{path}";
         }
         catch (Exception exception)
         {
-            page.Status.Text = $"提取 Hinge 日志失败：{exception.Message}";
+            page.WirelessAdbStatus.Text = $"提取 Hinge 日志失败：{exception.Message}";
         }
         finally
         {
@@ -1233,6 +1268,192 @@ public sealed partial class MainWindow : Window
         }
         WriteUserSetting(WirelessAdbHostSettingName, host);
         WriteUserSetting(WirelessAdbConnectPortSettingName, port);
+    }
+
+    private async void WirelessAdbClipboardSync_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle || _transferSettingsPage is not { } page) return;
+        var enabled = toggle.IsOn;
+        SaveWirelessAdbClipboardSync(enabled);
+        var host = page.WirelessAdbHost.Text.Trim();
+        var port = page.WirelessAdbConnectPort.Text.Trim();
+        if (enabled && (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(port)))
+        {
+            SetWirelessAdbClipboardStatus("请先填写手机 IP 和连接端口，再开启剪贴板同步。");
+            return;
+        }
+
+        if (enabled) SaveWirelessAdbEndpoint(host, port);
+        await ConfigureWirelessAdbClipboardSyncAsync(enabled, host, port);
+    }
+
+    private async Task ConfigureWirelessAdbClipboardSyncAsync(bool enabled, string host, string port)
+    {
+        await _wirelessAdbClipboardSyncGate.WaitAsync();
+        try
+        {
+            await StopWirelessAdbClipboardSyncAsync();
+            if (!enabled)
+            {
+                SetWirelessAdbClipboardStatus("无线 ADB 剪贴板同步已关闭。");
+                return;
+            }
+
+            var cancellation = new CancellationTokenSource();
+            _wirelessAdbClipboardSyncCancellation = cancellation;
+            Clipboard.ContentChanged += DesktopClipboard_ContentChanged;
+            SetWirelessAdbClipboardStatus("正在连接无线 ADB 并启动剪贴板桥…");
+            _wirelessAdbClipboardSyncTask = RunWirelessAdbClipboardSyncAsync(host, port, cancellation.Token);
+        }
+        finally
+        {
+            _wirelessAdbClipboardSyncGate.Release();
+        }
+    }
+
+    private async Task StopWirelessAdbClipboardSyncAsync()
+    {
+        Clipboard.ContentChanged -= DesktopClipboard_ContentChanged;
+        Interlocked.Increment(ref _wirelessAdbClipboardGeneration);
+        _lastAndroidClipboardText = null;
+        var cancellation = _wirelessAdbClipboardSyncCancellation;
+        var syncTask = _wirelessAdbClipboardSyncTask;
+        _wirelessAdbClipboardSyncCancellation = null;
+        _wirelessAdbClipboardSyncTask = null;
+        cancellation?.Cancel();
+        _wirelessAdbClipboardBridge?.Dispose();
+        _wirelessAdbClipboardBridge = null;
+        if (syncTask != null)
+        {
+            try { await syncTask; }
+            catch { }
+        }
+        cancellation?.Dispose();
+    }
+
+    private async Task RunWirelessAdbClipboardSyncAsync(string host, string port, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var currentHosts = _sessionManager.ActiveConnections
+                    .Where(connection => connection.IsSessionReady && connection.IsPairingAuthenticated &&
+                        connection.PeerInfo?.Platform.Equals("android", StringComparison.OrdinalIgnoreCase) == true)
+                    .SelectMany(connection => new[] { connection.RemoteAddress?.ToString() ?? "" }
+                        .Concat(_registry.TryGetDevice(connection.RemoteDeviceId!, out var device) && device != null
+                            ? device.NetworkAddresses : []))
+                    .Where(address => !string.IsNullOrWhiteSpace(address)).ToArray();
+                var transport = await WirelessAdbClient.ConnectAsync(host, port, cancellationToken, currentHosts);
+                var generation = Interlocked.Increment(ref _wirelessAdbClipboardGeneration);
+                var bridge = await WirelessAdbClient.StartClipboardBridgeAsync(
+                    transport,
+                    text => OnAndroidClipboardTextReceived(generation, text),
+                    cancellationToken);
+                _wirelessAdbClipboardBridge = bridge;
+                _lastAndroidClipboardText = null;
+                SetWirelessAdbClipboardStatus("无线 ADB 剪贴板同步已连接。");
+                await bridge.Completion.WaitAsync(cancellationToken);
+                SetWirelessAdbClipboardStatus("无线 ADB 剪贴板桥已断开，正在重连…");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                SetWirelessAdbClipboardStatus($"无线 ADB 剪贴板同步连接失败，正在重试：{exception.Message}");
+            }
+            finally
+            {
+                _wirelessAdbClipboardBridge?.Dispose();
+                _wirelessAdbClipboardBridge = null;
+                _lastAndroidClipboardText = null;
+                Interlocked.Increment(ref _wirelessAdbClipboardGeneration);
+            }
+
+            try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    private async void DesktopClipboard_ContentChanged(object? sender, object e)
+    {
+        var bridge = _wirelessAdbClipboardBridge;
+        var cancellation = _wirelessAdbClipboardSyncCancellation;
+        if (bridge == null || cancellation == null) return;
+        var generation = Interlocked.Increment(ref _desktopClipboardChangeGeneration);
+        try
+        {
+            var content = Clipboard.GetContent();
+            if (!content.Contains(StandardDataFormats.Text)) return;
+            var text = await content.GetTextAsync();
+            if (generation != Volatile.Read(ref _desktopClipboardChangeGeneration) ||
+                !ReferenceEquals(bridge, _wirelessAdbClipboardBridge) ||
+                text == _lastAndroidClipboardText ||
+                Encoding.UTF8.GetByteCount(text) > 1_048_576)
+            {
+                return;
+            }
+
+            await bridge.SendTextAsync(text, cancellation.Token);
+        }
+        catch
+        {
+            // Clipboard access and bridge writes are best effort while the ADB connection changes.
+        }
+    }
+
+    private void OnAndroidClipboardTextReceived(int generation, string text)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (generation != Volatile.Read(ref _wirelessAdbClipboardGeneration) ||
+                _wirelessAdbClipboardBridge == null ||
+                Encoding.UTF8.GetByteCount(text) > 1_048_576)
+            {
+                return;
+            }
+
+            _lastAndroidClipboardText = text;
+            var data = new DataPackage();
+            data.SetText(text);
+            Clipboard.SetContent(data);
+        });
+    }
+
+    private void SetWirelessAdbClipboardStatus(string status)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _wirelessAdbClipboardStatus = status;
+            if (_transferSettingsPage != null) _transferSettingsPage.WirelessAdbStatus.Text = status;
+        });
+    }
+
+    private static bool LoadWirelessAdbClipboardSync()
+    {
+        if (ReadUserSetting(WirelessAdbClipboardSyncSettingName) is int registryValue)
+        {
+            return registryValue != 0;
+        }
+        try
+        {
+            if (ApplicationData.Current.LocalSettings.Values[WirelessAdbClipboardSyncSettingName] is bool value)
+            {
+                WriteUserSetting(WirelessAdbClipboardSyncSettingName, value ? 1 : 0);
+                return value;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static void SaveWirelessAdbClipboardSync(bool enabled)
+    {
+        try { ApplicationData.Current.LocalSettings.Values[WirelessAdbClipboardSyncSettingName] = enabled; }
+        catch { }
+        WriteUserSetting(WirelessAdbClipboardSyncSettingName, enabled ? 1 : 0);
     }
 
     private static void SetWirelessAdbBusy(TransferSettingsPage page, bool busy)
@@ -1510,32 +1731,32 @@ public sealed partial class MainWindow : Window
             CornerRadius = new CornerRadius(999),
             Background = ThemeBrushes.MutedSurface(owner),
             VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock
+            Child = ThemeBrushes.Text(new TextBlock
             {
                 Text = $"v{Constants.AppVersion}",
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = ThemeBrushes.AccentText(owner),
                 VerticalAlignment = VerticalAlignment.Center
-            }
+            })
         });
         content.Children.Add(titleRow);
 
-        content.Children.Add(new TextBlock
+        content.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = "局域网优先的跨设备办公套件",
             FontSize = 16,
             Foreground = ThemeBrushes.Secondary(owner),
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap
-        });
-        content.Children.Add(new TextBlock
+        }));
+        content.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = "Windows：WinUI 3　·　Android：Flutter + Material 3",
             FontSize = 12,
             Foreground = ThemeBrushes.Muted(owner),
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap
-        });
+        }));
 
         void AddFeature(Symbol symbol, string description)
         {
@@ -1584,13 +1805,13 @@ public sealed partial class MainWindow : Window
             Text = "GitHub 开源项目",
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
         });
-        projectDetails.Children.Add(new TextBlock
+        projectDetails.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = "github.com/Chengeeker/Hinge",
             FontSize = 12,
             Foreground = ThemeBrushes.Secondary(owner),
             TextTrimming = TextTrimming.CharacterEllipsis
-        });
+        }));
         projectInfo.Children.Add(projectDetails);
 
         var projectHomeLink = new HyperlinkButton
@@ -2516,6 +2737,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePaneResizeHandle()
     {
+        PaneResizeHandle.Value = AppNavigation.OpenPaneLength;
         PaneResizeHandle.Height = PaneResizeCanvas.ActualHeight;
         PaneResizeHandle.Visibility = AppNavigation.IsPaneOpen
             ? Visibility.Visible
@@ -2527,6 +2749,8 @@ public sealed partial class MainWindow : Window
     private void PaneResizeHandle_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var point = e.GetCurrentPoint(PaneResizeCanvas);
+        if (!point.Properties.IsLeftButtonPressed) return;
+        PaneResizeHandle.Focus(FocusState.Pointer);
         _resizingPane = true;
         _resizePointerId = point.PointerId;
         PaneResizeHandle.CapturePointer(e.Pointer);
@@ -2561,6 +2785,13 @@ public sealed partial class MainWindow : Window
     private void SetPaneWidth(double width)
     {
         AppNavigation.OpenPaneLength = Math.Clamp(width, 200, 420);
+    }
+
+    private void PaneResizeHandle_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (AppNavigation == null || PaneResizeCanvas == null) return;
+        SetPaneWidth(e.NewValue);
+        UpdatePaneResizeHandle();
     }
 
     private static double LoadPaneWidth()
@@ -4005,12 +4236,12 @@ public sealed partial class MainWindow : Window
                     Children =
                     {
                         new ProgressRing { IsActive = true, Width = 24, Height = 24 },
-                        new TextBlock
+                        ThemeBrushes.Text(new TextBlock
                         {
                             Text = "暂未收到其他设备的发现消息。可点击“手动连接”输入对方 IP。",
                             TextWrapping = TextWrapping.Wrap,
                             Foreground = ThemeBrushes.Secondary(PageRoot)
-                        }
+                        })
                     }
                 }
             });
@@ -4043,7 +4274,7 @@ public sealed partial class MainWindow : Window
 
             var details = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
             details.Children.Add(new TextBlock { Text = device.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            details.Children.Add(new TextBlock
+            details.Children.Add(ThemeBrushes.Text(new TextBlock
             {
                 Text = suspended
                     ? $"后台休眠 · {string.Join(", ", device.NetworkAddresses)}"
@@ -4056,7 +4287,7 @@ public sealed partial class MainWindow : Window
                 Foreground = online
                     ? ThemeBrushes.AccentText(PageRoot)
                     : ThemeBrushes.Secondary(PageRoot)
-            });
+            }));
             Grid.SetColumn(details, 1);
             row.Children.Add(details);
 
@@ -4072,12 +4303,14 @@ public sealed partial class MainWindow : Window
                 Content = connected ? "断开连接" : online ? "连接" : "重试",
                 Tag = device,
                 IsEnabled = connected || online,
-                Height = 36,
+
                 MinHeight = 36,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center
             };
+            AutomationProperties.SetAutomationId(connectButton, $"Device.Connect.{device.DeviceId}");
+            AutomationProperties.SetName(connectButton, $"{connectButton.Content}：{device.Name}");
             connectButton.Click += DeviceConnect_Click;
             actions.Children.Add(connectButton);
 
@@ -4647,13 +4880,13 @@ public sealed partial class MainWindow : Window
                 {
                     new TextBlock { Text = "输入安卓设备的局域网 IPv4 地址：" },
                     input,
-                    new TextBlock
+                    ThemeBrushes.Text(new TextBlock
                     {
                         Text = "设备仍需在 UDP 52830 发现端口和 TCP 52831 会话端口可达。",
                         FontSize = 14,
                         Foreground = ThemeBrushes.Secondary(PageRoot),
                         TextWrapping = TextWrapping.Wrap
-                    }
+                    })
                 }
             },
             PrimaryButtonText = "连接",
@@ -5337,24 +5570,24 @@ public sealed partial class MainWindow : Window
         FileListView.Items.Add(new ListViewItem
         {
             IsHitTestVisible = false,
-            Content = new TextBlock
+            Content = ThemeBrushes.Text(new TextBlock
             {
                 Text = message,
                 TextWrapping = TextWrapping.Wrap,
                 Padding = new Thickness(12, 18, 12, 18),
                 Foreground = ThemeBrushes.Secondary(PageRoot)
-            }
+            })
         });
         _filePage?.GridFiles.Items.Add(new GridViewItem
         {
             IsHitTestVisible = false,
-            Content = new TextBlock
+            Content = ThemeBrushes.Text(new TextBlock
             {
                 Text = message,
                 TextWrapping = TextWrapping.Wrap,
                 Padding = new Thickness(20),
                 Foreground = ThemeBrushes.Secondary(PageRoot)
-            }
+            })
         });
     }
 
@@ -5546,7 +5779,7 @@ public sealed partial class MainWindow : Window
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             TextTrimming = TextTrimming.CharacterEllipsis
         });
-        details.Children.Add(new TextBlock
+        details.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = entry.IsDirectory
                 ? "文件夹"
@@ -5554,17 +5787,17 @@ public sealed partial class MainWindow : Window
             FontSize = 14,
             Foreground = ThemeBrushes.Secondary(PageRoot),
             TextTrimming = TextTrimming.CharacterEllipsis
-        });
+        }));
         Grid.SetColumn(details, 1);
         row.Children.Add(details);
 
-        var date = new TextBlock
+        var date = ThemeBrushes.Text(new TextBlock
         {
             Text = FormatUnixMilliseconds(entry.ModifiedAt),
             FontSize = 14,
             Foreground = ThemeBrushes.Secondary(PageRoot),
             VerticalAlignment = VerticalAlignment.Center
-        };
+        });
         Grid.SetColumn(date, 2);
         row.Children.Add(date);
         return row;
@@ -5625,20 +5858,20 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center
         };
         panel.Children.Add(visual);
-        panel.Children.Add(new TextBlock
+        panel.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = entry.Name,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
-        });
-        panel.Children.Add(new TextBlock
+        }));
+        panel.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = entry.IsDirectory ? "文件夹" : FormatBytes(entry.SizeBytes),
             FontSize = 13,
             Foreground = ThemeBrushes.Secondary(PageRoot),
             TextAlignment = TextAlignment.Center
-        });
+        }));
         return (new Grid { MinHeight = 150, Children = { panel } }, thumbnail);
     }
 
@@ -7713,6 +7946,10 @@ public sealed partial class MainWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         CancelHistoricalReconnect();
+        Clipboard.ContentChanged -= DesktopClipboard_ContentChanged;
+        _wirelessAdbClipboardSyncCancellation?.Cancel();
+        _wirelessAdbClipboardBridge?.Dispose();
+        _wirelessAdbClipboardBridge = null;
         ExplorerSendMenu.Clear();
         ReleaseWindowIcons();
         UninitializeNativeFileDrop();

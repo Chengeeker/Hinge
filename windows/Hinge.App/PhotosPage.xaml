@@ -14,19 +14,19 @@
         <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
             <StackPanel Style="{StaticResource HingePageStackStyle}">
                 <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
-                    <Button x:Name="BackButton" Content="返回相册集" Click="BackButton_Click" Visibility="Collapsed" VerticalAlignment="Center" />
+                    <Button x:Name="BackButton" AutomationProperties.AutomationId="PhotosPage.BackButton" Content="返回相册集" Click="BackButton_Click" Visibility="Collapsed" VerticalAlignment="Center" />
                     <StackPanel Spacing="4">
                         <TextBlock x:Name="PageHeading" Text="相册集" Style="{StaticResource HingePageTitleStyle}" />
                         <TextBlock x:Name="PageDescription" Text="先显示相册集，封面使用该相册最新一张图片；进入相册后再读取图片缩略图。" Style="{StaticResource HingePageDescriptionStyle}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <Button x:Name="SelectPhotosButton" Content="选择" Height="36" Visibility="Collapsed" />
-                        <ComboBox x:Name="PhotoViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" Height="36" VerticalAlignment="Center">
+                        <Button x:Name="SelectPhotosButton" AutomationProperties.AutomationId="PhotosPage.SelectPhotosButton" Content="选择" Visibility="Collapsed"  MinHeight="36" />
+                        <ComboBox x:Name="PhotoViewModeOptions" AutomationProperties.Name="照片视图" AutomationProperties.AutomationId="PhotosPage.PhotoViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" VerticalAlignment="Center" MinHeight="36">
                             <ComboBoxItem Content="相册集" Tag="albums" />
                             <ComboBoxItem Content="时光轴" Tag="timeline" />
                         </ComboBox>
                         <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <ComboBox x:Name="PhotoSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" Height="36" SelectionChanged="PhotoSortOptions_SelectionChanged">
+                        <ComboBox x:Name="PhotoSortOptions" AutomationProperties.Name="照片排序" AutomationProperties.AutomationId="PhotosPage.PhotoSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" SelectionChanged="PhotoSortOptions_SelectionChanged" MinHeight="36">
                             <ComboBoxItem Content="名称" Tag="name" />
                             <ComboBoxItem Content="类型" Tag="type" />
                             <ComboBoxItem Content="大小（小到大）" Tag="sizeAsc" />
@@ -34,7 +34,7 @@
                             <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
                             <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
                         </ComboBox>
-                        <Button x:Name="RefreshButton" Style="{StaticResource HingeIconButtonStyle}" Click="RefreshButton_Click" ToolTipService.ToolTip="刷新相册" AutomationProperties.Name="刷新相册">
+                        <Button x:Name="RefreshButton" AutomationProperties.AutomationId="PhotosPage.RefreshButton" Style="{StaticResource HingeIconButtonStyle}" Click="RefreshButton_Click" ToolTipService.ToolTip="刷新相册" AutomationProperties.Name="刷新相册">
                             <SymbolIcon Symbol="Refresh" />
                         </Button>
                     </StackPanel>
@@ -44,12 +44,12 @@
 
                 <StackPanel x:Name="PhotoSelectionActionBar" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed">
                     <TextBlock x:Name="SelectedPhotoCountText" Text="已选 0 张" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <Button x:Name="SaveSelectedPhotosButton" Content="保存到电脑" Height="36" />
-                    <Button x:Name="CancelPhotoSelectionButton" Content="取消" Height="36" />
+                    <Button x:Name="SaveSelectedPhotosButton" AutomationProperties.AutomationId="PhotosPage.SaveSelectedPhotosButton" Content="保存到电脑"  MinHeight="36" />
+                    <Button x:Name="CancelPhotoSelectionButton" AutomationProperties.AutomationId="PhotosPage.CancelPhotoSelectionButton" Content="取消"  MinHeight="36" />
                 </StackPanel>
 
                 <GridView
-                    x:Name="AlbumsGrid"
+                    x:Name="AlbumsGrid" AutomationProperties.AutomationId="PhotosPage.AlbumsGrid"
                     AllowDrop="True"
                     IsItemClickEnabled="True"
                     ItemClick="AlbumsGrid_ItemClick"
@@ -63,7 +63,7 @@
                 </GridView>
 
                 <GridView
-                    x:Name="PhotosGrid"
+                    x:Name="PhotosGrid" AutomationProperties.AutomationId="PhotosPage.PhotosGrid"
                     IsItemClickEnabled="True"
                     ItemClick="PhotosGrid_ItemClick"
                     SelectionMode="None"

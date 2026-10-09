@@ -36,6 +36,16 @@ public sealed partial class HomePage : Page
         ActivityInfoBar.Foreground = ThemeBrushes.StatusText(this, ActivityInfoBar.Severity);
     }
 
+    private void HomeSummaryGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var compact = e.NewSize.Width < 680;
+        Grid.SetColumnSpan(IdentityCard, compact ? 2 : 1);
+        Grid.SetColumn(ServiceCard, compact ? 0 : 1);
+        Grid.SetRow(ServiceCard, compact ? 1 : 0);
+        Grid.SetColumnSpan(ServiceCard, compact ? 2 : 1);
+        ServiceCard.Margin = compact ? new Thickness(0, 16, 0, 0) : new Thickness(0);
+    }
+
     public void SetTransferHistory(IReadOnlyList<TransferHistoryRecord> records)
     {
         ClearTransferHistoryButton.IsEnabled = records.Any(record => record.CanDelete);
@@ -45,12 +55,12 @@ public sealed partial class HomePage : Page
             TransferHistoryListView.Items.Add(new ListViewItem
             {
                 IsHitTestVisible = false,
-                Content = new TextBlock
+                Content = ThemeBrushes.Text(new TextBlock
                 {
                     Text = "暂无传输记录。",
                     Padding = new Thickness(12, 16, 12, 16),
                     Foreground = ThemeBrushes.Secondary(this)
-                }
+                })
             });
             return;
         }
@@ -82,7 +92,7 @@ public sealed partial class HomePage : Page
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
-            details.Children.Add(new TextBlock
+            details.Children.Add(ThemeBrushes.Text(new TextBlock
             {
                 Text = string.IsNullOrWhiteSpace(record.DeviceName)
                     ? $"{record.StatusText} · {record.TimeText}"
@@ -91,7 +101,7 @@ public sealed partial class HomePage : Page
                     ? ThemeBrushes.AccentText(this)
                     : ThemeBrushes.Secondary(this),
                 TextWrapping = TextWrapping.Wrap
-            });
+            }));
             if (record.State == TransferState.Transferring && record.TotalBytes > 0)
             {
                 details.Children.Add(new ProgressBar
@@ -120,7 +130,7 @@ public sealed partial class HomePage : Page
                     Tag = record,
                     Margin = new Thickness(12, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
-                    Height = 36,
+
                     MinHeight = 36
                 };
                 if (record.CanCancel)

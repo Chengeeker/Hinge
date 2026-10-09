@@ -6,10 +6,9 @@
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
         <StackPanel Style="{StaticResource HingePageStackStyle}">
             <TextBlock Text="设置" Style="{StaticResource HingePageTitleStyle}" />
-            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="8">
                     <Button
-                        x:Name="PersonalizationButton"
+                        x:Name="PersonalizationButton" AutomationProperties.AutomationId="SettingsPage.PersonalizationButton"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Stretch"
                         Padding="0"
@@ -30,7 +29,7 @@
                         </Grid>
                     </Button>
                     <Button
-                        x:Name="WindowsSettingsButton"
+                        x:Name="WindowsSettingsButton" AutomationProperties.AutomationId="SettingsPage.WindowsSettingsButton"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Stretch"
                         Padding="0"
@@ -51,7 +50,7 @@
                         </Grid>
                     </Button>
                     <Button
-                        x:Name="TransferSettingsButton"
+                        x:Name="TransferSettingsButton" AutomationProperties.AutomationId="SettingsPage.TransferSettingsButton"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Stretch"
                         Padding="0"
@@ -63,7 +62,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <SymbolIcon Grid.Column="0" Symbol="Folder" VerticalAlignment="Center" />
+                            <SymbolIcon Grid.Column="0" Symbol="Link" VerticalAlignment="Center" />
                             <StackPanel Grid.Column="1" Spacing="2">
                                 <TextBlock Text="传输与连接" FontSize="16" FontWeight="SemiBold" />
                                 <TextBlock Text="自定义接收位置、设备配对与 Android 唤醒" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
@@ -72,7 +71,7 @@
                         </Grid>
                     </Button>
                     <Button
-                        x:Name="CloudRelaySettingsButton"
+                        x:Name="CloudRelaySettingsButton" AutomationProperties.AutomationId="SettingsPage.CloudRelaySettingsButton"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Stretch"
                         Padding="0"
@@ -84,7 +83,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <SymbolIcon Grid.Column="0" Symbol="Setting" VerticalAlignment="Center" />
+                            <FontIcon Grid.Column="0" Glyph="&#xE724;" FontFamily="{ThemeResource SymbolThemeFontFamily}" VerticalAlignment="Center" />
                             <StackPanel Grid.Column="1" Spacing="2">
                                 <TextBlock Text="Cloud Relay" FontSize="16" FontWeight="SemiBold" />
                                 <TextBlock Text="配置你自己的 Worker、Relay 密钥与设备注册" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
@@ -92,7 +91,7 @@
                             <SymbolIcon Grid.Column="2" Symbol="Forward" VerticalAlignment="Center" />
                         </Grid>
                     </Button>
-                    <Button x:Name="WebDavSettingsButton" HorizontalAlignment="Stretch"
+                    <Button x:Name="WebDavSettingsButton" AutomationProperties.AutomationId="SettingsPage.WebDavSettingsButton" HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Stretch" Padding="0" AutomationProperties.Name="WebDAV 设置">
                         <Grid Padding="14,12" ColumnSpacing="14">
                             <Grid.ColumnDefinitions>
@@ -107,7 +106,6 @@
                         </Grid>
                     </Button>
                 </StackPanel>
-            </Border>
         </StackPanel>
     </ScrollViewer>
 </Page>

@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using Microsoft.UI.Xaml.Automation;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -18,7 +20,11 @@ public sealed partial class NotificationHistoryPage : Page
     private Func<RemoteNotificationHistoryItem, Task<bool>>? _copyVerificationCode;
     private Func<Task<bool>>? _clearItems;
     private SessionConnection? _connection;
-    private readonly List<RemoteNotificationHistoryItem> _items = new();
+    private readonly ObservableCollection<RemoteNotificationHistoryItem> _items = new();
+    private readonly HashSet<string> _itemIds = new(StringComparer.Ordinal);
+    private ScrollViewer? _historyScroll;
+    private int _nextOffset;
+    private bool _pendingReset;
     private int _total;
     private int _loadVersion;
     private bool _loading;
@@ -30,7 +36,13 @@ public sealed partial class NotificationHistoryPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
-        ActualThemeChanged += (_, _) => RenderItems();
+        HistoryList.ItemsSource = _items;
+    }
+
+    private void HistoryList_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (HistoryList.Header is FrameworkElement header)
+            header.MaxWidth = e.NewSize.Width;
     }
 
     public void Configure(
@@ -57,7 +69,16 @@ public sealed partial class NotificationHistoryPage : Page
 
     private async Task LoadPageAsync(bool reset)
     {
-        if (_loading || (!reset && _items.Count >= _total)) return;
+        if (_loading)
+        {
+            if (reset)
+            {
+                ++_loadVersion;
+                _pendingReset = true;
+            }
+            return;
+        }
+        if (!reset && _nextOffset >= _total) return;
         var connection = _connectionProvider?.Invoke() ?? _connection;
         _connection = connection;
         var version = reset ? ++_loadVersion : _loadVersion;
@@ -67,7 +88,9 @@ public sealed partial class NotificationHistoryPage : Page
             {
                 _items.Clear();
                 _total = 0;
-                HistoryList.Items.Clear();
+                _itemIds.Clear();
+                _nextOffset = 0;
+                LoadMoreButton.Visibility = Visibility.Collapsed;
                 SummaryText.Text = string.Empty;
                 ClearButton.IsEnabled = false;
             }
@@ -77,21 +100,33 @@ public sealed partial class NotificationHistoryPage : Page
 
         _loading = true;
         LoadingIndicator.IsActive = true;
-        if (reset) SetStatus("正在读取通知历史", "从手机通知历史数据库读取内容…", InfoBarSeverity.Informational);
+        ClearButton.IsEnabled = false;
+        LoadMoreButton.IsEnabled = false;
+        if (reset)
+        {
+            _items.Clear();
+            _itemIds.Clear();
+            _nextOffset = 0;
+            _total = 0;
+            SummaryText.Text = string.Empty;
+            LoadMoreButton.Visibility = Visibility.Collapsed;
+            _historyScroll?.ChangeView(null, 0, null, true);
+            SetStatus("正在读取通知历史", "从手机通知历史数据库读取内容…", InfoBarSeverity.Informational);
+        }
         try
         {
             var page = await _client.LoadNotificationHistoryAsync(
                 connection,
-                reset ? 0 : _items.Count,
+                _nextOffset,
                 PageSize,
                 _ascending,
                 _packageName);
             if (version != _loadVersion) return;
 
             _total = page.Total;
-            if (reset) _items.Clear();
-            _items.AddRange(page.Items.Where(item =>
-                !_items.Any(existing => existing.Id.Equals(item.Id, StringComparison.Ordinal))));
+            _nextOffset = page.Items.Count == 0 ? _total : _nextOffset + page.Items.Count;
+            foreach (var item in page.Items)
+                if (_itemIds.Add(item.Id)) _items.Add(item);
             RenderApplicationFilter(page.Applications);
             RenderItems();
 
@@ -110,15 +145,18 @@ public sealed partial class NotificationHistoryPage : Page
         }
         catch (Exception exception)
         {
-            SetStatus("读取通知历史失败", exception.Message, InfoBarSeverity.Error);
+            if (version == _loadVersion) SetStatus("读取通知历史失败", exception.Message, InfoBarSeverity.Error);
         }
         finally
         {
-            if (version == _loadVersion)
+            _loading = false;
+            LoadingIndicator.IsActive = false;
+            ClearButton.IsEnabled = _total > 0 && _clearItems != null;
+            LoadMoreButton.IsEnabled = true;
+            if (_pendingReset)
             {
-                _loading = false;
-                LoadingIndicator.IsActive = false;
-                ClearButton.IsEnabled = _total > 0 && _clearItems != null;
+                _pendingReset = false;
+                await LoadPageAsync(reset: true);
             }
         }
     }
@@ -153,34 +191,42 @@ public sealed partial class NotificationHistoryPage : Page
 
     private void RenderItems()
     {
-        HistoryList.Items.Clear();
-        foreach (var item in _items)
-        {
-            HistoryList.Items.Add(new ListViewItem
-            {
-                Tag = item,
-                Content = BuildItemRow(item),
-            });
-        }
-
         SummaryText.Text = _total == 0
-            ? "暂无通知记录。"
-            : $"共 {_total} 条 · 已加载 {_items.Count} 条，滚动到底部继续加载";
-        ClearButton.IsEnabled = _total > 0 && !_loading && _clearItems != null;
-        if (_items.Count == 0)
-        {
-            HistoryList.Items.Add(new ListViewItem
-            {
-                IsHitTestVisible = false,
-                Content = new TextBlock
-                {
-                    Text = "暂无符合条件的通知。",
-                    Padding = new Thickness(12, 24, 12, 24),
-                    Foreground = ThemeBrushes.Secondary(this),
-                },
-            });
-        }
+            ? "暂无符合条件的通知。"
+            : $"共 {_total} 条 · 已加载 {_items.Count} 条";
+        LoadMoreButton.Visibility = _nextOffset < _total ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private void HistoryList_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
+        content.Content = args.InRecycleQueue || args.Item is not RemoteNotificationHistoryItem item
+            ? null : BuildItemRow(item);
+        args.Handled = true;
+    }
+
+    private void HistoryList_Loaded(object sender, RoutedEventArgs e)
+    {
+        var scroll = FindScrollViewer(HistoryList);
+        if (ReferenceEquals(scroll, _historyScroll)) return;
+        if (_historyScroll != null) _historyScroll.ViewChanged -= HistoryScroll_ViewChanged;
+        _historyScroll = scroll;
+        if (scroll != null) scroll.ViewChanged += HistoryScroll_ViewChanged;
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is ScrollViewer scroll) return scroll;
+            var nested = FindScrollViewer(child);
+            if (nested != null) return nested;
+        }
+        return null;
+    }
+
+    private async void LoadMoreButton_Click(object sender, RoutedEventArgs e) => await LoadPageAsync(reset: false);
 
     private Grid BuildItemRow(RemoteNotificationHistoryItem item)
     {
@@ -200,14 +246,11 @@ public sealed partial class NotificationHistoryPage : Page
             Height = 42,
             Stretch = Stretch.Uniform,
             VerticalAlignment = VerticalAlignment.Center,
+            Source = new BitmapImage(new Uri("ms-appx:///Assets/app_icon.png")),
         };
         if (!string.IsNullOrWhiteSpace(item.IconBase64))
         {
             _ = SetImageSourceAsync(icon, item.IconBase64);
-        }
-        else
-        {
-            icon.Source = new BitmapImage(new Uri("ms-appx:///Assets/app_icon.png"));
         }
         Grid.SetColumn(icon, 0);
         row.Children.Add(icon);
@@ -230,13 +273,13 @@ public sealed partial class NotificationHistoryPage : Page
             TextWrapping = TextWrapping.Wrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
-        details.Children.Add(new TextBlock
+        details.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = FormatTime(item.Timestamp) +
                 (item.Ongoing ? " · 持续通知" : string.Empty),
             FontSize = 13,
             Foreground = ThemeBrushes.Secondary(this),
-        });
+        }));
         Grid.SetColumn(details, 1);
         row.Children.Add(details);
 
@@ -254,6 +297,7 @@ public sealed partial class NotificationHistoryPage : Page
                 Tag = item,
                 VerticalAlignment = VerticalAlignment.Center,
             };
+            AutomationProperties.SetAutomationId(copy, $"Notification.Copy.{item.Id}");
             copy.Click += CopyVerificationCodeButton_Click;
             actions.Children.Add(copy);
         }
@@ -265,6 +309,7 @@ public sealed partial class NotificationHistoryPage : Page
                 Tag = item,
                 VerticalAlignment = VerticalAlignment.Center,
             };
+            AutomationProperties.SetAutomationId(open, $"Notification.Open.{item.Id}");
             open.Click += OpenButton_Click;
             actions.Children.Add(open);
         }
@@ -274,6 +319,7 @@ public sealed partial class NotificationHistoryPage : Page
             Tag = item,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        AutomationProperties.SetAutomationId(delete, $"Notification.Delete.{item.Id}");
         delete.Click += DeleteButton_Click;
         actions.Children.Add(delete);
         Grid.SetColumn(actions, 2);
@@ -283,7 +329,7 @@ public sealed partial class NotificationHistoryPage : Page
 
     private async void HistoryList_ItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is ListViewItem { Tag: RemoteNotificationHistoryItem item })
+        if (e.ClickedItem is RemoteNotificationHistoryItem item)
         {
             await OpenItemAsync(item);
         }
@@ -399,12 +445,12 @@ public sealed partial class NotificationHistoryPage : Page
         }
     }
 
-    private void HistoryScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    private void HistoryScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (_loading || _items.Count >= _total) return;
-        var threshold = Math.Max(480, HistoryScroll.ViewportHeight * 1.5);
-        if (HistoryScroll.ScrollableHeight <= 0 ||
-            HistoryScroll.VerticalOffset >= HistoryScroll.ScrollableHeight - threshold)
+        if (_loading || _nextOffset >= _total) return;
+        if (sender is not ScrollViewer scroll || scroll.ScrollableHeight <= 0) return;
+        var threshold = Math.Max(480, scroll.ViewportHeight * 1.5);
+        if (scroll.VerticalOffset >= scroll.ScrollableHeight - threshold)
         {
             _ = LoadPageAsync(reset: false);
         }

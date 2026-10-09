@@ -29,22 +29,22 @@
             <Border x:Name="AddressEditor" Visibility="Collapsed" Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
                     <TextBlock Text="每个地址在文件管理中显示为独立标签；备注即标签名称。" TextWrapping="Wrap" />
-                    <TextBox x:Name="Remark" Header="备注 / 显示名称（可选）" PlaceholderText="例如：家庭 NAS" />
-                    <TextBox x:Name="Endpoint" Header="URL" PlaceholderText="https://nas.example.com/dav/" />
-                    <TextBox x:Name="Username" Header="用户名" />
-                    <PasswordBox x:Name="Password" Header="密码" />
-                    <TextBox x:Name="UserAgent" Header="自定义 UA（可选）" PlaceholderText="留空使用 Hinge 默认 UA" />
-                    <TextBox x:Name="InitialPath" Header="初始路径（可选，相对于 URL）" PlaceholderText="例如：Documents/工作；留空从 URL 目录开始" />
-                    <TextBox x:Name="ThumbnailMountPath" Header="缩略图挂载目录（可选）" PlaceholderText="例如：Z:\ 或 Z:\网盘" />
+                    <TextBox x:Name="Remark" AutomationProperties.AutomationId="WebDavSettingsPage.Remark" Header="备注 / 显示名称（可选）" PlaceholderText="例如：家庭 NAS" />
+                    <TextBox x:Name="Endpoint" AutomationProperties.AutomationId="WebDavSettingsPage.Endpoint" Header="URL" PlaceholderText="https://nas.example.com/dav/" />
+                    <TextBox x:Name="Username" AutomationProperties.AutomationId="WebDavSettingsPage.Username" Header="用户名" />
+                    <PasswordBox x:Name="Password" AutomationProperties.AutomationId="WebDavSettingsPage.Password" Header="密码" />
+                    <TextBox x:Name="UserAgent" AutomationProperties.AutomationId="WebDavSettingsPage.UserAgent" Header="自定义 UA（可选）" PlaceholderText="留空使用 Hinge 默认 UA" />
+                    <TextBox x:Name="InitialPath" AutomationProperties.AutomationId="WebDavSettingsPage.InitialPath" Header="初始路径（可选，相对于 URL）" PlaceholderText="例如：Documents/工作；留空从 URL 目录开始" />
+                    <TextBox x:Name="ThumbnailMountPath" AutomationProperties.AutomationId="WebDavSettingsPage.ThumbnailMountPath" Header="缩略图挂载目录（可选）" PlaceholderText="例如：Z:\ 或 Z:\网盘" />
                     <TextBlock Text="如果已用其他软件挂载网盘，填写与上方 URL 根目录对应的本机目录（不是初始路径）。预览将优先使用该盘的 Windows 缩略图，包括大视频；上传、下载和删除仍走 WebDAV。留空使用有大小限制的网络预览。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <ToggleSwitch x:Name="TrustCertificates" Header="信任所有 HTTPS 证书" />
+                    <ToggleSwitch x:Name="TrustCertificates" AutomationProperties.AutomationId="WebDavSettingsPage.TrustCertificates" Header="信任所有 HTTPS 证书" />
                     <TextBlock Text="默认关闭。开启后无法验证服务器身份，仅建议用于你信任的自签名服务器；HTTP 本身不加密。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <ToggleSwitch x:Name="ParallelTransfers" Header="启用多线程传输" />
+                    <ToggleSwitch x:Name="ParallelTransfers" AutomationProperties.AutomationId="WebDavSettingsPage.ParallelTransfers" Header="启用多线程传输" />
                     <TextBlock Text="最多 4 路并发。大文件下载需服务器支持 Range 和强 ETag，否则单连接；上传为多文件并发，不向同一文件并发写入。" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="SaveButton" Content="保存" Click="Save_Click" />
-                        <Button x:Name="TestButton" Content="测试连接" Click="Test_Click" />
-                        <Button x:Name="DeleteButton" Content="删除地址" Click="Delete_Click" />
+                        <Button x:Name="SaveButton" AutomationProperties.AutomationId="WebDavSettingsPage.SaveButton" Content="保存" Click="Save_Click" />
+                        <Button x:Name="TestButton" AutomationProperties.AutomationId="WebDavSettingsPage.TestButton" Content="测试连接" Click="Test_Click" />
+                        <Button x:Name="DeleteButton" AutomationProperties.AutomationId="WebDavSettingsPage.DeleteButton" Content="删除地址" Click="Delete_Click" />
                     </StackPanel>
                 </StackPanel>
             </Border>

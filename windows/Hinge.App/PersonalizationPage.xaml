@@ -11,7 +11,7 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Button
-                    x:Name="BackToSettingsButton"
+                    x:Name="BackToSettingsButton" AutomationProperties.AutomationId="PersonalizationPage.BackToSettingsButton"
                     Grid.Column="0"
                     Style="{StaticResource HingeIconButtonStyle}"
                     ToolTipService.ToolTip="返回设置"
@@ -28,7 +28,7 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="窗口主题" FontSize="20" FontWeight="SemiBold" />
                     <TextBlock Text="选择应用窗口使用的浅色或深色外观。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <RadioButtons x:Name="ThemeOptions">
+                    <RadioButtons x:Name="ThemeOptions" AutomationProperties.AutomationId="PersonalizationPage.ThemeOptions" AutomationProperties.Name="窗口主题">
                         <RadioButton Content="跟随系统" Tag="system" />
                         <RadioButton Content="浅色模式" Tag="light" />
                         <RadioButton Content="深色模式" Tag="dark" />
@@ -40,7 +40,7 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="窗口材质" FontSize="20" FontWeight="SemiBold" />
                     <TextBlock Text="使用 Windows App SDK 提供的系统背景材质，窗口会根据系统能力自动回退。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <ComboBox x:Name="MaterialOptions" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="320">
+                    <ComboBox x:Name="MaterialOptions" AutomationProperties.Name="窗口材质" AutomationProperties.AutomationId="PersonalizationPage.MaterialOptions" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="240" MaxWidth="440">
                         <ComboBoxItem Content="MICA · 柔和云母" Tag="mica" />
                         <ComboBoxItem Content="MICA Alt · 层次云母" Tag="micaAlt" />
                         <ComboBoxItem Content="亚克力 · 磨砂玻璃" Tag="acrylic" />
@@ -55,8 +55,8 @@
                     <TextBlock Text="导入一张本机图片作为窗口背景。图片仅保存在当前电脑，删除文件后会自动回退到纯材质背景。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                     <TextBlock x:Name="BackgroundPathText" Text="未设置背景图片" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="ImportBackgroundButton" Content="导入图片" />
-                        <Button x:Name="ClearBackgroundButton" Content="清除背景" />
+                        <Button x:Name="ImportBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ImportBackgroundButton" Content="导入图片" />
+                        <Button x:Name="ClearBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ClearBackgroundButton" Content="清除背景" />
                     </StackPanel>
                     <Border x:Name="BackgroundPreviewBorder" Height="160" CornerRadius="8" Visibility="Collapsed">
                         <Image x:Name="BackgroundPreview" Stretch="UniformToFill" />

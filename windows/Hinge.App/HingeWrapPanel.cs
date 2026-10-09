@@ -11,6 +11,8 @@ namespace Hinge.App;
 /// </summary>
 public sealed class HingeWrapPanel : Panel
 {
+    private List<Line> _lines = [];
+
     public static readonly DependencyProperty SpacingProperty =
         DependencyProperty.Register(
             nameof(Spacing),
@@ -52,7 +54,7 @@ public sealed class HingeWrapPanel : Panel
 
     protected override Size MeasureOverride(Size availableSize)
     {
-        var lines = BuildLines(availableSize.Width);
+        var lines = _lines = BuildLines(availableSize.Width);
         var width = double.IsInfinity(availableSize.Width)
             ? lines.Count == 0 ? 0 : lines.Max(line => line.Width)
             : availableSize.Width;
@@ -62,7 +64,8 @@ public sealed class HingeWrapPanel : Panel
 
     protected override Size ArrangeOverride(Size finalSize)
     {
-        var lines = BuildLines(finalSize.Width);
+        // Re-measuring during arrange can invalidate wrapped text and create a layout cycle.
+        var lines = _lines;
         var y = 0d;
         for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
@@ -96,7 +99,7 @@ public sealed class HingeWrapPanel : Panel
 
         foreach (var child in Children)
         {
-            child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            child.Measure(new Size(finiteWidth ? availableWidth : double.PositiveInfinity, double.PositiveInfinity));
             var desired = child.DesiredSize;
             var nextWidth = current.Children.Count == 0
                 ? desired.Width

@@ -5,25 +5,24 @@
     xmlns:local="using:Hinge.App"
     NavigationCacheMode="Required">
     <Grid x:Name="RootGrid">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Style="{StaticResource HingePageStackStyle}">
+        <ListView x:Name="NotesList" SizeChanged="NotesList_SizeChanged" AutomationProperties.AutomationId="NotesPage.NotesList" IsItemClickEnabled="True" SelectionMode="None" ItemClick="NotesList_ItemClick"  Margin="{StaticResource HingePageMargin}">
+            <ListView.Header>
+                <StackPanel Spacing="16" Margin="0,0,0,16">
             <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
                 <StackPanel Spacing="4">
                     <TextBlock Text="笔记" Style="{StaticResource HingePageTitleStyle}" />
                     <TextBlock Text="笔记保存在已连接的 Android 设备上，Windows 端提供完整的查看与编辑入口。" Style="{StaticResource HingePageDescriptionStyle}" />
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Button x:Name="RefreshButton" Content="刷新" Click="RefreshButton_Click" />
-                    <Button x:Name="NewNoteButton" Content="新建笔记" Click="NewNoteButton_Click" />
-                </StackPanel>
+                <local:HingeWrapPanel Spacing="8" LineSpacing="8" JustifyLastLine="False" VerticalAlignment="Center">
+                    <Button x:Name="RefreshButton" AutomationProperties.AutomationId="NotesPage.RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                    <Button x:Name="NewNoteButton" AutomationProperties.AutomationId="NotesPage.NewNoteButton" Content="新建笔记" Click="NewNoteButton_Click" />
+                </local:HingeWrapPanel>
             </local:HingeWrapPanel>
 
             <InfoBar x:Name="StatusInfoBar" IsOpen="False" IsClosable="False" Severity="Informational" Title="笔记" Message="等待连接设备。" />
 
-            <Border Style="{StaticResource HingeCardStyle}" Padding="16">
-                <ListView x:Name="NotesList" IsItemClickEnabled="True" SelectionMode="None" ItemClick="NotesList_ItemClick" />
-            </Border>
-        </StackPanel>
-    </ScrollViewer>
+                </StackPanel>
+            </ListView.Header>
+        </ListView>
     </Grid>
 </Page>

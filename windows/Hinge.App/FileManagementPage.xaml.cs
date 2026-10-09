@@ -77,17 +77,17 @@ public sealed partial class FileManagementPage : Page
             if (tabs.Count == 0) tabs.Add(new() { Header = CreateCenteredTabHeader("手机（未连接）"), Tag = "phone", IsClosable = false });
             tabs.AddRange(state.Profiles.Select(profile => new TabViewItem
             { Header = CreateCenteredTabHeader(profile.DisplayName), Tag = profile.Id, IsClosable = false }));
-            foreach (var tab in tabs)
-            {
-                tab.MinWidth = 160;
-            }
             tabs = tabs.OrderBy(tab =>
             {
                 int index = state.TabOrder.IndexOf((string)tab.Tag);
                 return index >= 0 ? index : state.TabOrder.Count + tabs.IndexOf(tab);
             }).ToList();
             _sourceTabs.Clear();
-            foreach (var tab in tabs) _sourceTabs.Add(tab);
+            foreach (var tab in tabs)
+            {
+                tab.MinWidth = 160;
+                _sourceTabs.Add(tab);
+            }
             SourceTabs.SelectedItem = tabs.FirstOrDefault(tab => (string)tab.Tag == selected) ?? tabs[0];
             _rebuildingTabs = false;
             if (notifySelection || (SourceTabs.SelectedItem as TabViewItem)?.Tag as string != selected)
@@ -102,8 +102,8 @@ public sealed partial class FileManagementPage : Page
         {
             Text = title,
             Width = 160,
-            TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTipService.SetToolTip(header, title);

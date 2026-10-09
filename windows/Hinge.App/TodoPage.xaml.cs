@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Hinge.Core;
@@ -15,6 +16,12 @@ public sealed partial class TodoPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+    }
+
+    private void TasksList_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (TasksList.Header is FrameworkElement header)
+            header.MaxWidth = e.NewSize.Width;
     }
 
     public void Configure(WorkspaceRemoteClient client, Func<SessionConnection?> connectionProvider)
@@ -49,12 +56,12 @@ public sealed partial class TodoPage : Page
                 TasksList.Items.Add(new ListViewItem
                 {
                     IsHitTestVisible = false,
-                    Content = new TextBlock
+                    Content = ThemeBrushes.Text(new TextBlock
                     {
                         Text = "还没有待办，点击右上角“新建待办”开始安排工作。",
                         Padding = new Thickness(12, 24, 12, 24),
                         Foreground = ThemeBrushes.Secondary(this)
-                    }
+                    })
                 });
             }
             SetStatus("待办已更新", $"共 {tasks.Count} 项待办。", InfoBarSeverity.Success);
@@ -73,6 +80,8 @@ public sealed partial class TodoPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var checkBox = new CheckBox { IsChecked = task.Completed, Tag = task, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(checkBox, string.IsNullOrWhiteSpace(task.Title) ? "未命名待办" : task.Title);
+        AutomationProperties.SetAutomationId(checkBox, $"Todo.Complete.{task.Id}");
         checkBox.Checked += TaskCheckBox_Changed;
         checkBox.Unchecked += TaskCheckBox_Changed;
         Grid.SetColumn(checkBox, 0);
@@ -84,22 +93,24 @@ public sealed partial class TodoPage : Page
             Text = string.IsNullOrWhiteSpace(task.Title) ? "未命名待办" : task.Title,
             FontSize = 16,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Opacity = task.Completed ? 0.6 : 1
+            Opacity = 1
         });
         var dueText = task.DueAt is { } due ? $"截止：{FormatTime(due)}" : "未设置截止时间";
-        details.Children.Add(new TextBlock
+        details.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = task.Completed ? $"已完成 · {dueText}" : dueText,
             FontSize = 14,
             Foreground = ThemeBrushes.Secondary(this)
-        });
+        }));
         Grid.SetColumn(details, 1);
         row.Children.Add(details);
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         var edit = new Button { Content = "编辑", Tag = task };
+        AutomationProperties.SetAutomationId(edit, $"Todo.Edit.{task.Id}");
         edit.Click += EditButton_Click;
         var delete = new Button { Content = "删除", Tag = task };
+        AutomationProperties.SetAutomationId(delete, $"Todo.Delete.{task.Id}");
         delete.Click += DeleteButton_Click;
         actions.Children.Add(edit);
         actions.Children.Add(delete);
@@ -168,6 +179,10 @@ public sealed partial class TodoPage : Page
         var title = new TextBox { Text = existing?.Title ?? string.Empty, PlaceholderText = "例如：整理会议资料" };
         var due = new DatePicker { Date = existing?.DueAt is { } value ? DateTimeOffset.FromUnixTimeMilliseconds(value).ToLocalTime() : DateTimeOffset.Now };
         var noDue = new CheckBox { Content = "不设置截止日期", IsChecked = existing?.DueAt == null };
+        AutomationProperties.SetName(title, "待办内容");
+        AutomationProperties.SetAutomationId(title, "Todo.Editor.Title");
+        AutomationProperties.SetName(due, "截止日期");
+        AutomationProperties.SetAutomationId(due, "Todo.Editor.DueDate");
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(new TextBlock { Text = "内容" });
         panel.Children.Add(title);

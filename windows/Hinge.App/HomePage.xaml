@@ -5,12 +5,16 @@
     NavigationCacheMode="Required">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
         <StackPanel Style="{StaticResource HingePageStackStyle}">
-            <Grid ColumnSpacing="16">
+            <Grid x:Name="HomeSummaryGrid" ColumnSpacing="16" SizeChanged="HomeSummaryGrid_SizeChanged">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" />
-                    <ColumnDefinition Width="*" MinWidth="260" />
+                    <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border Style="{StaticResource HingeCardStyle}">
+                <Border x:Name="IdentityCard" Style="{StaticResource HingeCardStyle}">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -24,15 +28,15 @@
                             <ContentControl x:Name="HeroDeviceLogo" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                            <TextBlock x:Name="HeroDeviceName" FontSize="20" FontWeight="SemiBold" />
+                            <TextBlock x:Name="HeroDeviceName" Style="{StaticResource HingeSectionTitleStyle}" />
                             <TextBlock x:Name="HeroDeviceDetail" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button x:Name="SendFileButton" Content="发送文件" />
+                            <Button x:Name="SendFileButton" AutomationProperties.AutomationId="HomePage.SendFileButton" Content="发送文件" />
                         </StackPanel>
                     </Grid>
                 </Border>
-                <Border Grid.Column="1" Style="{StaticResource HingeCardStyle}">
+                <Border x:Name="ServiceCard" Grid.Column="1" Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock Text="本机服务" FontWeight="SemiBold" />
                         <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource HingeCaptionStyle}" />
@@ -53,17 +57,16 @@
                             <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <Button
-                            x:Name="RefreshButton"
+                            x:Name="RefreshButton" AutomationProperties.AutomationId="HomePage.RefreshButton"
                             Grid.Column="1"
                             Content="重新搜索"
-                            Height="36"
                             MinHeight="36"
                             VerticalAlignment="Center"
                             HorizontalContentAlignment="Center"
                             VerticalContentAlignment="Center" />
                     </Grid>
                     <ListView
-                        x:Name="DeviceListView"
+                        x:Name="DeviceListView" AutomationProperties.AutomationId="HomePage.DeviceListView"
                         IsItemClickEnabled="True"
                         SelectionMode="None"
                         Padding="0"
@@ -103,17 +106,16 @@
                             <TextBlock Text="最新记录在上方；进行中的任务可取消，历史记录可删除。" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <Button
-                            x:Name="ClearTransferHistoryButton"
+                            x:Name="ClearTransferHistoryButton" AutomationProperties.AutomationId="HomePage.ClearTransferHistoryButton"
                             Grid.Column="1"
                             Content="清空记录"
-                            Height="36"
                             MinHeight="36"
                             VerticalAlignment="Center"
                             HorizontalContentAlignment="Center"
                             VerticalContentAlignment="Center" />
                     </Grid>
                     <ListView
-                        x:Name="TransferHistoryListView"
+                        x:Name="TransferHistoryListView" AutomationProperties.AutomationId="HomePage.TransferHistoryListView"
                         MaxHeight="240"
                         Padding="0"
                         SelectionMode="None"

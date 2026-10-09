@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 最新发行版：[Hinge v1.4.14 更新说明与下载](https://github.com/Chengeeker/Hinge/releases/tag/v1.4.14)；Android `1.4.14+117`（arm64-v8a），Windows `1.4.14.0`。本版加入 Windows 无线 ADB 诊断提取，优化 Android M3 页面与切换动画，并过滤最近文件中的临时缓存名称。剪贴板跨设备同步已移除。
+- 最新公开发行版：[Hinge v1.4.14 更新说明与下载](https://github.com/Chengeeker/Hinge/releases/tag/v1.4.14)；Android `1.4.14+117`（arm64-v8a），Windows `1.4.14.0`。本地候选增加无线 ADB 剪贴板同步（Android `1.4.14+119`）；Android 17 真机桥启动/读取/监听已通过，双向复制与 VPN 切换验收待完成，尚未发布。
 - 许可证：[MIT](LICENSE)
 
 ## 这是什么
@@ -23,7 +23,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 - UDP 局域网发现和手动设备发现；
 - 已知设备快速重连、心跳和断线状态恢复；已经建立过会话且仍在信任库中的设备，在更新或短暂断线后重新上线时自动恢复连接，新设备仍需手动连接；
-- 文本消息与文件传输；跨设备剪贴板同步已移除；
+- 文本消息与文件传输；本地候选新增默认关闭的无线 ADB 纯文本剪贴板同步，不使用 Shizuku 或 Cloud Relay；Android 17 桥启动检查已通过，双向复制与 VPN 切换验收待完成；
 - Android 首页提供本地文件传输记录，显示局域网/Cloud Relay 收发方向、状态与进度；点击记录可用系统默认应用打开仍存在的本机文件；“清空本机记录”只清除记录，不取消实际传输或删除文件，重启时会结束已不再活动的旧进行中记录；
 - 前台服务、通知和厂商后台保活设置引导；
 - Android 支持低功耗待命，Windows 右键发送时可通过 BLE Companion presence 请求恢复局域网连接；BLE 只负责唤醒，不承载文件内容，自动唤醒不可用时由 Android 常驻通知作为人工兜底；Android 系统分享在已有会话可用时直接进入发送，断联时才显示待发送队列；
@@ -53,7 +53,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 - Windows 可同时连接多台 Android 手机：文件管理顶部只显示当前已连接手机，每台手机独立成一个标签，与 WebDAV 标签一起拖动排序；各手机分别保留当前浏览目录、分类、视图和筛选。同名手机附短设备 ID。Windows 右键“通过 Hinge 发送到”列出当前已连接手机，并额外保留最近一次连接的手机（不重复）；该手机离线时可使用已配置的 Cloud Relay 或原有待发送队列，不列出其他历史手机。信任记录与已有待发送队列仍保留。
 - 首页提供独立传输记录区块：显示发送/接收进度，手机未连接时显示待发送任务；可取消进行中的发送，单条删除历史记录或清空已完成、失败和已取消记录；
 - 文件管理支持最近文件、图片、视频、音频、文档、微信相册、QQ 相册和手机存储；
-- “设置 → 传输与连接”支持无线 ADB：首次输入手机无线调试配对信息后复用 ADB 主机密钥，后续可重新连接并导出 Hinge 最近 256 KiB 的连接诊断日志；需要安装 Android Platform-Tools，不提供完整系统 Logcat；
+- “设置 → 传输与连接”支持无线 ADB：首次配对后复用主机密钥，保存手机无线调试身份；后续复用该手机现有 ADB 连接，或通过 mDNS 找到新 IP/端口。可导出 Hinge 最近 256 KiB 诊断；本地候选可开启剪贴板同步并自动重连。VPN 需允许局域网；mDNS 被阻断且端口已变时仍需更新连接端口，无需重新配对。需要 Android Platform-Tools，不提供完整系统 Logcat；
 - Windows WebDAV 文件管理：“设置 → WebDAV”先显示地址列表，点击“新建 WebDAV 地址”或已保存地址后编辑该地址独立的 URL、账号和密码，可选自定义 UA、相对初始路径与备注名。返回不保存，保存只更新当前地址。文件管理顶部用手机 / 各 WebDAV 独立标签切换；拖动标签仅调整顺序，不发送文件。WebDAV 支持列表/宫格切换，显示名称、修改日期、类型与大小，可按名称、类型、大小或时间排序，并提供选择、全选、刷新、上传、下载、打开、新建目录和删除；不显示手机分类。图片/视频宫格按可见项加载缩略图；文件可拖到 Windows 文件夹，左侧取消区可取消拖出，WebDAV 文件不会误拖回后重新上传。密码由当前 Windows 用户保护；信任所有 HTTPS 证书默认关闭，多线程传输最多 4 路，单文件分段下载需服务器支持 Range 与强 ETag。
 - 文件分类不只依赖手机厂商返回的 MIME：对常见文档、压缩包、安装包和媒体扩展名做统一回退识别，未知类型在需要时再读取文件头；
 - 大型工作区/同步控制数据支持双方协商的 ZLIB 压缩，旧版本会自动回退到普通控制帧；
@@ -94,7 +94,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 ### 可选 Cloud Relay
 
-Cloud Relay 不是 Hinge 官方服务。需要先把 [`Hinge-Relay`](https://github.com/Chengeeker/Hinge-Relay) 导入自己的 GitHub 仓库，在 Cloudflare Worker 中绑定私有 R2、设置 `RELAY_ADMIN_TOKEN` 后部署；再在 Windows 和 Android 的 Cloud Relay 设置中填写 Worker 地址、使用同一个 Relay 密钥，并分别注册两个已经在 Hinge 中信任的设备。Relay 密钥不会上传 Worker；文件名、大小和摘要在客户端加密后才进入 R2。跨设备剪贴板同步及 `/v1/clipboard` Relay API 已从当前源码移除。
+Cloud Relay 不是 Hinge 官方服务。需要先把 [`Hinge-Relay`](https://github.com/Chengeeker/Hinge-Relay) 导入自己的 GitHub 仓库，在 Cloudflare Worker 中绑定私有 R2、设置 `RELAY_ADMIN_TOKEN` 后部署；再在 Windows 和 Android 的 Cloud Relay 设置中填写 Worker 地址、使用同一个 Relay 密钥，并分别注册两个已经在 Hinge 中信任的设备。Relay 密钥不会上传 Worker；文件名、大小和摘要在客户端加密后才进入 R2。剪贴板同步仅使用可选的无线 ADB 本地通道，不使用 `/v1/clipboard` Relay API。
 
 Cloud Relay 只做异步文件中转：当 LAN 会话可用时仍走原有 TCP；没有 LAN 时，文件等待接收端轮询，Android 被系统完全停止时不会承诺即时唤醒。部署、API、更新同步和密钥边界见独立项目的 [README](https://github.com/Chengeeker/Hinge-Relay#readme) 与 [协议说明](protocol/cloud-relay.md)。
 

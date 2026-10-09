@@ -5,25 +5,24 @@
     xmlns:local="using:Hinge.App"
     NavigationCacheMode="Required">
     <Grid x:Name="RootGrid">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Style="{StaticResource HingePageStackStyle}">
+        <ListView x:Name="TasksList" SizeChanged="TasksList_SizeChanged" AutomationProperties.AutomationId="TodoPage.TasksList" SelectionMode="None"  Margin="{StaticResource HingePageMargin}">
+            <ListView.Header>
+                <StackPanel Spacing="16" Margin="0,0,0,16">
             <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
                 <StackPanel Spacing="4">
                     <TextBlock Text="待办" Style="{StaticResource HingePageTitleStyle}" />
                     <TextBlock Text="在电脑上管理手机工作区中的待办事项，完成状态会立即保存到手机。" Style="{StaticResource HingePageDescriptionStyle}" />
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Button x:Name="RefreshButton" Content="刷新" Click="RefreshButton_Click" />
-                    <Button x:Name="NewTaskButton" Content="新建待办" Click="NewTaskButton_Click" />
-                </StackPanel>
+                <local:HingeWrapPanel Spacing="8" LineSpacing="8" JustifyLastLine="False" VerticalAlignment="Center">
+                    <Button x:Name="RefreshButton" AutomationProperties.AutomationId="TodoPage.RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                    <Button x:Name="NewTaskButton" AutomationProperties.AutomationId="TodoPage.NewTaskButton" Content="新建待办" Click="NewTaskButton_Click" />
+                </local:HingeWrapPanel>
             </local:HingeWrapPanel>
 
             <InfoBar x:Name="StatusInfoBar" IsOpen="False" IsClosable="False" Severity="Informational" Title="待办" Message="等待连接设备。" />
 
-            <Border Style="{StaticResource HingeCardStyle}" Padding="16">
-                <ListView x:Name="TasksList" SelectionMode="None" />
-            </Border>
-        </StackPanel>
-    </ScrollViewer>
+                </StackPanel>
+            </ListView.Header>
+        </ListView>
     </Grid>
 </Page>

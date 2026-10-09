@@ -175,6 +175,21 @@ try {
         }
         throw "Android APK 架构校验失败。$details 请使用 --target-platform android-arm64 重新构建。"
     }
+    $bridgeDescriptorPresent = $false
+    foreach ($dexEntry in @($apkArchive.Entries | Where-Object { $_.FullName -match '^classes\d*\.dex$' })) {
+        $dexStream = $dexEntry.Open()
+        $dexBuffer = [System.IO.MemoryStream]::new()
+        try {
+            $dexStream.CopyTo($dexBuffer)
+            if ([System.Text.Encoding]::ASCII.GetString($dexBuffer.ToArray()).Contains('Lcom/hinge/office/AdbClipboardBridge;')) {
+                $bridgeDescriptorPresent = $true
+                break
+            }
+        } finally { $dexStream.Dispose(); $dexBuffer.Dispose() }
+    }
+    if (-not $bridgeDescriptorPresent) {
+        throw 'Release APK 缺少剪贴板桥入口描述符。请检查 R8 keep 规则后重新构建；拒绝覆盖现有签名包。'
+    }
 } finally {
     $apkArchive.Dispose()
 }

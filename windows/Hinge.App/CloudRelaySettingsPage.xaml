@@ -11,7 +11,7 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Button
-                    x:Name="BackToSettingsButton"
+                    x:Name="BackToSettingsButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.BackToSettingsButton"
                     Grid.Column="0"
                     Style="{StaticResource HingeIconButtonStyle}"
                     ToolTipService.ToolTip="返回设置"
@@ -26,17 +26,17 @@
 
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
-                    <ToggleSwitch x:Name="CloudRelayEnabledToggle" Header="启用 Cloud Relay" OnContent="开启" OffContent="关闭" />
+                    <ToggleSwitch x:Name="CloudRelayEnabledToggle" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayEnabledToggle" Header="启用 Cloud Relay" OnContent="开启" OffContent="关闭" />
                     <TextBlock Text="局域网连接仍然优先；两台已信任设备需要使用同一 Relay 加密密钥。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <TextBox x:Name="CloudRelayEndpointTextBox" Header="Worker 地址" PlaceholderText="https://hinge-relay.example.workers.dev" />
-                    <TextBox x:Name="CloudRelayKeyTextBox" Header="Relay 加密密钥" PlaceholderText="Base64URL 32 字节密钥" />
-                    <PasswordBox x:Name="CloudRelayAdminTokenTextBox" Header="部署 Token（仅注册时使用）" />
+                    <TextBox x:Name="CloudRelayEndpointTextBox" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayEndpointTextBox" Header="Worker 地址" PlaceholderText="https://hinge-relay.example.workers.dev" />
+                    <TextBox x:Name="CloudRelayKeyTextBox" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayKeyTextBox" Header="Relay 加密密钥" PlaceholderText="Base64URL 32 字节密钥" />
+                    <PasswordBox x:Name="CloudRelayAdminTokenTextBox" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayAdminTokenTextBox" Header="部署 Token（仅注册时使用）" />
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
-                        <Button x:Name="GenerateCloudRelayKeyButton" Content="生成密钥" />
-                        <Button x:Name="CopyCloudRelayKeyButton" Content="复制密钥" />
-                        <Button x:Name="SaveCloudRelayButton" Content="保存配置" />
-                        <Button x:Name="RegisterCloudRelayButton" Content="注册此设备" />
-                        <Button x:Name="TestCloudRelayButton" Content="测试 Worker" />
+                        <Button x:Name="GenerateCloudRelayKeyButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.GenerateCloudRelayKeyButton" Content="生成密钥" />
+                        <Button x:Name="CopyCloudRelayKeyButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.CopyCloudRelayKeyButton" Content="复制密钥" />
+                        <Button x:Name="SaveCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.SaveCloudRelayButton" Content="保存配置" />
+                        <Button x:Name="RegisterCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.RegisterCloudRelayButton" Content="注册此设备" />
+                        <Button x:Name="TestCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.TestCloudRelayButton" Content="测试 Worker" />
                     </StackPanel>
                     <TextBlock x:Name="CloudRelayStatusText" Text="未配置 Cloud Relay" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                 </StackPanel>

@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using Hinge.Core;
@@ -16,6 +17,12 @@ public sealed partial class NotesPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
+    }
+
+    private void NotesList_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (NotesList.Header is FrameworkElement header)
+            header.MaxWidth = e.NewSize.Width;
     }
 
     public void Configure(WorkspaceRemoteClient client, Func<SessionConnection?> connectionProvider)
@@ -55,12 +62,12 @@ public sealed partial class NotesPage : Page
                 NotesList.Items.Add(new ListViewItem
                 {
                     IsHitTestVisible = false,
-                    Content = new TextBlock
+                    Content = ThemeBrushes.Text(new TextBlock
                     {
                         Text = "还没有笔记，点击右上角“新建笔记”开始记录。",
                         Padding = new Thickness(12, 24, 12, 24),
                         Foreground = ThemeBrushes.Secondary(this)
-                    }
+                    })
                 });
             }
             SetStatus("笔记已更新", $"共 {notes.Count} 条笔记。", InfoBarSeverity.Success);
@@ -85,23 +92,24 @@ public sealed partial class NotesPage : Page
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             TextTrimming = TextTrimming.CharacterEllipsis
         });
-        text.Children.Add(new TextBlock
+        text.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(note.Content) ? "无正文" : note.Content.Replace('\n', ' '),
             FontSize = 14,
             Foreground = ThemeBrushes.Secondary(this),
             TextTrimming = TextTrimming.CharacterEllipsis
-        });
-        text.Children.Add(new TextBlock
+        }));
+        text.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = FormatTime(note.UpdatedAt) + (note.Pinned ? " · 已置顶" : string.Empty),
             FontSize = 13,
             Foreground = ThemeBrushes.Secondary(this)
-        });
+        }));
         Grid.SetColumn(text, 0);
         row.Children.Add(text);
 
         var delete = new Button { Content = "删除", Tag = note, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetAutomationId(delete, $"Notes.Delete.{note.Id}");
         delete.Click += DeleteButton_Click;
         Grid.SetColumn(delete, 1);
         row.Children.Add(delete);
@@ -161,6 +169,11 @@ public sealed partial class NotesPage : Page
             MinHeight = 150
         };
         var pinned = new CheckBox { Content = "置顶", IsChecked = existing?.Pinned == true };
+        AutomationProperties.SetName(title, "笔记标题");
+        AutomationProperties.SetAutomationId(title, "Notes.Editor.Title");
+        AutomationProperties.SetName(content, "笔记正文");
+        AutomationProperties.SetAutomationId(content, "Notes.Editor.Content");
+        AutomationProperties.SetAutomationId(pinned, "Notes.Editor.Pinned");
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(new TextBlock { Text = "标题" });
         panel.Children.Add(title);

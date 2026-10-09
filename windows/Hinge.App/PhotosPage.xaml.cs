@@ -226,12 +226,12 @@ public sealed partial class PhotosPage : Page
                 AlbumsGrid.Items.Add(new GridViewItem
                 {
                     IsHitTestVisible = false,
-                    Content = new TextBlock
+                    Content = ThemeBrushes.Text(new TextBlock
                     {
                         Text = "手机相册中没有可读取的相册集。",
                         Padding = new Thickness(16, 24, 16, 24),
                         Foreground = ThemeBrushes.Secondary(this)
-                    }
+                    })
                 });
             }
             SetStatus("相册集已更新", $"共 {_albums.Count} 个相册集。", InfoBarSeverity.Success);
@@ -457,12 +457,12 @@ public sealed partial class PhotosPage : Page
                 PhotosGrid.Items.Add(new GridViewItem
                 {
                     IsHitTestVisible = false,
-                    Content = new TextBlock
+                    Content = ThemeBrushes.Text(new TextBlock
                     {
                         Text = emptyMessage,
                         Padding = new Thickness(16, 24, 16, 24),
                         Foreground = ThemeBrushes.Secondary(this)
-                    }
+                    })
                 });
             }
 
@@ -630,13 +630,13 @@ public sealed partial class PhotosPage : Page
         var details = $"{(photo.Width > 0 ? $"{photo.Width} × {photo.Height} · " : string.Empty)}{(photo.SizeBytes > 0 ? $"{FormatBytes(photo.SizeBytes)} · " : string.Empty)}{FormatTime(photo.TakenAt)}\n{photo.Uri}";
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(image);
-        panel.Children.Add(new TextBlock
+        panel.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = details,
             FontSize = 13,
             Foreground = ThemeBrushes.Secondary(this),
             TextWrapping = TextWrapping.Wrap
-        });
+        }));
         // This fallback is kept for a page opened without MainWindow's
         // default-app callback (for example, in a design preview).
         var dialog = new ContentDialog
@@ -1116,7 +1116,7 @@ public sealed partial class PhotosPage : Page
         details.Children.Add(new TextBlock { Text = album.Name, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         var albumSummary = $"{album.Count} 张图片";
         if (album.TotalSizeBytes > 0) albumSummary += $" · {FormatBytes(album.TotalSizeBytes)}";
-        details.Children.Add(new TextBlock { Text = albumSummary, FontSize = 14, Foreground = ThemeBrushes.Secondary(this) });
+        details.Children.Add(ThemeBrushes.Text(new TextBlock { Text = albumSummary, FontSize = 14, Foreground = ThemeBrushes.Secondary(this) }));
         Grid.SetRow(details, 1);
         tile.Children.Add(details);
         return (tile, image);

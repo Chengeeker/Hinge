@@ -5,34 +5,41 @@
     xmlns:local="using:Hinge.App"
     NavigationCacheMode="Required">
     <Grid x:Name="RootGrid">
-        <ScrollViewer
-            x:Name="HistoryScroll"
-            ViewChanged="HistoryScroll_ViewChanged"
-            HorizontalScrollBarVisibility="Disabled"
-            HorizontalContentAlignment="Stretch">
-            <StackPanel Style="{StaticResource HingePageStackStyle}">
+        <ListView x:Name="HistoryList" SizeChanged="HistoryList_SizeChanged" AutomationProperties.AutomationId="NotificationHistoryPage.HistoryList" AutomationProperties.Name="手机历史通知" Margin="24,16,24,32"
+                  IsItemClickEnabled="True" SelectionMode="None"
+                  ItemClick="HistoryList_ItemClick" Loaded="HistoryList_Loaded"
+                  ContainerContentChanging="HistoryList_ContainerContentChanging">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate>
+            </ListView.ItemTemplate>
+            <ListView.Header>
+            <StackPanel Spacing="16" Margin="0,0,0,16">
                 <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
                     <StackPanel Spacing="4">
                         <TextBlock Text="手机历史通知" Style="{StaticResource HingePageTitleStyle}" />
                         <TextBlock Text="读取 Android 通知访问权限开启后收到的应用通知。点击微信或 QQ 通知时，优先打开 Windows 本机客户端，无法打开时再使用 Android 原通知入口。" Style="{StaticResource HingePageDescriptionStyle}" />
                     </StackPanel>
                     <local:HingeWrapPanel Spacing="8" LineSpacing="8" JustifyLastLine="False" VerticalAlignment="Center">
-                        <ComboBox x:Name="ApplicationFilter" Width="180" Height="36" VerticalAlignment="Center" PlaceholderText="全部应用" SelectionChanged="ApplicationFilter_SelectionChanged" />
-                        <ComboBox x:Name="SortOptions" Width="148" Height="36" VerticalAlignment="Center" SelectedIndex="1" SelectionChanged="SortOptions_SelectionChanged">
+                        <ComboBox x:Name="ApplicationFilter" AutomationProperties.AutomationId="NotificationHistoryPage.ApplicationFilter" AutomationProperties.Name="筛选通知应用" Width="180" VerticalAlignment="Center" PlaceholderText="全部应用" SelectionChanged="ApplicationFilter_SelectionChanged"  MinHeight="36" />
+                        <ComboBox x:Name="SortOptions" AutomationProperties.AutomationId="NotificationHistoryPage.SortOptions" AutomationProperties.Name="通知排序" MinWidth="180" VerticalAlignment="Center" SelectedIndex="1" SelectionChanged="SortOptions_SelectionChanged" MinHeight="36">
                             <ComboBoxItem Content="时间（早到晚）" Tag="asc" />
                             <ComboBoxItem Content="时间（晚到早）" Tag="desc" />
                         </ComboBox>
                         <Button
-                            x:Name="ClearButton"
+                            x:Name="ClearButton" AutomationProperties.AutomationId="NotificationHistoryPage.ClearButton"
                             Content="清空"
-                            Height="36"
                             MinHeight="36"
                             VerticalAlignment="Center"
                             HorizontalContentAlignment="Center"
                             VerticalContentAlignment="Center"
                             Click="ClearButton_Click" />
                         <Button
-                            x:Name="RefreshButton"
+                            x:Name="RefreshButton" AutomationProperties.AutomationId="NotificationHistoryPage.RefreshButton"
                             Style="{StaticResource HingeIconButtonStyle}"
                             Height="36"
                             MinHeight="36"
@@ -49,14 +56,12 @@
                 <TextBlock x:Name="SummaryText" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <ProgressRing x:Name="LoadingIndicator" Width="32" Height="32" HorizontalAlignment="Center" IsActive="False" />
 
-                <Border Style="{StaticResource HingeCardStyle}" Padding="12">
-                    <ListView
-                        x:Name="HistoryList"
-                        IsItemClickEnabled="True"
-                        SelectionMode="None"
-                        ItemClick="HistoryList_ItemClick" />
-                </Border>
             </StackPanel>
-        </ScrollViewer>
+            </ListView.Header>
+            <ListView.Footer>
+                <Button x:Name="LoadMoreButton" AutomationProperties.AutomationId="NotificationHistoryPage.LoadMoreButton" Content="加载更多通知" Margin="0,16,0,0"
+                        Visibility="Collapsed" Click="LoadMoreButton_Click" />
+            </ListView.Footer>
+        </ListView>
     </Grid>
 </Page>

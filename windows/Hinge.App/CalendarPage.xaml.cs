@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -166,13 +167,13 @@ public sealed partial class CalendarPage : Page
                 BorderBrush = SecondaryBorderBrush(),
                 BorderThickness = new Thickness(0, 0, column == 6 ? 0 : 1, 1),
                 Padding = new Thickness(12, 10, 12, 10),
-                Child = new TextBlock
+                Child = ThemeBrushes.Text(new TextBlock
                 {
                     Text = WeekdayNames[column],
                     HorizontalAlignment = HorizontalAlignment.Center,
                     Foreground = SecondaryTextBrush(),
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                },
+                }),
             };
             Grid.SetColumn(header, column);
             WeekdayHeaderGrid.Children.Add(header);
@@ -191,7 +192,7 @@ public sealed partial class CalendarPage : Page
             Orientation = Orientation.Horizontal,
             Spacing = 6,
         };
-        dayHeader.Children.Add(new TextBlock
+        dayHeader.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = date.Day.ToString(),
             FontSize = 19,
@@ -201,7 +202,7 @@ public sealed partial class CalendarPage : Page
             Foreground = selected
                 ? AccentOnBrush()
                 : inCurrentMonth ? PrimaryTextBrush() : MutedTextBrush(),
-        });
+        }));
         if (today && !selected)
         {
             dayHeader.Children.Add(new Border
@@ -236,26 +237,26 @@ public sealed partial class CalendarPage : Page
                 Background = selected ? AccentOnBrush() : AccentBrush(),
                 VerticalAlignment = VerticalAlignment.Stretch,
             });
-            var eventText = new TextBlock
+            var eventText = ThemeBrushes.Text(new TextBlock
             {
                 Text = CellEventText(item),
                 FontSize = 12,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 TextWrapping = TextWrapping.NoWrap,
                 Foreground = selected ? AccentOnBrush() : PrimaryTextBrush(),
-            };
+            });
             Grid.SetColumn(eventText, 1);
             eventRow.Children.Add(eventText);
             eventStack.Children.Add(eventRow);
         }
         if (dayEvents.Count > 3)
         {
-            eventStack.Children.Add(new TextBlock
+            eventStack.Children.Add(ThemeBrushes.Text(new TextBlock
             {
                 Text = $"+{dayEvents.Count - 3} 项",
                 FontSize = 12,
                 Foreground = selected ? AccentOnBrush() : SecondaryTextBrush(),
-            });
+            }));
         }
         Grid.SetRow(eventStack, 1);
         content.Children.Add(eventStack);
@@ -271,6 +272,8 @@ public sealed partial class CalendarPage : Page
             BorderThickness = new Thickness(0),
             Content = content,
         };
+        AutomationProperties.SetName(button, $"{date:yyyy年M月d日 dddd}，{dayEvents.Count} 项日程{(today ? "，今天" : "")}{(selected ? "，已选中" : "")}");
+        AutomationProperties.SetAutomationId(button, $"Calendar.Day.{date:yyyy-MM-dd}");
         ConfigureDayButtonVisuals(button, selected);
         button.Click += DayButton_Click;
 
@@ -292,12 +295,12 @@ public sealed partial class CalendarPage : Page
             EventsList.Items.Add(new ListViewItem
             {
                 IsHitTestVisible = false,
-                Content = new TextBlock
+                Content = ThemeBrushes.Text(new TextBlock
                 {
                     Text = "当天没有日程。",
                     Padding = new Thickness(4, 16, 4, 16),
                     Foreground = SecondaryTextBrush(),
-                },
+                }),
             });
             return;
         }
@@ -328,13 +331,13 @@ public sealed partial class CalendarPage : Page
                             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                             TextWrapping = TextWrapping.Wrap,
                         },
-                        new TextBlock
+                        ThemeBrushes.Text(new TextBlock
                         {
                             Text = string.Join(" · ", details),
                             FontSize = 14,
                             Foreground = SecondaryTextBrush(),
                             TextWrapping = TextWrapping.Wrap,
-                        },
+                        }),
                     },
                 },
             });
@@ -542,9 +545,9 @@ public sealed partial class CalendarPage : Page
 
     private Brush MutedTextBrush() => ThemeBrushes.Muted(RootGrid);
 
-    private static Brush AccentBrush() => new SolidColorBrush(ColorHelper.FromArgb(0xFF, 0x0F, 0x6C, 0xBD));
+    private Brush AccentBrush() => ThemeBrushes.Accent(RootGrid);
 
-    private static Brush AccentOnBrush() => new SolidColorBrush(Colors.White);
+    private Brush AccentOnBrush() => ThemeBrushes.OnAccent(RootGrid);
 
     private Brush HoverCellBrush() => ThemeBrushes.Hover(RootGrid);
 
@@ -573,6 +576,7 @@ public sealed partial class CalendarPage : Page
         button.Resources["ButtonBorderBrush"] = TransparentBrush();
         button.Resources["ButtonBorderBrushPointerOver"] = TransparentBrush();
         button.Resources["ButtonBorderBrushPressed"] = TransparentBrush();
+        button.Foreground = foreground;
         button.Resources["ButtonForeground"] = foreground;
         button.Resources["ButtonForegroundPointerOver"] = foreground;
         button.Resources["ButtonForegroundPressed"] = foreground;

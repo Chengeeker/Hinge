@@ -53,7 +53,7 @@
             DragLeave="PageRoot_DragLeave"
             Drop="PageRoot_Drop">
         <NavigationView
-                x:Name="AppNavigation"
+                x:Name="AppNavigation" AutomationProperties.AutomationId="MainWindow.AppNavigation"
                 AllowDrop="True"
                 PaneDisplayMode="Auto"
                 OpenPaneLength="200"
@@ -74,35 +74,35 @@
                 <Thickness x:Key="NavigationViewContentPresenterMargin">0,16,0,0</Thickness>
             </NavigationView.Resources>
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="首页" Tag="home">
+                <NavigationViewItem Content="首页" AutomationProperties.AutomationId="Navigation.home" Tag="home">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Home" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="文件管理" Tag="files">
+                <NavigationViewItem Content="文件管理" AutomationProperties.AutomationId="Navigation.files" Tag="files">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItemSeparator />
-                <NavigationViewItem Content="笔记" Tag="notes">
+                <NavigationViewItem Content="笔记" AutomationProperties.AutomationId="Navigation.notes" Tag="notes">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Edit" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="待办" Tag="todo">
+                <NavigationViewItem Content="待办" AutomationProperties.AutomationId="Navigation.todo" Tag="todo">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Accept" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="日历" Tag="calendar">
+                <NavigationViewItem Content="日历" AutomationProperties.AutomationId="Navigation.calendar" Tag="calendar">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Calendar" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="相册" Tag="photos">
+                <NavigationViewItem Content="相册" AutomationProperties.AutomationId="Navigation.photos" Tag="photos">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Pictures" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="通知" Tag="notificationHistory">
+                <NavigationViewItem Content="通知" AutomationProperties.AutomationId="Navigation.notificationHistory" Tag="notificationHistory">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem Content="设置" Tag="settings">
+                <NavigationViewItem Content="设置" AutomationProperties.AutomationId="Navigation.settings" Tag="settings">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Setting" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="关于应用" Tag="about">
+                <NavigationViewItem Content="关于应用" AutomationProperties.AutomationId="Navigation.about" Tag="about">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Help" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
@@ -154,7 +154,7 @@
                 Visibility="Collapsed"
                 IsHitTestVisible="False">
                 <Button
-                    x:Name="HeaderBackButton"
+                    x:Name="HeaderBackButton" AutomationProperties.AutomationId="MainWindow.HeaderBackButton"
                     Width="0"
                     Height="0"
                     Visibility="Collapsed"
@@ -164,17 +164,32 @@
                 <TextBlock x:Name="StatusText" Visibility="Collapsed" />
             </Grid>
             <Canvas x:Name="PaneResizeCanvas" Canvas.ZIndex="20" IsHitTestVisible="True" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" SizeChanged="PaneResizeCanvas_SizeChanged">
-                <Border
+                <Slider
                     x:Name="PaneResizeHandle"
-                    Width="8"
+                    AutomationProperties.AutomationId="MainWindow.PaneResizeHandle"
+                    AutomationProperties.Name="侧边栏宽度"
+                    AutomationProperties.HelpText="使用左右方向键调整宽度，Home 和 End 跳到最小或最大宽度。"
+                    Minimum="200" Maximum="420" Value="200"
+                    SmallChange="10" LargeChange="20" StepFrequency="10"
+                    ValueChanged="PaneResizeHandle_ValueChanged"
+                    IsThumbToolTipEnabled="False" UseSystemFocusVisuals="True" IsTabStop="True"
+                    Width="12" MinWidth="0"
                     Background="Transparent"
                     BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                     BorderThickness="1,0,0,0"
-                    ToolTipService.ToolTip="拖动调整侧边栏宽度"
+                    ToolTipService.ToolTip="拖动或使用左右方向键调整侧边栏宽度"
                     PointerPressed="PaneResizeHandle_PointerPressed"
                     PointerMoved="PaneResizeHandle_PointerMoved"
                     PointerReleased="PaneResizeHandle_PointerReleased"
-                    PointerCaptureLost="PaneResizeHandle_PointerCaptureLost" />
+                    PointerCaptureLost="PaneResizeHandle_PointerCaptureLost">
+                    <Slider.Template>
+                        <ControlTemplate TargetType="Slider">
+                            <Border Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}" />
+                        </ControlTemplate>
+                    </Slider.Template>
+                </Slider>
             </Canvas>
             <Border
                 x:Name="DragCancelZone"

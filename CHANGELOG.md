@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.4.14] - 2026-10-09
+
+对照 GitHub 上一正式发行版 [`v1.4.9`](https://github.com/Chengeeker/Hinge/releases/tag/v1.4.9)，只记录之后进入本次发行的变化。
+
+### Android 界面
+
+- 按轻量 M3 规范统一首页、工作区和设置页的间距、字号及视觉层级；精简重复的静态功能说明，并移除个性化页明暗模式选项之间多余的分隔线。
+- 普通页面采用全宽滑入并覆盖旧页面，底栏页面切换使用新旧页面反向平移；页面绘制不透明主题底色，避免切换期间旧页面文字透出，并适配 RTL 与系统减少动态效果设置。
+
+### Windows 无线调试与文件管理
+
+- “设置 → 传输与连接”加入无线 ADB 配对、重新连接及 Hinge 连接诊断导出。首次配对后复用本机 ADB 主机密钥；日志仅包含 Hinge 最近 256 KiB 连接诊断，不是完整 Android 系统 Logcat。使用时需要 Android Platform-Tools 和手机开启无线调试。
+- Android 与 Windows 的“最近文件”过滤临时文件名中含 `temp` 或 `temporary` 标记的条目；过滤只影响列表显示，不会删除文件，也不改变手机存储目录浏览。
+- Windows 侧边栏将“手机历史通知”简写为“通知”，页面标题与通知历史功能保持原样。
+
+### 版本与验证
+
+- Android：`1.4.14+117`，仅 `arm64-v8a`；Windows：`1.4.14.0`。
+- Android Release APK 与 Windows Release 安装器、便携 ZIP 均由项目正式脚本构建；本次未运行自动化测试，也未进行 Android 真机无线 ADB、动画/字体或 Windows 安装后 UI 验收。
+- APK 元数据确认包名 `com.hinge.office`、版本 `1.4.14+117`、ABI `arm64-v8a`；Android v2/v3 签名由正式构建脚本验证。Windows 安装器 FileVersion 为 `1.4.14.0`，便携 ZIP 含 `Hinge.exe` 和 `Hinge.Identity.msix`。未安装到真实设备或 Windows 环境验收。
+- 发行资产及 SHA-256：
+
+| 平台 | 资产 | 大小 | SHA-256 |
+| --- | --- | ---: | --- |
+| Android | `Hinge-Android-1.4.14.apk` | 21,159,073 bytes | `F8F21D69903076197B279B910C714B3F315905D9698B29E22808007C2C6618E1` |
+| Windows | `Hinge-Setup.exe` | 198,233,163 bytes | `CCD03F7F142AA5D561D3FC2E306852E9EB952444AF5AFC3C7007BB5069CCE2B8` |
+| Windows | `Hinge-Windows.zip` | 129,849,608 bytes | `07000A0B5330CBCDC6537C93E8438198DE37B6BDE4415B403810CB9E1ECE565E` |
+
 ## [1.4.9] - 2026-10-06
 
 本节对照 GitHub 上一正式发行版 `v1.4.7`，只记录此后进入本次发行的变化；不重复 v1.4.7 已发布的 Android 传输记录和后台收件提醒修复。

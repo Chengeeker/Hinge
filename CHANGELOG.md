@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0] - 2026-10-11
+
+Hinge 应用主版本里程碑。v2.0.0 基于 v1.4.15 的功能与 Material 3 界面，并修复 Android 设备页未及时显示 Windows 主动连接状态的问题。跨端传输协议保持 `0.1`；Android `versionCode` 递增以支持覆盖更新。详见 [v2.0.0 更新日志](docs/CHANGELOG_v2.0.0.md) 和 [v1.4.15 更新日志](docs/CHANGELOG_v1.4.15.md)。
+
+- Android：`2.0.0+121`，包名仍为 `com.hinge.office`，仅 ARM64。
+- Windows：`2.0.0.0`。
+
+### 验证状态
+
+Android Flutter 测试 `77/77` 通过（设备页定向测试 `12/12`）。Android 与 Windows Release 资产均构建成功并完成包元数据/完整性核对；未进行 Android 真机验收。Windows 安装器外层 Authenticode 未签名。
+
 ## [1.4.14] - 2026-10-09
 
 对照 GitHub 上一正式发行版 [`v1.4.9`](https://github.com/Chengeeker/Hinge/releases/tag/v1.4.9)，只记录之后进入本次发行的变化。

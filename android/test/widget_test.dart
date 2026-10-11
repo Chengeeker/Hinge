@@ -120,6 +120,75 @@ void main() {
       expect(find.text('已发现 · 可建立会话'), findsNothing);
     });
 
+    testWidgets('HingeApp tracks an outbound session created after startup', (
+      tester,
+    ) async {
+      final tempDirectory = await tester.runAsync(
+        () => Directory.systemTemp.createTemp('hinge-new-session-test-'),
+      );
+      expect(tempDirectory, isNotNull);
+      final testDirectory = tempDirectory!;
+      const localIdentity = DeviceIdentity(
+        deviceId: 'new-session-local-device',
+        name: 'Local Phone',
+      );
+      const remoteIdentity = DeviceIdentity(
+        deviceId: 'new-session-remote-device',
+        name: 'Remote Windows',
+      );
+      final trustStore = TrustStore(
+        '${testDirectory.path}${Platform.pathSeparator}trust.json',
+      );
+      final discovery = DiscoveryService(
+        localIdentity: localIdentity,
+        registry: DeviceRegistry(),
+      );
+      final phone = SessionManager(
+        localIdentity: localIdentity,
+        trustStore: trustStore,
+        listenPort: 0,
+      );
+      final desktop = SessionManager(
+        localIdentity: remoteIdentity,
+        trustStore: trustStore,
+        listenPort: 0,
+      );
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        phone.dispose();
+        desktop.dispose();
+        discovery.dispose();
+        await tester.runAsync(() async {
+          if (await testDirectory.exists()) {
+            await testDirectory.delete(recursive: true);
+          }
+        });
+      });
+      await tester.runAsync(desktop.startListener);
+      await tester.pumpWidget(
+        HingeApp(
+          identity: localIdentity,
+          discoveryService: discovery,
+          trustStore: trustStore,
+          sessionManager: phone,
+          persistentDataDirectory: testDirectory.path,
+        ),
+      );
+
+      await tester.runAsync(() async {
+        await phone
+            .connectToPeer(InternetAddress.loopbackIPv4, desktop.listeningPort)
+            .timeout(const Duration(seconds: 8));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('已建立会话'), findsOneWidget);
+      expect(find.text('Remote Windows'), findsWidgets);
+      expect(find.text('已发现 · 可建立会话'), findsNothing);
+    });
+
     testWidgets('HingeApp remains readable in dark theme', (tester) async {
       const identity = DeviceIdentity(
         deviceId: 'dark-theme-device',

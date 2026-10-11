@@ -1041,14 +1041,14 @@ class _DevicesScreenState extends State<DevicesScreen>
       },
     );
     _incomingConnectionSubscription = widget.sessionManager.onClientConnected
-        .listen(_watchIncomingConnection);
+        .listen(_watchConnectionForUi);
     _createdConnectionSubscription = widget.sessionManager.onConnectionCreated
-        .listen(_watchConnectionData);
+        .listen(_watchConnectionForUi);
     // The native service can restore a socket before this page subscribes.
     // Reattach both feature consumers and UI/session-state observers so a
     // restored TCP session is not left displayed as merely discovered.
     for (final connection in widget.sessionManager.activeConnections) {
-      _watchIncomingConnection(connection);
+      _watchConnectionForUi(connection);
     }
     _connectionRequestSubscription = widget.discoveryService.connectionRequests
         .listen((request) {
@@ -2207,7 +2207,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (enabled) HapticFeedback.selectionClick();
   }
 
-  void _watchIncomingConnection(SessionConnection connection) {
+  void _watchConnectionForUi(SessionConnection connection) {
     if (!_uiWatchedConnections.add(connection)) return;
     _watchConnectionData(connection);
     _incomingPeerSubscriptions.add(
@@ -2753,7 +2753,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           livePeer?.deviceId == device.deviceId;
       if (hasAuthenticatedSession) {
         if (mounted) {
-          _watchIncomingConnection(liveConnection!);
+          _watchConnectionForUi(liveConnection!);
         }
       } else if (attemptGeneration == _connectionAttemptGeneration) {
         if (connection?.pairingError?.isNotEmpty == true) {

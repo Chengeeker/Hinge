@@ -26,6 +26,6 @@
 
 ## 验收说明
 
-每项 UI 修复的截图条件、功能回归和边界见 `docs/` 内的专项验收报告。报告区分了实际运行截图、构建结果和未完成的真机/DPI 覆盖；本发行说明不把未覆盖条件表述为已验收。
+Windows 自动化测试 198/198 通过，Android Flutter 测试 76/76 通过，Windows 安装器/便携 ZIP 与 Android ARM64 APK 均完成 Release 构建和包元数据检查。自动化测试不代表所有真实设备、DPI、主题组合都已覆盖。专项截图及环境验收记录属于本地材料，未随本次公开发行上传。
 
 > Windows Hinge-Setup.exe 未使用 Authenticode 代码签名；首次运行时 Windows 可能显示来源提示。

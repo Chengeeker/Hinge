@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Text;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace Hinge.App;
@@ -9,83 +11,436 @@ namespace Hinge.App;
 internal static class WirelessAdbClient
 {
     private const string DiagnosticsUri = "content://com.hinge.office.diagnostics/connection";
+    private const string PairedSetting = "WirelessAdbPairingCompleted";
+    private const string VerifiedIdentitySetting = "WirelessAdbVerifiedIdentity";
+    private const string PairingGuidSetting = "WirelessAdbPairingGuid";
+    private const string HingeDeviceIdSetting = "WirelessAdbHingeDeviceId";
+    private static readonly SemaphoreSlim ConnectionGate = new(1, 1);
+    private static readonly object RuntimeInfoLock = new();
+    private static Task<WirelessAdbRuntimeInfo>? _runtimeInfoTask;
 
-    public static async Task PairAndConnectAsync(string host, string pairingPort, string code, string connectPort)
+    public static async Task<WirelessAdbPairingResult> PairAsync(
+        string host, string pairingPort, string code, CancellationToken cancellationToken = default)
     {
         ValidateCode(code);
-        var pairingEndpoint = Endpoint(host, pairingPort);
-        var connectionEndpoint = Endpoint(host, connectPort);
-        EnsureSuccess(await RunAsync("pair", pairingEndpoint, code));
-        EnsureSuccess(await RunAsync("connect", connectionEndpoint));
-        var identity = await ReadIdentityAsync(connectionEndpoint, CancellationToken.None);
-        RememberIdentity(connectionEndpoint, identity);
+        var target = await ResolvePairingEndpointAsync(host, pairingPort, cancellationToken);
+        var result = await RunAsync(cancellationToken, "pair", target.Endpoint, code);
+        EnsureSuccess(result);
+        if (!IsSuccessfulPairingResult(result.ExitCode, result.Output))
+            throw new InvalidOperationException("ADB 未返回配对成功确认，未更新 Hinge 的配对记录。请检查手机配对码和 adb pair 输出后重试。");
+        var pairingGuid = ParsePairingGuid(result.Output);
+        using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
+        var previousGuid = key?.GetValue(PairingGuidSetting) as string;
+        if (!string.IsNullOrWhiteSpace(pairingGuid) && !string.Equals(previousGuid, pairingGuid, StringComparison.OrdinalIgnoreCase))
+        {
+            key?.DeleteValue(VerifiedIdentitySetting, throwOnMissingValue: false);
+            key?.DeleteValue(HingeDeviceIdSetting, throwOnMissingValue: false);
+        }
+        key?.SetValue(PairedSetting, 1);
+        if (!string.IsNullOrWhiteSpace(pairingGuid)) key?.SetValue(PairingGuidSetting, pairingGuid);
+        return new WirelessAdbPairingResult(target.Host, target.Port, pairingGuid);
     }
 
     public static async Task<string> ConnectAsync(string host, string connectPort)
         => await ConnectAsync(host, connectPort, CancellationToken.None);
 
     public static async Task<string> ConnectAsync(string host, string connectPort, CancellationToken cancellationToken,
-        IEnumerable<string>? currentHosts = null)
+        IEnumerable<string>? currentHosts = null, string? hingeDeviceId = null)
     {
-        var endpoint = Endpoint(host, connectPort);
-        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Hinge");
-        var identity = key?.GetValue(IdentitySetting(endpoint)) as string;
-        var devices = await RunAsync(cancellationToken, "devices");
-        EnsureSuccess(devices);
-        var transports = ParseConnectedTransports(devices.Output);
-        foreach (var transport in transports.Where(value => identity != null || value == endpoint))
+        await ConnectionGate.WaitAsync(cancellationToken);
+        try { return await ConnectCoreAsync(host, connectPort, cancellationToken, currentHosts, hingeDeviceId); }
+        finally { ConnectionGate.Release(); }
+    }
+
+    public static Task<WirelessAdbRuntimeInfo> GetRuntimeInfoAsync(CancellationToken cancellationToken)
+    {
+        Task<WirelessAdbRuntimeInfo> task;
+        lock (RuntimeInfoLock) task = _runtimeInfoTask ??= ReadRuntimeInfoAsync();
+        return task.WaitAsync(cancellationToken);
+    }
+
+    private static async Task<WirelessAdbRuntimeInfo> ReadRuntimeInfoAsync()
+    {
+        string ReadOutput(AdbResult result) => string.Join("\n", result.Output, result.Error).Trim();
+        var version = await RunAsync("version");
+        AdbResult serverStatus;
+        AdbResult mdnsCheck;
+        try { serverStatus = await RunAsync("server-status"); }
+        catch { serverStatus = new AdbResult(-1, string.Empty, string.Empty); }
+        try { mdnsCheck = await RunAsync("mdns", "check"); }
+        catch { mdnsCheck = new AdbResult(-1, string.Empty, string.Empty); }
+
+        var mdnsProto = string.Empty;
+        var parsedVersion = ParsePlatformToolsVersion(ReadOutput(version));
+        if (parsedVersion >= new Version(37, 0, 0) && mdnsCheck.ExitCode == 0)
         {
+            try
+            {
+                var probe = await RunForDurationAsync(TimeSpan.FromSeconds(1), CancellationToken.None,
+                    "mdns", "track-services", "--proto-text");
+                mdnsProto = probe.Output;
+            }
+            catch { }
+        }
+        return ParseRuntimeInfo(ReadOutput(version), ReadOutput(serverStatus), ReadOutput(mdnsCheck), mdnsProto);
+    }
+
+    internal static WirelessAdbRuntimeInfo ParseRuntimeInfo(
+        string versionOutput, string serverStatusOutput, string mdnsCheckOutput, string mdnsProtoOutput)
+    {
+        var version = ParsePlatformToolsVersion(versionOutput);
+        var serverVersionMatch = Regex.Match(serverStatusOutput, @"\bversion\s*:\s*""?(?<version>\d+\.\d+\.\d+)""?", RegexOptions.IgnoreCase);
+        var backendMatch = Regex.Match(serverStatusOutput, @"\bmdns_backend\s*:\s*(?<backend>[A-Za-z0-9_]+)", RegexOptions.IgnoreCase);
+        var backend = backendMatch.Success ? backendMatch.Groups["backend"].Value : mdnsCheckOutput.Trim();
+        var supportsWifi20 = version >= new Version(37, 0, 0) &&
+            Regex.IsMatch(mdnsProtoOutput, @"mdns_service_version\s*:\s*" + "\"" + @"2\.\d+" + "\"", RegexOptions.CultureInvariant);
+        return new WirelessAdbRuntimeInfo(version.ToString(), serverVersionMatch.Groups["version"].Value,
+            backend, supportsWifi20, mdnsCheckOutput.Length > 0);
+    }
+
+    private static Version ParsePlatformToolsVersion(string output)
+    {
+        var value = Regex.Match(output, @"(?:^|\r?\n)Version\s+(?<version>\d+\.\d+\.\d+)")
+            .Groups["version"].Value;
+        return Version.TryParse(value, out var parsed) ? parsed : new Version(0, 0, 0);
+    }
+
+    private static async Task<string> ConnectCoreAsync(string host, string connectPort, CancellationToken cancellationToken,
+        IEnumerable<string>? currentHosts, string? hingeDeviceId)
+    {
+        var endpoint = TryEndpoint(host, connectPort);
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Hinge");
+        var legacyIdentity = endpoint == null ? null : key?.GetValue(IdentitySetting(endpoint)) as string;
+        var pairingGuid = key?.GetValue(PairingGuidSetting) as string;
+        var verifiedIdentity = key?.GetValue(VerifiedIdentitySetting) as string;
+        var identity = ResolveVerifiedIdentity(verifiedIdentity, pairingGuid, legacyIdentity);
+        var serviceIdentity = identity ?? pairingGuid;
+        if (key?.GetValue(PairedSetting) is int paired && paired != 0 && serviceIdentity == null)
+            throw new WirelessAdbException(WirelessAdbConnectionState.AuthorizationInvalid,
+                "此配对记录缺少可验证的 ADB 设备身份。请更新 Android SDK Platform-Tools 后重新配对一次；不会尝试连接未验证的手机。");
+        var savedHingeDeviceId = key?.GetValue(HingeDeviceIdSetting) as string;
+        if (!string.IsNullOrWhiteSpace(savedHingeDeviceId) &&
+            !string.Equals(savedHingeDeviceId, hingeDeviceId, StringComparison.OrdinalIgnoreCase)) currentHosts = [];
+
+        var devices = await RunAsync(cancellationToken, "devices", "-l");
+        EnsureSuccess(devices);
+        var deviceStates = ParseDeviceStates(devices.Output);
+        if (deviceStates.Any(device => device.State == "unauthorized" &&
+                ((endpoint != null && (device.Transport == endpoint || device.Transport.StartsWith(host + ":", StringComparison.OrdinalIgnoreCase))) ||
+                 MatchesServiceIdentity(device.Transport, identity) || MatchesServiceIdentity(device.Transport, pairingGuid))))
+            throw new WirelessAdbException(WirelessAdbConnectionState.AuthorizationInvalid,
+                "ADB 授权已失效；请在手机无线调试页面撤销旧授权后重新配对。");
+
+        foreach (var device in deviceStates.Where(device => device.State == "device"))
+        {
+            var transport = device.Transport;
+            if (identity == null && !MatchesServiceIdentity(transport, pairingGuid) && transport != endpoint) continue;
             var actualIdentity = await ReadIdentityAsync(transport, cancellationToken);
             if (identity != null && actualIdentity != identity) continue;
-            RememberIdentity(endpoint, actualIdentity);
+            if (actualIdentity.Length == 0) continue;
+            RememberIdentity(endpoint ?? transport, actualIdentity);
+            await RememberAdvertisedEndpointAsync(transport, actualIdentity, pairingGuid, cancellationToken);
             return transport;
         }
 
         var candidates = new List<string>();
-        if (identity != null)
+        var pairingGuidCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var expectedServiceIdentity = serviceIdentity;
+        var mdnsCheckOutput = string.Empty;
+        var mdnsAvailable = false;
+        var mdnsDiscoveryFailed = false;
+        var mdnsFailureDetail = string.Empty;
+        var connectFailureDetail = string.Empty;
+        var connectTimedOut = false;
+        var unauthorized = false;
+        var targetOffline = deviceStates.Any(device => device.State == "offline" &&
+            (MatchesServiceIdentity(device.Transport, identity) || MatchesServiceIdentity(device.Transport, pairingGuid) ||
+             (endpoint != null && device.Transport == endpoint)));
+        if (expectedServiceIdentity != null)
         {
-            var services = await RunAsync(cancellationToken, "mdns", "services");
-            if (services.ExitCode == 0) candidates.AddRange(ParseMdnsEndpoints(services.Output, identity));
-            // Reuse Hinge's current LAN addresses when a VPN hides multicast discovery.
-            foreach (var currentHost in (currentHosts ?? []).Distinct().Take(4))
+            try
             {
-                if (Uri.CheckHostName(currentHost) != UriHostNameType.Unknown)
-                    candidates.Add(Endpoint(currentHost, connectPort));
+                var mdnsCheck = await RunAsync(cancellationToken, "mdns", "check");
+                mdnsCheckOutput = string.Join(" ", mdnsCheck.Output, mdnsCheck.Error).Trim();
+                mdnsAvailable = mdnsCheck.ExitCode == 0 && mdnsCheckOutput.Contains("mdns daemon version", StringComparison.OrdinalIgnoreCase);
+                if (!mdnsAvailable)
+                {
+                    mdnsDiscoveryFailed = true;
+                    mdnsFailureDetail = mdnsCheckOutput;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                mdnsDiscoveryFailed = true;
+                mdnsFailureDetail = exception.Message;
+            }
+
+            try
+            {
+                var services = await RunAsync(cancellationToken, "mdns", "services");
+                if (services.ExitCode == 0)
+                {
+                    var discovered = ParseMdnsEndpoints(services.Output, expectedServiceIdentity);
+                    candidates.AddRange(discovered);
+                    if (identity == null && pairingGuid != null) pairingGuidCandidates.UnionWith(discovered);
+                }
+                else
+                {
+                    mdnsDiscoveryFailed = true;
+                    mdnsFailureDetail = JoinDetails(mdnsFailureDetail, services.Output, services.Error);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                mdnsDiscoveryFailed = true;
+                mdnsFailureDetail = JoinDetails(mdnsFailureDetail, exception.Message);
+            }
+
+            if (mdnsAvailable && candidates.Count == 0)
+            {
+                try
+                {
+                    var runtimeInfo = await GetRuntimeInfoAsync(cancellationToken);
+                    if (Version.TryParse(runtimeInfo.PlatformToolsVersion, out var platformToolsVersion) &&
+                        platformToolsVersion >= new Version(37, 0, 0))
+                    {
+                        var tracked = await RunForDurationAsync(TimeSpan.FromSeconds(1), cancellationToken,
+                            "mdns", "track-services", "--proto-text");
+                        var discovered = ParseMdnsEndpoints(tracked.Output, expectedServiceIdentity);
+                        candidates.AddRange(discovered);
+                        if (identity == null && pairingGuid != null) pairingGuidCandidates.UnionWith(discovered);
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception)
+                {
+                    mdnsDiscoveryFailed = true;
+                    mdnsFailureDetail = JoinDetails(mdnsFailureDetail, exception.Message);
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                mdnsDiscoveryFailed = true;
+                mdnsFailureDetail = JoinDetails(mdnsFailureDetail,
+                    "没有发现匹配的 _adb-tls-connect._tcp 服务");
+            }
+            else
+            {
+                mdnsDiscoveryFailed = false;
+                mdnsFailureDetail = string.Empty;
+            }
+
+            // Hinge addresses only locate a candidate; the ADB identity is still checked below.
+            foreach (var currentHost in (identity == null ? [] : currentHosts ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(4))
+            {
+                if (TryEndpoint(currentHost, connectPort) is { } candidate) candidates.Add(candidate);
             }
         }
-        candidates.Add(endpoint);
-        foreach (var candidate in candidates.Distinct())
+        // Pairing and connection use different ports. Keep the saved connection endpoint as the final fallback.
+        foreach (var candidate in BuildConnectionCandidates(candidates, endpoint))
         {
-            AdbResult connection;
-            try { connection = await RunAsync(cancellationToken, "connect", candidate); }
-            catch (InvalidOperationException) { continue; }
-            if (connection.ExitCode != 0) continue;
-            var actualIdentity = await ReadIdentityAsync(candidate, cancellationToken);
+            AdbResult connectResult;
+            try { connectResult = await RunAsync(cancellationToken, "connect", candidate); }
+            catch (WirelessAdbException exception) when (exception.State == WirelessAdbConnectionState.ConnectionTimedOut)
+            {
+                connectTimedOut = true;
+                connectFailureDetail = JoinDetails(connectFailureDetail, exception.Message);
+                continue;
+            }
+            catch (InvalidOperationException exception)
+            {
+                connectFailureDetail = JoinDetails(connectFailureDetail, exception.Message);
+                continue;
+            }
+            if (connectResult.ExitCode != 0 || IsAdbConnectionFailure(connectResult.Output, connectResult.Error))
+                connectFailureDetail = JoinDetails(connectFailureDetail, connectResult.Output, connectResult.Error);
+            unauthorized |= IsAdbAuthorizationFailure(connectResult.Output, connectResult.Error);
+            targetOffline |= IsAdbOfflineResult(connectResult.Output, connectResult.Error);
+
+            var refreshedDevices = await RunAsync(cancellationToken, "devices", "-l");
+            EnsureSuccess(refreshedDevices);
+            var matchedDevice = FindDeviceForCandidate(refreshedDevices.Output, candidate, identity, pairingGuid);
+            if (matchedDevice is null) continue;
+            if (matchedDevice.Value.State == "unauthorized")
+            {
+                unauthorized = true;
+                continue;
+            }
+            if (matchedDevice.Value.State == "offline")
+            {
+                targetOffline = true;
+                continue;
+            }
+            if (matchedDevice.Value.State != "device") continue;
+            if (identity == null && pairingGuid != null && !pairingGuidCandidates.Contains(candidate) && candidate != endpoint) continue;
+            var actualIdentity = await ReadIdentityAsync(matchedDevice.Value.Transport, cancellationToken);
             if (actualIdentity.Length == 0 || (identity != null && actualIdentity != identity)) continue;
-            RememberIdentity(endpoint, actualIdentity);
-            return candidate;
+            RememberIdentity(candidate, actualIdentity);
+            RememberLastEndpoint(candidate);
+            return matchedDevice.Value.Transport;
         }
-        throw new InvalidOperationException("未找到原先配对的手机。请保持无线调试开启并允许 VPN 访问局域网；若 VPN 阻断 mDNS 且连接端口已变，请更新连接端口（无需重新配对）。");
+
+        if (!NetworkInterface.GetIsNetworkAvailable())
+            throw new WirelessAdbException(WirelessAdbConnectionState.NetworkUnavailable, "电脑当前没有可用网络，正在等待网络恢复。");
+        var failure = ClassifyConnectionFailure(mdnsDiscoveryFailed,
+            connectTimedOut, unauthorized, targetOffline, mdnsFailureDetail, connectFailureDetail);
+        throw new WirelessAdbException(failure.State, failure.Message);
     }
 
-    internal static string[] ParseConnectedTransports(string output) => output
-        .Split('\n').Select(line => line.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-        .Where(parts => parts.Length >= 2 && parts[1] == "device").Select(parts => parts[0]).Distinct().ToArray();
+    internal static string[] ParseConnectedTransports(string output) => ParseDeviceStates(output)
+        .Where(device => device.State == "device").Select(device => device.Transport).Distinct().ToArray();
 
-    internal static string[] ParseMdnsEndpoints(string output, string identity) => output
-        .Split('\n').Select(line => line.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-        .Where(parts => parts.Length == 3 && parts[1].TrimEnd('.') == "_adb-tls-connect._tcp" &&
-            MatchesServiceIdentity(parts[0], identity) &&
-            Uri.TryCreate("tcp://" + parts[2], UriKind.Absolute, out var uri) && uri.Port is > 0 and <= 65535 &&
-            IPAddress.TryParse(uri.Host.Trim('[', ']'), out _))
-        .Select(parts => parts[2]).Distinct().ToArray();
+    internal static bool IsSuccessfulPairingResult(int exitCode, string output) => exitCode == 0 &&
+        Regex.IsMatch(output, @"(?:^|\r?\n)\s*Successfully paired\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    private static bool MatchesServiceIdentity(string service, string identity)
+    internal static string[] BuildConnectionCandidates(
+        IEnumerable<string> discoveredEndpoints, string? endpoint, IEnumerable<string>? trustedHostEndpoints = null)
     {
-        service = service.Replace("._adb-tls-connect._tcp", "", StringComparison.Ordinal).TrimEnd('.');
-        if (!identity.StartsWith("serial:", StringComparison.Ordinal)) return service == identity;
-        var prefix = "adb-" + identity[7..];
-        return service == prefix || service.StartsWith(prefix + "-", StringComparison.Ordinal);
+        var candidates = discoveredEndpoints.Concat(trustedHostEndpoints ?? []);
+        if (!string.IsNullOrWhiteSpace(endpoint)) candidates = candidates.Append(endpoint);
+        return candidates.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    internal static bool IsAdbConnectionFailure(string output, string error)
+    {
+        var text = string.Join(" ", output, error);
+        return Regex.IsMatch(text, @"\b(failed|unable|cannot|can't|refused|unauthorized|offline|error)\b", RegexOptions.IgnoreCase);
+    }
+
+    internal static bool IsAdbAuthorizationFailure(string output, string error) => Regex.IsMatch(
+        string.Join(" ", output, error), @"\b(unauthorized|failed to authenticate|authentication failed)\b", RegexOptions.IgnoreCase);
+
+    internal static bool IsAdbOfflineResult(string output, string error) => Regex.IsMatch(
+        string.Join(" ", output, error), @"\bdevice offline\b", RegexOptions.IgnoreCase);
+
+    internal static (WirelessAdbConnectionState State, string Message) ClassifyConnectionFailure(
+        bool discoveryFailed, bool timedOut, bool authorizationFailed, bool offline, string discoveryDetail, string connectDetail)
+    {
+        var details = new List<string>();
+        if (discoveryFailed) details.Add("mDNS 发现失败" + FormatDetail(discoveryDetail));
+        if (!string.IsNullOrWhiteSpace(connectDetail)) details.Add("ADB IP 连接反馈：" + FormatDetail(connectDetail));
+        var suffix = details.Count == 0 ? string.Empty : " " + string.Join("；", details);
+        if (authorizationFailed)
+            return (WirelessAdbConnectionState.AuthorizationInvalid, "ADB 认证失败；请在手机无线调试页面确认此电脑仍在已配对设备列表中。" + suffix);
+        if (offline)
+            return (WirelessAdbConnectionState.DeviceOffline, "ADB 设备当前为 offline；请确认手机已联网且无线调试仍开启。" + suffix);
+        if (timedOut)
+            return (WirelessAdbConnectionState.ConnectionTimedOut, "ADB 连接超时；请确认手机当前连接端口和网络可达。" + suffix);
+        if (discoveryFailed)
+            return (WirelessAdbConnectionState.DiscoveryFailed, "未能通过 mDNS 发现已配对设备，已尝试手机 IP 与无线调试连接端口兜底，但 adb devices -l 未返回 device。" + suffix);
+        return (WirelessAdbConnectionState.ConnectionFailed, "ADB 未建立连接；adb devices -l 未返回 device。" + suffix);
+    }
+
+    private static string JoinDetails(params string[] values) => string.Join("; ", values
+        .Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()));
+
+    private static string FormatDetail(string value)
+    {
+        var compact = string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return compact.Length == 0 ? string.Empty : "（" + compact[..Math.Min(compact.Length, 240)] + "）";
+    }
+
+    internal static (string Transport, string State)? FindDeviceForCandidate(
+        string output, string candidate, string? identity, string? pairingGuid)
+    {
+        var devices = ParseDeviceStates(output);
+        var exact = devices.FirstOrDefault(device =>
+            string.Equals(device.Transport, candidate, StringComparison.OrdinalIgnoreCase));
+        if (exact.Transport != null) return exact;
+        var identified = devices.FirstOrDefault(device =>
+            MatchesServiceIdentity(device.Transport, identity) || MatchesServiceIdentity(device.Transport, pairingGuid));
+        return identified.Transport == null ? null : identified;
+    }
+
+    internal static (string Transport, string State)[] ParseDeviceStates(string output) => output
+        .Split('\n').Select(line => line.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        .Where(parts => parts.Length >= 2 && parts[0] != "List")
+        .Select(parts => (parts[0], parts[1])).ToArray();
+
+    internal static string[] ParseMdnsEndpoints(string output, string identity) => ParseMdnsEndpointEntries(output)
+        .Where(service => service.ServiceType == "_adb-tls-connect._tcp" && MatchesServiceIdentity(service.Instance, identity))
+        .Select(service => service.Endpoint).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    internal static string[] ParsePairingEndpoints(string output, string hostFilter = "", string portFilter = "") =>
+        ParseMdnsEndpointEntries(output)
+            .Where(service => service.ServiceType == "_adb-tls-pairing._tcp" &&
+                (hostFilter.Length == 0 || TryParseEndpoint(service.Endpoint, out var host, out _) &&
+                    string.Equals(host, hostFilter, StringComparison.OrdinalIgnoreCase)) &&
+                (portFilter.Length == 0 || TryParseEndpoint(service.Endpoint, out _, out var port) &&
+                    port.ToString() == portFilter))
+            .Select(service => service.Endpoint).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    internal static MdnsEndpoint[] ParseMdnsEndpointEntries(string output)
+    {
+        var entries = new List<MdnsEndpoint>();
+        foreach (Match match in Regex.Matches(output, @"service\s*\{(?<body>[^{}]*)\}", RegexOptions.CultureInvariant))
+        {
+            var body = match.Groups["body"].Value;
+            string Field(string name) => Regex.Match(body, $@"\b{name}\s*:\s*""(?<value>[^""]*)""", RegexOptions.CultureInvariant)
+                .Groups["value"].Value;
+            var portText = Regex.Match(body, @"\bport\s*:\s*(?<value>\d+)", RegexOptions.CultureInvariant).Groups["value"].Value;
+            if (!int.TryParse(portText, out var port) || port is < 1 or > 65535) continue;
+            var host = Field("ipv4");
+            if (host.Length == 0) host = Field("ipv6");
+            if (!IPAddress.TryParse(host, out _)) continue;
+            var service = Field("service").TrimEnd('.');
+            var instance = Field("instance");
+            if (service.Length == 0 || instance.Length == 0) continue;
+            entries.Add(new MdnsEndpoint(instance, service, Endpoint(host, port.ToString()), Field("mdns_service_version")));
+        }
+        if (entries.Count > 0) return entries.ToArray();
+
+        foreach (var line in output.Split('\n'))
+        {
+            var parts = line.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 3 || !TryParseEndpoint(parts[2], out var host, out var port)) continue;
+            var service = parts[1].TrimEnd('.');
+            if (service is not ("_adb-tls-connect._tcp" or "_adb-tls-pairing._tcp")) continue;
+            entries.Add(new MdnsEndpoint(parts[0].TrimEnd('.'), service, Endpoint(host, port.ToString()), string.Empty));
+        }
+        return entries.ToArray();
+    }
+
+    internal static bool MatchesServiceIdentity(string service, string? identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity)) return false;
+        service = service.Replace("._adb-tls-connect._tcp", "", StringComparison.Ordinal)
+            .Replace("._adb-tls-pairing._tcp", "", StringComparison.Ordinal).TrimEnd('.');
+        if (identity.StartsWith("serial:", StringComparison.Ordinal))
+        {
+            var prefix = "adb-" + identity[7..];
+            return service.Equals(prefix, StringComparison.OrdinalIgnoreCase) ||
+                service.StartsWith(prefix + "-", StringComparison.OrdinalIgnoreCase);
+        }
+        return service.Equals(identity, StringComparison.OrdinalIgnoreCase) ||
+            service.StartsWith(identity + "-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string? ResolveStableIdentity(string? stableIdentity, string? legacyEndpointIdentity) =>
+        !string.IsNullOrWhiteSpace(stableIdentity) ? stableIdentity : legacyEndpointIdentity;
+
+    internal static string? ResolveVerifiedIdentity(
+        string? stableIdentity, string? pairingGuid, string? legacyEndpointIdentity) =>
+        !string.IsNullOrWhiteSpace(stableIdentity) ? stableIdentity :
+        pairingGuid == null ? legacyEndpointIdentity : null;
+
+    internal static string? ParsePairingGuid(string output)
+    {
+        var match = Regex.Match(output, @"\[guid=(?<guid>[^\]\r\n]+)\]", RegexOptions.CultureInvariant);
+        return match.Success ? match.Groups["guid"].Value.Trim() : null;
+    }
+
+    internal static bool SupportsAdbWifi20(string adbVersion, string mdnsProtoOutput)
+    {
+        var versionText = Regex.Match(adbVersion, @"(?:^|\r?\n)Version\s+(?<version>\d+\.\d+\.\d+)")
+            .Groups["version"].Value;
+        return Version.TryParse(versionText, out var version) && version >= new Version(37, 0, 0) &&
+            Regex.IsMatch(mdnsProtoOutput, @"mdns_service_version\s*:\s*" + "\"" + @"2\.\d+" + "\"", RegexOptions.CultureInvariant);
     }
 
     private static async Task<string> ReadIdentityAsync(string transport, CancellationToken cancellationToken)
@@ -97,20 +452,126 @@ internal static class WirelessAdbClient
             catch (InvalidOperationException) { return string.Empty; }
             if (result.ExitCode != 0) return string.Empty;
             var identity = result.Output.Trim();
-            if (identity.Length is > 0 and <= 128 && identity.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+            if (IsStableIdentityValue(identity))
                 return property == "ro.serialno" ? "serial:" + identity : identity;
         }
         return string.Empty;
     }
 
+    internal static bool IsStableIdentityValue(string identity) =>
+        identity.Length is > 0 and <= 128 && !identity.Equals("unknown", StringComparison.OrdinalIgnoreCase) &&
+        identity.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
+
     private static string IdentitySetting(string endpoint) => "WirelessAdbIdentity_" +
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)));
+
+    internal static bool IsPaired(string host, string port)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Hinge");
+        if (key?.GetValue(PairedSetting) is int paired && paired != 0) return true;
+        if (!string.IsNullOrWhiteSpace(key?.GetValue(VerifiedIdentitySetting) as string) ||
+            !string.IsNullOrWhiteSpace(key?.GetValue(PairingGuidSetting) as string)) return true;
+        var endpoint = TryEndpoint(host, port);
+        return endpoint != null && !string.IsNullOrWhiteSpace(key?.GetValue(IdentitySetting(endpoint)) as string);
+    }
+
+    internal static void SaveHingeDeviceId(string? deviceId)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
+        if (string.IsNullOrWhiteSpace(deviceId)) key?.DeleteValue(HingeDeviceIdSetting, throwOnMissingValue: false);
+        else key?.SetValue(HingeDeviceIdSetting, deviceId);
+    }
+
+    internal static string? LoadHingeDeviceId()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Hinge");
+        return key?.GetValue(HingeDeviceIdSetting) as string;
+    }
 
     private static void RememberIdentity(string endpoint, string identity)
     {
         if (identity.Length == 0) throw new InvalidOperationException("无法读取手机的无线调试身份，请确认无线调试已开启。");
         using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
-        key.SetValue(IdentitySetting(endpoint), identity);
+        key?.SetValue(VerifiedIdentitySetting, identity);
+        key?.SetValue(PairedSetting, 1);
+        key?.SetValue(IdentitySetting(endpoint), identity);
+    }
+
+    private static async Task RememberAdvertisedEndpointAsync(
+        string transport, string identity, string? pairingGuid, CancellationToken cancellationToken)
+    {
+        if (TryParseEndpoint(transport, out _, out _))
+        {
+            RememberLastEndpoint(transport);
+            return;
+        }
+        try
+        {
+            var services = await RunAsync(cancellationToken, "mdns", "services");
+            if (services.ExitCode != 0) return;
+            var endpoint = ParseMdnsEndpointEntries(services.Output)
+                .FirstOrDefault(service => service.ServiceType == "_adb-tls-connect._tcp" &&
+                    (MatchesServiceIdentity(service.Instance, identity) || MatchesServiceIdentity(service.Instance, pairingGuid)))
+                ?.Endpoint;
+            if (endpoint != null) RememberLastEndpoint(endpoint);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch { }
+    }
+
+    private static void RememberLastEndpoint(string endpoint)
+    {
+        if (!TryParseEndpoint(endpoint, out var host, out var port)) return;
+        using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
+        key?.SetValue("WirelessAdbHost", host);
+        key?.SetValue("WirelessAdbConnectPort", port.ToString());
+    }
+
+    private static async Task<(string Host, int Port, string Endpoint)> ResolvePairingEndpointAsync(
+        string host, string pairingPort, CancellationToken cancellationToken)
+    {
+        host = host.Trim();
+        pairingPort = pairingPort.Trim();
+        if (TryEndpoint(host, pairingPort) is { } endpoint && IPAddress.TryParse(host, out _))
+            return (host, int.Parse(pairingPort), endpoint);
+
+        var services = await ReadMdnsServicesAsync(cancellationToken);
+        var matches = ParsePairingEndpoints(services, host, pairingPort);
+        if (matches.Length != 1)
+        {
+            var message = matches.Length == 0
+                ? "没有发现可配对的 Android 无线调试服务；请确认手机已开启无线调试，并与电脑处于可互通网络。"
+                : "发现多台可配对手机；请在高级设置中填写目标手机 IP，避免把配对码用于错误设备。";
+            throw new InvalidOperationException(message);
+        }
+        if (!TryParseEndpoint(matches[0], out var resolvedHost, out var resolvedPort))
+            throw new InvalidOperationException("无法解析手机公布的无线 ADB 配对服务地址。");
+        return (resolvedHost, resolvedPort, matches[0]);
+    }
+
+    private static async Task<string> ReadMdnsServicesAsync(CancellationToken cancellationToken)
+    {
+        var result = await RunAsync(cancellationToken, "mdns", "services");
+        EnsureSuccess(result);
+        return result.Output;
+    }
+
+    private static string? TryEndpoint(string host, string portText)
+    {
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(portText)) return null;
+        try { return Endpoint(host, portText); }
+        catch (ArgumentException) { return null; }
+    }
+
+    private static bool TryParseEndpoint(string value, out string host, out int port)
+    {
+        host = string.Empty;
+        port = 0;
+        if (!Uri.TryCreate("tcp://" + value, UriKind.Absolute, out var uri) || uri.Port is <= 0 or > 65535 ||
+            !IPAddress.TryParse(uri.Host.Trim('[', ']'), out _)) return false;
+        host = uri.Host.Trim('[', ']');
+        port = uri.Port;
+        return true;
     }
 
     public static async Task<WirelessAdbClipboardBridge> StartClipboardBridgeAsync(
@@ -137,6 +598,11 @@ internal static class WirelessAdbClient
     public static async Task<string> PullDiagnosticsAsync(string host, string connectPort)
     {
         var endpoint = await ConnectAsync(host, connectPort);
+        return await PullDiagnosticsFromTransportAsync(endpoint);
+    }
+
+    public static async Task<string> PullDiagnosticsFromTransportAsync(string endpoint)
+    {
         var result = await RunAsync("-s", endpoint, "exec-out", "content", "read", "--uri", DiagnosticsUri);
         EnsureSuccess(result);
         if (string.IsNullOrWhiteSpace(result.Output))
@@ -171,9 +637,41 @@ internal static class WirelessAdbClient
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             cancellationToken.ThrowIfCancellationRequested();
+            if (arguments.FirstOrDefault() == "connect")
+                throw new WirelessAdbException(WirelessAdbConnectionState.ConnectionTimedOut,
+                    "adb connect 在 8 秒内没有返回结果。");
             throw new InvalidOperationException("ADB 操作超时；请确认手机和电脑在同一网络，并检查无线调试状态。");
         }
 
+        return new AdbResult(process.ExitCode, await stdout, await stderr);
+    }
+
+    private static async Task<AdbResult> RunForDurationAsync(
+        TimeSpan duration, CancellationToken cancellationToken, params string[] arguments)
+    {
+        using var process = new Process { StartInfo = CreateStartInfo(arguments) };
+        if (!process.Start()) throw new InvalidOperationException("无法启动 ADB mDNS 服务监听。");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        process.StandardInput.Close();
+        var exitTask = process.WaitForExitAsync();
+        var delayTask = Task.Delay(duration, cancellationToken);
+        var completed = await Task.WhenAny(exitTask, delayTask);
+        if (completed == delayTask)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                if (!process.HasExited) process.Kill();
+                await process.WaitForExitAsync(CancellationToken.None);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            if (!process.HasExited) process.Kill();
+            await process.WaitForExitAsync(CancellationToken.None);
+        }
+        else
+        {
+            await exitTask;
+        }
         return new AdbResult(process.ExitCode, await stdout, await stderr);
     }
 
@@ -254,6 +752,9 @@ internal static class WirelessAdbClient
 
     private sealed record AdbResult(int ExitCode, string Output, string Error);
 }
+
+internal sealed record WirelessAdbRuntimeInfo(
+    string PlatformToolsVersion, string ServerVersion, string MdnsBackend, bool SupportsAdbWifi20, bool MdnsAvailable);
 
 internal sealed class WirelessAdbClipboardBridge : IDisposable
 {

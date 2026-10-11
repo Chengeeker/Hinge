@@ -91,6 +91,7 @@ public sealed partial class MainWindow : Window
     private const int AdditionalFileBatchSize = 200;
     private readonly SemaphoreSlim _fileThumbnailGate = new(GetFileThumbnailConcurrency());
     private readonly SemaphoreSlim _wirelessAdbClipboardSyncGate = new(1, 1);
+    private WirelessAdbConnectionManager? _wirelessAdbConnectionManager;
     private readonly HashSet<SessionConnection> _observedConnections = new();
     private readonly Dictionary<string, DateTime> _automaticConnectAttempts = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _manualDisconnectSuppressedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
@@ -99,7 +100,8 @@ public sealed partial class MainWindow : Window
     private Task? _wirelessAdbClipboardSyncTask;
     private WirelessAdbClipboardBridge? _wirelessAdbClipboardBridge;
     private string? _lastAndroidClipboardText;
-    private string _wirelessAdbClipboardStatus = "无线 ADB 剪贴板同步已关闭。";
+    private string _wirelessAdbConnectionStatus = "尚未配对无线 ADB 设备。";
+    private string _wirelessAdbClipboardStatus = "剪贴板同步已关闭。";
     private int _wirelessAdbClipboardGeneration;
     private int _desktopClipboardChangeGeneration;
     private int _connectionAttemptGeneration;
@@ -469,18 +471,13 @@ public sealed partial class MainWindow : Window
         _notificationManager.NotificationReceived += OnNotificationReceived;
         Closed += OnClosed;
 
-        if (LoadWirelessAdbClipboardSync())
+        var savedAdbHost = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
+        var savedAdbPort = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
+        if (WirelessAdbClient.IsPaired(savedAdbHost, savedAdbPort))
         {
-            var adbHost = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
-            var adbPort = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(adbHost) && !string.IsNullOrWhiteSpace(adbPort))
-            {
-                _ = ConfigureWirelessAdbClipboardSyncAsync(true, adbHost, adbPort);
-            }
-            else
-            {
-                _wirelessAdbClipboardStatus = "请填写手机 IP 和连接端口以恢复剪贴板同步。";
-            }
+            StartWirelessAdbConnectionManager();
+            if (LoadWirelessAdbClipboardSync())
+                _ = ConfigureWirelessAdbClipboardSyncAsync(true, savedAdbHost, savedAdbPort);
         }
 
         try
@@ -1164,7 +1161,7 @@ public sealed partial class MainWindow : Window
         page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
         page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
         page.WirelessAdbClipboardSync.IsOn = LoadWirelessAdbClipboardSync();
-        page.WirelessAdbStatus.Text = _wirelessAdbClipboardStatus;
+        page.WirelessAdbStatus.Text = _wirelessAdbConnectionStatus;
         page.WirelessAdbClipboardSync.Toggled += WirelessAdbClipboardSync_Toggled;
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
@@ -1179,16 +1176,21 @@ public sealed partial class MainWindow : Window
         var connectPort = page.WirelessAdbConnectPort.Text.Trim();
         var code = page.WirelessAdbPairingCode.Password;
         page.WirelessAdbPairingCode.Password = string.Empty;
-        SaveWirelessAdbEndpoint(host, connectPort);
         SetWirelessAdbBusy(page, true);
         try
         {
-            await WirelessAdbClient.PairAndConnectAsync(
+            var pairing = await WirelessAdbClient.PairAsync(
                 host,
                 page.WirelessAdbPairingPort.Text,
-                code,
-                connectPort);
-            page.WirelessAdbStatus.Text = "无线 ADB 已配对并连接。配对码已清除，后续可直接连接或提取日志。";
+                code);
+            page.WirelessAdbHost.Text = pairing.Host;
+            page.WirelessAdbPairingPort.Text = pairing.Port.ToString();
+            SaveWirelessAdbEndpoint(pairing.Host, connectPort);
+            if (FindTrustedAndroidDeviceId(pairing.Host) is { } hingeDeviceId)
+                WirelessAdbClient.SaveHingeDeviceId(hingeDeviceId);
+            _wirelessAdbConnectionStatus = "已完成无线 ADB 配对，正在等待设备自动连接。配对码已清除。";
+            page.WirelessAdbStatus.Text = _wirelessAdbConnectionStatus;
+            StartWirelessAdbConnectionManager();
             if (page.WirelessAdbClipboardSync.IsOn)
             {
                 await ConfigureWirelessAdbClipboardSyncAsync(true, host, connectPort);
@@ -1196,7 +1198,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            page.WirelessAdbStatus.Text = $"无线 ADB 配对/连接失败：{exception.Message}";
+            SetWirelessAdbConnectionStatus($"无线 ADB 配对失败：{exception.Message}");
         }
         finally
         {
@@ -1213,9 +1215,11 @@ public sealed partial class MainWindow : Window
         SetWirelessAdbBusy(page, true);
         try
         {
-            await WirelessAdbClient.ConnectAsync(host, port);
+            await WirelessAdbClient.ConnectAsync(host, port, CancellationToken.None,
+                GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId());
             SaveWirelessAdbEndpoint(host, port);
-            page.WirelessAdbStatus.Text = "无线 ADB 已连接；主机密钥由 Android Platform-Tools 保存。";
+            SetWirelessAdbConnectionStatus("无线 ADB 已连接；主机密钥由 Android Platform-Tools 保存。");
+            StartWirelessAdbConnectionManager();
             if (page.WirelessAdbClipboardSync.IsOn)
             {
                 await ConfigureWirelessAdbClipboardSyncAsync(true, host, port);
@@ -1223,7 +1227,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            page.WirelessAdbStatus.Text = $"无线 ADB 连接失败：{exception.Message}";
+            SetWirelessAdbConnectionStatus($"无线 ADB 连接失败：{exception.Message}");
         }
         finally
         {
@@ -1240,14 +1244,16 @@ public sealed partial class MainWindow : Window
         SetWirelessAdbBusy(page, true);
         try
         {
-            await WirelessAdbClient.ConnectAsync(host, port);
+            var transport = _wirelessAdbConnectionManager?.CurrentTransport ??
+                await WirelessAdbClient.ConnectAsync(host, port, CancellationToken.None,
+                    GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId());
             SaveWirelessAdbEndpoint(host, port);
-            var path = await WirelessAdbClient.PullDiagnosticsAsync(host, port);
-            page.WirelessAdbStatus.Text = $"Hinge 手机连接诊断日志已保存：{path}";
+            var path = await WirelessAdbClient.PullDiagnosticsFromTransportAsync(transport);
+            SetWirelessAdbConnectionStatus($"Hinge 手机连接诊断日志已保存：{path}");
         }
         catch (Exception exception)
         {
-            page.WirelessAdbStatus.Text = $"提取 Hinge 日志失败：{exception.Message}";
+            SetWirelessAdbConnectionStatus($"提取 Hinge 日志失败：{exception.Message}");
         }
         finally
         {
@@ -1257,32 +1263,36 @@ public sealed partial class MainWindow : Window
 
     private static void SaveWirelessAdbEndpoint(string host, string port)
     {
+        if (string.IsNullOrWhiteSpace(host) && string.IsNullOrWhiteSpace(port)) return;
         try
         {
-            ApplicationData.Current.LocalSettings.Values[WirelessAdbHostSettingName] = host;
-            ApplicationData.Current.LocalSettings.Values[WirelessAdbConnectPortSettingName] = port;
+            if (!string.IsNullOrWhiteSpace(host))
+                ApplicationData.Current.LocalSettings.Values[WirelessAdbHostSettingName] = host;
+            if (!string.IsNullOrWhiteSpace(port))
+                ApplicationData.Current.LocalSettings.Values[WirelessAdbConnectPortSettingName] = port;
         }
         catch
         {
             // The registry copy below persists settings for the unpackaged build.
         }
-        WriteUserSetting(WirelessAdbHostSettingName, host);
-        WriteUserSetting(WirelessAdbConnectPortSettingName, port);
+        if (!string.IsNullOrWhiteSpace(host)) WriteUserSetting(WirelessAdbHostSettingName, host);
+        if (!string.IsNullOrWhiteSpace(port)) WriteUserSetting(WirelessAdbConnectPortSettingName, port);
     }
 
     private async void WirelessAdbClipboardSync_Toggled(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleSwitch toggle || _transferSettingsPage is not { } page) return;
         var enabled = toggle.IsOn;
-        SaveWirelessAdbClipboardSync(enabled);
         var host = page.WirelessAdbHost.Text.Trim();
         var port = page.WirelessAdbConnectPort.Text.Trim();
-        if (enabled && (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(port)))
+        if (enabled && !WirelessAdbClient.IsPaired(host, port))
         {
-            SetWirelessAdbClipboardStatus("请先填写手机 IP 和连接端口，再开启剪贴板同步。");
+            toggle.IsOn = false;
+            SetWirelessAdbClipboardStatus("请先完成无线 ADB 配对，再开启剪贴板同步。");
             return;
         }
 
+        SaveWirelessAdbClipboardSync(enabled);
         if (enabled) SaveWirelessAdbEndpoint(host, port);
         await ConfigureWirelessAdbClipboardSyncAsync(enabled, host, port);
     }
@@ -1302,7 +1312,7 @@ public sealed partial class MainWindow : Window
             var cancellation = new CancellationTokenSource();
             _wirelessAdbClipboardSyncCancellation = cancellation;
             Clipboard.ContentChanged += DesktopClipboard_ContentChanged;
-            SetWirelessAdbClipboardStatus("正在连接无线 ADB 并启动剪贴板桥…");
+            SetWirelessAdbClipboardStatus("等待无线 ADB 连接后启动剪贴板桥…");
             _wirelessAdbClipboardSyncTask = RunWirelessAdbClipboardSyncAsync(host, port, cancellation.Token);
         }
         finally
@@ -1333,18 +1343,19 @@ public sealed partial class MainWindow : Window
 
     private async Task RunWirelessAdbClipboardSyncAsync(string host, string port, CancellationToken cancellationToken)
     {
+        var bridgeFailures = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                var currentHosts = _sessionManager.ActiveConnections
-                    .Where(connection => connection.IsSessionReady && connection.IsPairingAuthenticated &&
-                        connection.PeerInfo?.Platform.Equals("android", StringComparison.OrdinalIgnoreCase) == true)
-                    .SelectMany(connection => new[] { connection.RemoteAddress?.ToString() ?? "" }
-                        .Concat(_registry.TryGetDevice(connection.RemoteDeviceId!, out var device) && device != null
-                            ? device.NetworkAddresses : []))
-                    .Where(address => !string.IsNullOrWhiteSpace(address)).ToArray();
-                var transport = await WirelessAdbClient.ConnectAsync(host, port, cancellationToken, currentHosts);
+                var manager = _wirelessAdbConnectionManager;
+                if (manager == null)
+                {
+                    SetWirelessAdbClipboardStatus("等待无线 ADB 自动连接管理器启动…");
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                    continue;
+                }
+                var transport = await manager.WaitForTransportAsync(cancellationToken);
                 var generation = Interlocked.Increment(ref _wirelessAdbClipboardGeneration);
                 var bridge = await WirelessAdbClient.StartClipboardBridgeAsync(
                     transport,
@@ -1362,7 +1373,7 @@ public sealed partial class MainWindow : Window
             }
             catch (Exception exception)
             {
-                SetWirelessAdbClipboardStatus($"无线 ADB 剪贴板同步连接失败，正在重试：{exception.Message}");
+                SetWirelessAdbClipboardStatus($"剪贴板桥暂不可用，正在重试：{exception.Message}");
             }
             finally
             {
@@ -1429,6 +1440,64 @@ public sealed partial class MainWindow : Window
             _wirelessAdbClipboardStatus = status;
             if (_transferSettingsPage != null) _transferSettingsPage.WirelessAdbStatus.Text = status;
         });
+    }
+
+    private void SetWirelessAdbConnectionStatus(string status)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _wirelessAdbConnectionStatus = status;
+            if (_transferSettingsPage != null) _transferSettingsPage.WirelessAdbStatus.Text = status;
+        });
+    }
+
+    private void StartWirelessAdbConnectionManager()
+    {
+        if (_wirelessAdbConnectionManager != null) return;
+        var manager = new WirelessAdbConnectionManager(async cancellationToken =>
+        {
+            var host = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
+            var port = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
+            return await WirelessAdbClient.ConnectAsync(host, port, cancellationToken,
+                GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId());
+        });
+        manager.StatusChanged += status => SetWirelessAdbConnectionStatus(status.Message);
+        _wirelessAdbConnectionManager = manager;
+        manager.Start();
+    }
+
+    private string[] GetWirelessAdbTrustedHosts()
+    {
+        var hingeDeviceId = WirelessAdbClient.LoadHingeDeviceId();
+        if (string.IsNullOrWhiteSpace(hingeDeviceId)) return [];
+        var hosts = _sessionManager.ActiveConnections
+            .Where(connection => connection.IsSessionReady && connection.IsPairingAuthenticated &&
+                string.Equals(connection.RemoteDeviceId, hingeDeviceId, StringComparison.OrdinalIgnoreCase) &&
+                connection.PeerInfo?.Platform.Equals("android", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(connection => connection.RemoteAddress?.ToString() ?? string.Empty)
+            .Where(address => address.Length > 0)
+            .ToList();
+        if (_trustStore.IsTrusted(hingeDeviceId) && _registry.TryGetDevice(hingeDeviceId, out var device) &&
+            device?.Platform == DevicePlatform.Android)
+            hosts.AddRange(device.NetworkAddresses);
+        return hosts.Distinct(StringComparer.OrdinalIgnoreCase).Take(4).ToArray();
+    }
+
+    private string? FindTrustedAndroidDeviceId(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return null;
+        var ids = _sessionManager.ActiveConnections
+            .Where(connection => connection.IsSessionReady && connection.IsPairingAuthenticated &&
+                connection.PeerInfo?.Platform.Equals("android", StringComparison.OrdinalIgnoreCase) == true &&
+                string.Equals(connection.RemoteAddress?.ToString(), host, StringComparison.OrdinalIgnoreCase) &&
+                connection.RemoteDeviceId != null && _trustStore.IsTrusted(connection.RemoteDeviceId))
+            .Select(connection => connection.RemoteDeviceId!);
+        var knownIds = _registry.GetAllDevices()
+            .Where(device => device.Platform == DevicePlatform.Android && device.TrustState == TrustState.Trusted &&
+                device.NetworkAddresses.Contains(host, StringComparer.OrdinalIgnoreCase))
+            .Select(device => device.DeviceId);
+        var matches = ids.Concat(knownIds).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
     }
 
     private static bool LoadWirelessAdbClipboardSync()
@@ -7950,6 +8019,9 @@ public sealed partial class MainWindow : Window
         _wirelessAdbClipboardSyncCancellation?.Cancel();
         _wirelessAdbClipboardBridge?.Dispose();
         _wirelessAdbClipboardBridge = null;
+        if (_wirelessAdbConnectionManager != null)
+            _ = _wirelessAdbConnectionManager.DisposeAsync().AsTask();
+        _wirelessAdbConnectionManager = null;
         ExplorerSendMenu.Clear();
         ReleaseWindowIcons();
         UninitializeNativeFileDrop();

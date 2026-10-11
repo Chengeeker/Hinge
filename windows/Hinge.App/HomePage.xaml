@@ -1,20 +1,25 @@
-<Page
+<Page xmlns:local="using:Hinge.App"
     x:Class="Hinge.App.HomePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Style="{StaticResource HingePageStackStyle}">
-            <Grid x:Name="HomeSummaryGrid" ColumnSpacing="16" SizeChanged="HomeSummaryGrid_SizeChanged">
+    <Page.Resources>
+        <SolidColorBrush x:Key="ListViewItemBackground" Color="Transparent" />
+    </Page.Resources>
+    <ScrollViewer x:Name="HomeScrollViewer" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" SizeChanged="HomeScrollViewer_SizeChanged">
+        <Grid x:Name="HomePageContentRoot" HorizontalAlignment="Stretch">
+        <StackPanel x:Name="HomeContentStack" Style="{StaticResource HingePageStackStyle}" HorizontalAlignment="Stretch" MaxWidth="1120">
+            <Grid x:Name="HomeSummaryGrid" ColumnSpacing="16" RowSpacing="16" SizeChanged="HomeSummaryGrid_SizeChanged">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="1.2*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border x:Name="IdentityCard" Style="{StaticResource HingeCardStyle}">
+                <Border x:Name="IdentityCard" Style="{StaticResource HingeCardStyle}" Grid.Row="0" Grid.Column="0">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -24,7 +29,7 @@
                         <!-- Brand artwork is often transparent. Keep a neutral
                              white backing so every vendor logo has the same
                              readable treatment. -->
-                        <Border Width="48" Height="48" CornerRadius="6" Background="White">
+                        <Border Width="48" Height="48" CornerRadius="6" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}">
                             <ContentControl x:Name="HeroDeviceLogo" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
@@ -32,21 +37,19 @@
                             <TextBlock x:Name="HeroDeviceDetail" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button x:Name="SendFileButton" AutomationProperties.AutomationId="HomePage.SendFileButton" Content="发送文件" />
+                            <local:HandCursorButton x:Name="SendFileButton" AutomationProperties.AutomationId="HomePage.SendFileButton" Content="发送文件" Style="{StaticResource HingeM3FilledButtonStyle}" />
                         </StackPanel>
                     </Grid>
                 </Border>
-                <Border x:Name="ServiceCard" Grid.Column="1" Style="{StaticResource HingeCardStyle}">
+                <Border x:Name="ServiceCard" Grid.Row="1" Grid.Column="0" Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock Text="本机服务" FontWeight="SemiBold" />
                         <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource HingeCaptionStyle}" />
                         <TextBlock Text="UDP 52830 · TCP 52831" Style="{StaticResource HingeCaptionStyle}" />
                     </StackPanel>
                 </Border>
-            </Grid>
-
-            <Border Style="{StaticResource HingeCardStyle}">
-                <StackPanel Spacing="12">
+                <Border x:Name="NearbyDevicesCard" Grid.Row="0" Grid.Column="1" Grid.RowSpan="2" Style="{StaticResource HingeCardStyle}">
+                    <StackPanel Spacing="12">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -56,10 +59,11 @@
                         <TextBlock Text="附近设备" Style="{StaticResource HingeSectionTitleStyle}" />
                             <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
-                        <Button
+                        <local:HandCursorButton
                             x:Name="RefreshButton" AutomationProperties.AutomationId="HomePage.RefreshButton"
                             Grid.Column="1"
                             Content="重新搜索"
+                            Style="{StaticResource HingeM3TextButtonStyle}"
                             MinHeight="36"
                             VerticalAlignment="Center"
                             HorizontalContentAlignment="Center"
@@ -72,9 +76,6 @@
                         Padding="0"
                         HorizontalContentAlignment="Stretch"
                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <!-- The default ListView hover surface spans the whole item,
-                             including the action column. Keep the device action button
-                             visually independent instead of letting that surface cover it. -->
                         <ListView.Resources>
                             <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="Transparent" />
                             <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="Transparent" />
@@ -82,6 +83,9 @@
                             <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="Transparent" />
                             <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="Transparent" />
                         </ListView.Resources>
+                        <!-- The default ListView hover surface spans the whole item,
+                             including the action column. Keep the device action button
+                             visually independent instead of letting that surface cover it. -->
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="HorizontalAlignment" Value="Stretch" />
@@ -92,9 +96,10 @@
                         </ListView.ItemContainerStyle>
                     </ListView>
                 </StackPanel>
-            </Border>
+                </Border>
+            </Grid>
 
-            <Border Style="{StaticResource HingeCardStyle}">
+            <Border x:Name="TransferHistoryCard" Style="{StaticResource HingeCardStyle}">
                 <StackPanel Spacing="10">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -105,10 +110,11 @@
                             <TextBlock Text="传输记录" Style="{StaticResource HingeSectionTitleStyle}" />
                             <TextBlock Text="最新记录在上方；进行中的任务可取消，历史记录可删除。" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
-                        <Button
+                        <local:HandCursorButton
                             x:Name="ClearTransferHistoryButton" AutomationProperties.AutomationId="HomePage.ClearTransferHistoryButton"
                             Grid.Column="1"
                             Content="清空记录"
+                            Style="{StaticResource HingeM3TextButtonStyle}"
                             MinHeight="36"
                             VerticalAlignment="Center"
                             HorizontalContentAlignment="Center"
@@ -116,7 +122,7 @@
                     </Grid>
                     <ListView
                         x:Name="TransferHistoryListView" AutomationProperties.AutomationId="HomePage.TransferHistoryListView"
-                        MaxHeight="240"
+                        MaxHeight="480"
                         Padding="0"
                         SelectionMode="None"
                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -148,5 +154,6 @@
                 <TextBlock x:Name="StatusText" />
             </Grid>
         </StackPanel>
+        </Grid>
     </ScrollViewer>
 </Page>

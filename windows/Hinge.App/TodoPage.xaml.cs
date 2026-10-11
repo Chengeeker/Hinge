@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Hinge.Core;
 
 namespace Hinge.App;
@@ -91,25 +92,23 @@ public sealed partial class TodoPage : Page
         details.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(task.Title) ? "未命名待办" : task.Title,
-            FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Style = (Style)Application.Current.Resources["HingeM3RowTitleStyle"],
             Opacity = 1
         });
         var dueText = task.DueAt is { } due ? $"截止：{FormatTime(due)}" : "未设置截止时间";
         details.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = task.Completed ? $"已完成 · {dueText}" : dueText,
-            FontSize = 14,
             Foreground = ThemeBrushes.Secondary(this)
-        }));
+        }, "HingeM3SupportingStyle"));
         Grid.SetColumn(details, 1);
         row.Children.Add(details);
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        var edit = new Button { Content = "编辑", Tag = task };
+        var edit = new HandCursorButton { Content = "编辑", Tag = task };
         AutomationProperties.SetAutomationId(edit, $"Todo.Edit.{task.Id}");
         edit.Click += EditButton_Click;
-        var delete = new Button { Content = "删除", Tag = task };
+        var delete = new HandCursorButton { Content = "删除", Tag = task };
         AutomationProperties.SetAutomationId(delete, $"Todo.Delete.{task.Id}");
         delete.Click += DeleteButton_Click;
         actions.Children.Add(edit);
@@ -156,7 +155,7 @@ public sealed partial class TodoPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await MainWindow.ShowM3ContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
         var connection = _connectionProvider?.Invoke() ?? _connection;
         if (_client == null || connection?.IsSessionReady != true)
         {
@@ -177,14 +176,18 @@ public sealed partial class TodoPage : Page
     private async Task EditTaskAsync(RemoteWorkspaceTask? existing)
     {
         var title = new TextBox { Text = existing?.Title ?? string.Empty, PlaceholderText = "例如：整理会议资料" };
-        var due = new DatePicker { Date = existing?.DueAt is { } value ? DateTimeOffset.FromUnixTimeMilliseconds(value).ToLocalTime() : DateTimeOffset.Now };
+        var due = new DatePicker
+        {
+            Style = (Style)Application.Current.Resources["HingeM3DatePickerStyle"],
+            Date = existing?.DueAt is { } value ? DateTimeOffset.FromUnixTimeMilliseconds(value).ToLocalTime() : DateTimeOffset.Now,
+        };
         var noDue = new CheckBox { Content = "不设置截止日期", IsChecked = existing?.DueAt == null };
         AutomationProperties.SetName(title, "待办内容");
         AutomationProperties.SetAutomationId(title, "Todo.Editor.Title");
         AutomationProperties.SetName(due, "截止日期");
         AutomationProperties.SetAutomationId(due, "Todo.Editor.DueDate");
         var panel = new StackPanel { Spacing = 12 };
-        panel.Children.Add(new TextBlock { Text = "内容" });
+        panel.Children.Add(ThemeBrushes.Text(new TextBlock { Text = "内容" }, "HingeM3LabelStyle"));
         panel.Children.Add(title);
         panel.Children.Add(noDue);
         panel.Children.Add(due);
@@ -197,7 +200,7 @@ public sealed partial class TodoPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await MainWindow.ShowM3ContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
         if (string.IsNullOrWhiteSpace(title.Text))
         {
             SetStatus("无法保存", "待办内容不能为空。", InfoBarSeverity.Warning);
@@ -249,6 +252,9 @@ public sealed partial class TodoPage : Page
         StatusInfoBar.Title = title;
         StatusInfoBar.Message = message;
         StatusInfoBar.Severity = severity;
+        StatusInfoBar.IconSource = severity == InfoBarSeverity.Informational
+            ? new FontIconSource { Glyph = "\uE946", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 20, Foreground = ThemeBrushes.AccentText(this) }
+            : null;
     }
 
     private static string FormatTime(long milliseconds) =>

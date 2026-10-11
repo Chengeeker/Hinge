@@ -325,26 +325,9 @@ internal static class Program
     {
         var candidates = new List<string>();
 
-        // 1. Check running Hinge process
-        try
-        {
-            foreach (var process in Process.GetProcessesByName("Hinge"))
-            {
-                try
-                {
-                    var mainModulePath = process.MainModule?.FileName;
-                    if (!string.IsNullOrWhiteSpace(mainModulePath))
-                    {
-                        AddCandidate(candidates, Path.GetDirectoryName(mainModulePath));
-                    }
-                }
-                catch { }
-                finally { process.Dispose(); }
-            }
-        }
-        catch { }
-
-        // 2. Check machine-wide install-location.txt
+        // Check persisted install locations before running processes. A debug
+        // instance must not redirect the installer into the source tree.
+        // 1. Check machine-wide install-location.txt
         try
         {
             var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
@@ -360,7 +343,7 @@ internal static class Program
         }
         catch { }
 
-        // 3. Check HKCU and HKLM in both 64-bit and 32-bit views
+        // 2. Check HKCU and HKLM in both 64-bit and 32-bit views
         foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
         {
             foreach (var registryView in new[] { RegistryView.Registry64, RegistryView.Registry32 })
@@ -395,7 +378,7 @@ internal static class Program
             }
         }
 
-        // 4. Check all loaded user profiles in HKEY_USERS (when elevated via UAC)
+        // 3. Check all loaded user profiles in HKEY_USERS (when elevated via UAC)
         try
         {
             foreach (var subKeyName in Registry.Users.GetSubKeyNames())
@@ -424,7 +407,7 @@ internal static class Program
         }
         catch { }
 
-        // 5. Check desktop and start menu shortcuts
+        // 4. Check desktop and start menu shortcuts
         var shortcutDirs = new[]
         {
             Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
@@ -450,6 +433,23 @@ internal static class Program
             }
         }
 
+        // 5. Check running Hinge processes after persisted locations and shortcuts.
+        try
+        {
+            foreach (var process in Process.GetProcessesByName("Hinge"))
+            {
+                try
+                {
+                    var mainModulePath = process.MainModule?.FileName;
+                    if (!string.IsNullOrWhiteSpace(mainModulePath))
+                        AddCandidate(candidates, Path.GetDirectoryName(mainModulePath));
+                }
+                catch { }
+                finally { process.Dispose(); }
+            }
+        }
+        catch { }
+
         // 6. Conventional default locations
         AddCandidate(
             candidates,
@@ -468,8 +468,21 @@ internal static class Program
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
                 "Hinge"));
 
+        // Older Hinge installs were commonly placed at a drive root (for
+        // example D:\Hinge), which may not have a surviving registry entry.
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (drive.DriveType == DriveType.Fixed && drive.IsReady)
+                    AddCandidate(candidates, Path.Combine(drive.RootDirectory.FullName, "Hinge"));
+            }
+            catch { }
+        }
+
         return candidates.FirstOrDefault(path =>
-            File.Exists(Path.Combine(path, "Hinge.exe")));
+            File.Exists(Path.Combine(path, "Hinge.exe")) &&
+            !InstallerPathPolicy.IsInsideSourceRepository(path));
     }
 
     private static string? ResolveShortcutTarget(string shortcutPath)

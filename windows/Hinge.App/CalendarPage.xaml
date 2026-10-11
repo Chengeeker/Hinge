@@ -4,33 +4,41 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Hinge.App"
     NavigationCacheMode="Required">
+    <Page.Resources>
+        <Style x:Key="CalendarDateTextStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3BodyStyle}">
+            <Setter Property="FontSize" Value="19" />
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+            <Setter Property="TextAlignment" Value="Center" />
+        </Style>
+    </Page.Resources>
     <Grid x:Name="RootGrid">
         <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-            <StackPanel Style="{StaticResource HingePageStackStyle}">
+            <StackPanel Style="{StaticResource HingePageStackStyle}" HorizontalAlignment="Stretch" MaxWidth="1120">
                 <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
                     <StackPanel Spacing="2" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                            <Button
+                            <local:HandCursorButton
                                 x:Name="PreviousMonthButton" AutomationProperties.AutomationId="CalendarPage.PreviousMonthButton"
                                 Style="{StaticResource HingeIconButtonStyle}"
                                 Click="PreviousMonthButton_Click"
                                 ToolTipService.ToolTip="上个月"
                                 AutomationProperties.Name="上个月">
                                 <SymbolIcon Symbol="Back" />
-                            </Button>
+                            </local:HandCursorButton>
                             <TextBlock
                                 x:Name="MonthTitle"
                                 VerticalAlignment="Center"
                                 Style="{StaticResource HingePageTitleStyle}"
                                 Text="2026年9月" />
-                            <Button
+                            <local:HandCursorButton
                                 x:Name="NextMonthButton" AutomationProperties.AutomationId="CalendarPage.NextMonthButton"
                                 Style="{StaticResource HingeIconButtonStyle}"
                                 Click="NextMonthButton_Click"
                                 ToolTipService.ToolTip="下个月"
                                 AutomationProperties.Name="下个月">
                                 <SymbolIcon Symbol="Forward" />
-                            </Button>
+                            </local:HandCursorButton>
                         </StackPanel>
                         <TextBlock
                             x:Name="CalendarSummaryText"
@@ -38,49 +46,61 @@
                             Text="连接 Android 手机后显示日程。" />
                     </StackPanel>
                     <local:HingeWrapPanel Spacing="8" LineSpacing="8" JustifyLastLine="False" VerticalAlignment="Center">
-                        <Button
+                        <local:HandCursorButton
                             x:Name="RefreshButton" AutomationProperties.AutomationId="CalendarPage.RefreshButton"
-                            Style="{StaticResource HingeIconButtonStyle}"
+                            Style="{StaticResource HingeM3TextButtonStyle}"
                             Click="RefreshButton_Click"
                             ToolTipService.ToolTip="刷新日程"
                             AutomationProperties.Name="刷新日程">
-                            <SymbolIcon Symbol="Refresh" />
-                        </Button>
-                        <Button
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <SymbolIcon Symbol="Refresh" VerticalAlignment="Center" />
+                                <TextBlock Text="刷新" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </local:HandCursorButton>
+                        <local:HandCursorButton
                             x:Name="TodayButton" AutomationProperties.AutomationId="CalendarPage.TodayButton"
-                            Style="{StaticResource HingeIconButtonStyle}"
+                            Style="{StaticResource HingeM3TextButtonStyle}"
                             Click="TodayButton_Click"
                             ToolTipService.ToolTip="跳转到今天"
                             AutomationProperties.Name="跳转到今天">
-                            <SymbolIcon Symbol="GoToToday" />
-                        </Button>
-                        <Button
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <SymbolIcon Symbol="GoToToday" VerticalAlignment="Center" />
+                                <TextBlock Text="今天" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </local:HandCursorButton>
+                        <local:HandCursorButton
                             x:Name="CreateButton" AutomationProperties.AutomationId="CalendarPage.CreateButton"
-                            Style="{StaticResource HingeIconButtonStyle}"
+                            Style="{StaticResource HingeM3TonalButtonStyle}"
                             Click="CreateButton_Click"
                             ToolTipService.ToolTip="创建新日程"
                             AutomationProperties.Name="创建新日程">
-                            <SymbolIcon Symbol="Add" />
-                        </Button>
-                        <Button
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <SymbolIcon Symbol="Add" VerticalAlignment="Center" />
+                                <TextBlock Text="新建日程" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </local:HandCursorButton>
+                        <local:HandCursorButton
                             x:Name="JumpDateButton" AutomationProperties.AutomationId="CalendarPage.JumpDateButton"
-                            Style="{StaticResource HingeIconButtonStyle}"
+                            Style="{StaticResource HingeM3TextButtonStyle}"
                             Click="JumpDateButton_Click"
                             ToolTipService.ToolTip="跳转到日期"
                             AutomationProperties.Name="跳转到日期">
-                            <SymbolIcon Symbol="Calendar" />
-                        </Button>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <SymbolIcon Symbol="Calendar" VerticalAlignment="Center" />
+                                <TextBlock Text="跳转日期" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </local:HandCursorButton>
                     </local:HingeWrapPanel>
                 </local:HingeWrapPanel>
 
                 <Border Style="{StaticResource HingeCardStyle}" Padding="0">
                     <Grid x:Name="CalendarGrid" Padding="0">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" MinHeight="44" />
+                            <RowDefinition Height="Auto" MinHeight="40" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
                         <Grid x:Name="WeekdayHeaderGrid" Grid.Row="0" />
-                        <Grid x:Name="MonthCellsGrid" Grid.Row="1" MinHeight="480" />
+                        <Grid x:Name="MonthCellsGrid" Grid.Row="1" MinHeight="448" />
                     </Grid>
                 </Border>
 
@@ -88,10 +108,13 @@
                     <StackPanel Spacing="12">
                         <TextBlock
                             x:Name="SelectedDateText"
-                            FontSize="20"
-                            FontWeight="SemiBold"
+                            Style="{StaticResource HingeM3TitleMediumStyle}"
                             Text="当天日程" />
-                        <ListView x:Name="EventsList" AutomationProperties.AutomationId="CalendarPage.EventsList" SelectionMode="None" />
+                        <ListView
+                            x:Name="EventsList"
+                            AutomationProperties.AutomationId="CalendarPage.EventsList"
+                            ItemContainerStyle="{StaticResource HingeM3ListViewItemStyle}"
+                            SelectionMode="None" />
                     </StackPanel>
                 </Border>
             </StackPanel>

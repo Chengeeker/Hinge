@@ -223,7 +223,7 @@ public sealed partial class PhotosPage : Page
 
             if (_albums.Count == 0)
             {
-                AlbumsGrid.Items.Add(new GridViewItem
+                AlbumsGrid.Items.Add(new HandCursorGridViewItem
                 {
                     IsHitTestVisible = false,
                     Content = ThemeBrushes.Text(new TextBlock
@@ -300,7 +300,7 @@ public sealed partial class PhotosPage : Page
         foreach (var album in SortAlbums(_albums))
         {
             var (tile, image) = BuildAlbumTile(album);
-            var item = new GridViewItem { Tag = album, Content = tile };
+            var item = new HandCursorGridViewItem { Tag = album, Content = tile };
             // Keep double-click as an explicit desktop affordance. The
             // single-click handler remains for touch and pen input.
             item.DoubleTapped += AlbumItem_DoubleTapped;
@@ -454,7 +454,7 @@ public sealed partial class PhotosPage : Page
             _loadedPhotoCount = page.Items.Count;
             if (page.Total == 0)
             {
-                PhotosGrid.Items.Add(new GridViewItem
+                PhotosGrid.Items.Add(new HandCursorGridViewItem
                 {
                     IsHitTestVisible = false,
                     Content = ThemeBrushes.Text(new TextBlock
@@ -633,10 +633,9 @@ public sealed partial class PhotosPage : Page
         panel.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = details,
-            FontSize = 13,
             Foreground = ThemeBrushes.Secondary(this),
             TextWrapping = TextWrapping.Wrap
-        }));
+        }, "HingeM3CaptionStyle"));
         // This fallback is kept for a page opened without MainWindow's
         // default-app callback (for example, in a design preview).
         var dialog = new ContentDialog
@@ -1111,12 +1110,12 @@ public sealed partial class PhotosPage : Page
         var tile = new Grid { Width = 230, MinHeight = 230 };
         tile.RowDefinitions.Add(new RowDefinition { Height = new GridLength(170) });
         tile.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        tile.Children.Add(new Border { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorSecondaryBrush"], Child = image });
+        tile.Children.Add(new Border { Background = ThemeBrushes.MutedSurface(this), Child = image });
         var details = new StackPanel { Spacing = 3, Padding = new Thickness(8, 8, 8, 8) };
-        details.Children.Add(new TextBlock { Text = album.Name, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        details.Children.Add(new TextBlock { Text = album.Name, Style = (Style)Application.Current.Resources["HingeM3RowTitleStyle"], TextTrimming = TextTrimming.CharacterEllipsis });
         var albumSummary = $"{album.Count} 张图片";
         if (album.TotalSizeBytes > 0) albumSummary += $" · {FormatBytes(album.TotalSizeBytes)}";
-        details.Children.Add(ThemeBrushes.Text(new TextBlock { Text = albumSummary, FontSize = 14, Foreground = ThemeBrushes.Secondary(this) }));
+        details.Children.Add(ThemeBrushes.Text(new TextBlock { Text = albumSummary, Foreground = ThemeBrushes.Secondary(this) }, "HingeM3SupportingStyle"));
         Grid.SetRow(details, 1);
         tile.Children.Add(details);
         return (tile, image);
@@ -1126,8 +1125,8 @@ public sealed partial class PhotosPage : Page
     {
         var image = new Image { Width = 190, Height = 150, Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill };
         var tile = new StackPanel { Width = 190, Spacing = 6 };
-        tile.Children.Add(new Border { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorSecondaryBrush"], Child = image });
-        tile.Children.Add(new TextBlock { Text = photo.Name, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis });
+        tile.Children.Add(new Border { Background = ThemeBrushes.MutedSurface(this), Child = image });
+        tile.Children.Add(new TextBlock { Text = photo.Name, Style = (Style)Application.Current.Resources["HingeM3BodyStyle"], TextTrimming = TextTrimming.CharacterEllipsis });
         return (new Grid { Children = { tile } }, image);
     }
 
@@ -1167,7 +1166,7 @@ public sealed partial class PhotosPage : Page
             if (version != _loadVersion) return;
 
             var (tile, image) = BuildPhotoTile(photo);
-            var item = new GridViewItem { Tag = photo, Content = tile };
+            var item = new HandCursorGridViewItem { Tag = photo, Content = tile };
             item.DoubleTapped += PhotoItem_DoubleTapped;
             ConfigurePhotoDrag(item, photo);
             PhotosGrid.Items.Add(item);
@@ -1225,6 +1224,9 @@ public sealed partial class PhotosPage : Page
         StatusInfoBar.Title = title;
         StatusInfoBar.Message = message;
         StatusInfoBar.Severity = severity;
+        StatusInfoBar.IconSource = severity == InfoBarSeverity.Informational
+            ? new FontIconSource { Glyph = "\uE946", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 20, Foreground = ThemeBrushes.AccentText(this) }
+            : null;
     }
 
     private static string FormatTime(long milliseconds)

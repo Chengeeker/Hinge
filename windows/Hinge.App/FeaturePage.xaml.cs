@@ -40,12 +40,12 @@ public sealed partial class FeaturePage : Page
 
         if (!string.IsNullOrWhiteSpace(options.PrimaryAction))
         {
-            PrimaryActionButton = new Button { Content = options.PrimaryAction };
+            PrimaryActionButton = new HandCursorButton { Content = options.PrimaryAction };
             FeatureActions.Children.Add(PrimaryActionButton);
         }
         if (!string.IsNullOrWhiteSpace(options.SecondaryAction))
         {
-            SecondaryActionButton = new Button { Content = options.SecondaryAction };
+            SecondaryActionButton = new HandCursorButton { Content = options.SecondaryAction };
             FeatureActions.Children.Add(SecondaryActionButton);
         }
     }

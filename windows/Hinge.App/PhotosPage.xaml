@@ -14,18 +14,18 @@
         <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
             <StackPanel Style="{StaticResource HingePageStackStyle}">
                 <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
-                    <Button x:Name="BackButton" AutomationProperties.AutomationId="PhotosPage.BackButton" Content="返回相册集" Click="BackButton_Click" Visibility="Collapsed" VerticalAlignment="Center" />
+                    <local:HandCursorButton x:Name="BackButton" AutomationProperties.AutomationId="PhotosPage.BackButton" Content="返回相册集" Click="BackButton_Click" Visibility="Collapsed" VerticalAlignment="Center" />
                     <StackPanel Spacing="4">
                         <TextBlock x:Name="PageHeading" Text="相册集" Style="{StaticResource HingePageTitleStyle}" />
                         <TextBlock x:Name="PageDescription" Text="先显示相册集，封面使用该相册最新一张图片；进入相册后再读取图片缩略图。" Style="{StaticResource HingePageDescriptionStyle}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <Button x:Name="SelectPhotosButton" AutomationProperties.AutomationId="PhotosPage.SelectPhotosButton" Content="选择" Visibility="Collapsed"  MinHeight="36" />
+                        <local:HandCursorButton x:Name="SelectPhotosButton" AutomationProperties.AutomationId="PhotosPage.SelectPhotosButton" Content="选择" Visibility="Collapsed"  MinHeight="36" />
                         <ComboBox x:Name="PhotoViewModeOptions" AutomationProperties.Name="照片视图" AutomationProperties.AutomationId="PhotosPage.PhotoViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" VerticalAlignment="Center" MinHeight="36">
                             <ComboBoxItem Content="相册集" Tag="albums" />
                             <ComboBoxItem Content="时光轴" Tag="timeline" />
                         </ComboBox>
-                        <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
                         <ComboBox x:Name="PhotoSortOptions" AutomationProperties.Name="照片排序" AutomationProperties.AutomationId="PhotosPage.PhotoSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" SelectionChanged="PhotoSortOptions_SelectionChanged" MinHeight="36">
                             <ComboBoxItem Content="名称" Tag="name" />
                             <ComboBoxItem Content="类型" Tag="type" />
@@ -34,55 +34,55 @@
                             <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
                             <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
                         </ComboBox>
-                        <Button x:Name="RefreshButton" AutomationProperties.AutomationId="PhotosPage.RefreshButton" Style="{StaticResource HingeIconButtonStyle}" Click="RefreshButton_Click" ToolTipService.ToolTip="刷新相册" AutomationProperties.Name="刷新相册">
+                        <local:HandCursorButton x:Name="RefreshButton" AutomationProperties.AutomationId="PhotosPage.RefreshButton" Style="{StaticResource HingeIconButtonStyle}" Click="RefreshButton_Click" ToolTipService.ToolTip="刷新相册" AutomationProperties.Name="刷新相册">
                             <SymbolIcon Symbol="Refresh" />
-                        </Button>
+                        </local:HandCursorButton>
                     </StackPanel>
                 </local:HingeWrapPanel>
 
                 <InfoBar x:Name="StatusInfoBar" IsOpen="False" IsClosable="False" Severity="Informational" Title="相册" Message="等待连接设备。" />
 
                 <StackPanel x:Name="PhotoSelectionActionBar" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed">
-                    <TextBlock x:Name="SelectedPhotoCountText" Text="已选 0 张" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <Button x:Name="SaveSelectedPhotosButton" AutomationProperties.AutomationId="PhotosPage.SaveSelectedPhotosButton" Content="保存到电脑"  MinHeight="36" />
-                    <Button x:Name="CancelPhotoSelectionButton" AutomationProperties.AutomationId="PhotosPage.CancelPhotoSelectionButton" Content="取消"  MinHeight="36" />
+                    <TextBlock x:Name="SelectedPhotoCountText" Text="已选 0 张" VerticalAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
+                    <local:HandCursorButton x:Name="SaveSelectedPhotosButton" AutomationProperties.AutomationId="PhotosPage.SaveSelectedPhotosButton" Content="保存到电脑"  MinHeight="36" />
+                    <local:HandCursorButton x:Name="CancelPhotoSelectionButton" AutomationProperties.AutomationId="PhotosPage.CancelPhotoSelectionButton" Content="取消"  MinHeight="36" />
                 </StackPanel>
 
-                <GridView
+                <local:HandCursorGridView
                     x:Name="AlbumsGrid" AutomationProperties.AutomationId="PhotosPage.AlbumsGrid"
                     AllowDrop="True"
                     IsItemClickEnabled="True"
                     ItemClick="AlbumsGrid_ItemClick"
                     SelectionMode="None"
                     HorizontalAlignment="Stretch">
-                    <GridView.ItemsPanel>
+                    <local:HandCursorGridView.ItemsPanel>
                         <ItemsPanelTemplate>
                             <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="4" />
                         </ItemsPanelTemplate>
-                    </GridView.ItemsPanel>
-                </GridView>
+                    </local:HandCursorGridView.ItemsPanel>
+                </local:HandCursorGridView>
 
-                <GridView
+                <local:HandCursorGridView
                     x:Name="PhotosGrid" AutomationProperties.AutomationId="PhotosPage.PhotosGrid"
                     IsItemClickEnabled="True"
                     ItemClick="PhotosGrid_ItemClick"
                     SelectionMode="None"
                     Visibility="Collapsed"
                     HorizontalAlignment="Stretch">
-                    <GridView.ItemsPanel>
+                    <local:HandCursorGridView.ItemsPanel>
                         <ItemsPanelTemplate>
                             <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" />
                         </ItemsPanelTemplate>
-                    </GridView.ItemsPanel>
-                </GridView>
+                    </local:HandCursorGridView.ItemsPanel>
+                </local:HandCursorGridView>
             </StackPanel>
         </ScrollViewer>
         <Border
             x:Name="DropHintOverlay"
             Margin="24,0,24,32"
             CornerRadius="12"
-            Background="{ThemeResource AccentFillColorDefaultBrush}"
-            BorderBrush="{ThemeResource AccentControlElevationBorderBrush}"
+            Background="{ThemeResource HingeM3PrimaryBrush}"
+            BorderBrush="{ThemeResource HingeM3PrimaryBrush}"
             BorderThickness="2"
             Visibility="Collapsed"
             IsHitTestVisible="False"

@@ -11,129 +11,267 @@
     Background="Transparent"
     NavigationCacheMode="Required">
     <Page.Resources>
-        <!-- Enlarge the header inside WinUI's geometry, not the template root. -->
-        <x:Double x:Key="TabViewItemMinHeight">52</x:Double>
-        <x:Double x:Key="TabViewItemHeaderFontSize">16</x:Double>
-        <Thickness x:Key="TabViewItemHeaderPadding">16,8,16,8</Thickness>
-        <Thickness x:Key="TabViewItemHeaderPaddingWithCloseButton">16,8,12,8</Thickness>
-        <Thickness x:Key="TabViewItemHeaderPaddingWithoutCloseButton">16,8,16,8</Thickness>
-        <Thickness x:Key="TabViewSelectedItemHeaderPadding">17,8,17,9</Thickness>
+        <x:Double x:Key="TabViewItemMinHeight">40</x:Double>
+        <x:Double x:Key="TabViewItemHeaderFontSize">14</x:Double>
+        <Thickness x:Key="TabViewItemHeaderPadding">12,6,12,6</Thickness>
+        <Thickness x:Key="TabViewItemHeaderPaddingWithCloseButton">12,6,8,6</Thickness>
+        <Thickness x:Key="TabViewItemHeaderPaddingWithoutCloseButton">12,6,12,6</Thickness>
+        <Thickness x:Key="TabViewSelectedItemHeaderPadding">12,6,12,6</Thickness>
     </Page.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <TabView x:Name="SourceTabs" Margin="24,16,24,0" Padding="0" FontSize="16" IsAddTabButtonVisible="False"
-            CanDragTabs="True" CanReorderTabs="True" AllowDropTabs="True" TabWidthMode="SizeToContent" />
-        <ContentControl x:Name="WebDavHost" Grid.Row="1" Visibility="Collapsed"
-            HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
-        <Grid x:Name="DropRootGrid" Grid.Row="1" Background="Transparent" AllowDrop="True" DragEnter="DropRootGrid_DragOver" DragOver="DropRootGrid_DragOver" DragLeave="DropRootGrid_DragLeave" Drop="DropRootGrid_Drop">
-            <Border Margin="24,16,24,32" Style="{StaticResource HingeCardStyle}" HorizontalAlignment="Stretch">
-                <Grid ColumnSpacing="20">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="220" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="浏览手机的文件、媒体和社交相册。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        <ListView x:Name="FileCategoryList" AutomationProperties.AutomationId="FileManagementPage.FileCategoryList" AutomationProperties.Name="文件分类" SelectionMode="Single">
-                            <ListViewItem Content="最近文件" Tag="recent" />
-                            <ListViewItem Content="图片" Tag="images" />
-                            <ListViewItem Content="视频" Tag="videos" />
-                            <ListViewItem Content="音频" Tag="audio" />
-                            <ListViewItem Content="文档" Tag="documents" />
-                            <ListViewItem Content="微信" Tag="wechat" />
-                            <ListViewItem Content="QQ" Tag="qq" />
-                            <ListViewItem Content="手机存储" Tag="storage" />
-                        </ListView>
-                    </StackPanel>
-                    <Grid Grid.Column="1" RowSpacing="12">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
-                            <Button x:Name="NavigateBackButton" AutomationProperties.AutomationId="FileManagementPage.NavigateBackButton" Width="32" Height="32" Padding="0" Visibility="Collapsed" VerticalAlignment="Center" ToolTipService.ToolTip="返回上一级文件夹" AutomationProperties.Name="返回上一级文件夹">
-                                <SymbolIcon Symbol="Back" />
-                            </Button>
-                            <StackPanel Spacing="3">
-                                <TextBlock x:Name="FilePathText" Text="最近文件" FontSize="18" FontWeight="SemiBold" />
-                                <TextBlock x:Name="FileManagementStatusText" Text="正在检查设备连接…" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Button x:Name="SelectFilesButton" AutomationProperties.AutomationId="FileManagementPage.SelectFilesButton" Content="选择" Height="36" AutomationProperties.Name="选择文件" />
-                                <Button x:Name="ImportFileButton" AutomationProperties.AutomationId="FileManagementPage.ImportFileButton" Content="导入电脑文件" Height="36" AutomationProperties.Name="导入电脑文件" />
-                                <Button x:Name="ReconnectPhoneButton" AutomationProperties.AutomationId="FileManagementPage.ReconnectPhoneButton" Content="重新连接" Height="36" Visibility="Collapsed" />
-                                <ComboBox x:Name="FileViewModeOptions" AutomationProperties.Name="文件视图" AutomationProperties.AutomationId="FileManagementPage.FileViewModeOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="120" Height="36">
-                                    <ComboBoxItem Content="宫格" Tag="grid" />
-                                    <ComboBoxItem Content="列表" Tag="list" />
-                                </ComboBox>
-                                <Button x:Name="RefreshFilesButton" AutomationProperties.AutomationId="FileManagementPage.RefreshFilesButton" Style="{StaticResource HingeIconButtonStyle}" ToolTipService.ToolTip="刷新文件" AutomationProperties.Name="刷新文件">
-                                    <SymbolIcon Symbol="Refresh" />
-                                </Button>
-                            </StackPanel>
-                        </local:HingeWrapPanel>
-                        <local:HingeWrapPanel x:Name="FileFilterBar" Grid.Row="1" Spacing="8" LineSpacing="8" JustifyLastLine="False" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <TextBlock Text="类型" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <ComboBox x:Name="FileTypeFilterOptions" AutomationProperties.AutomationId="FileManagementPage.FileTypeFilterOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" Height="36">
-                                <ComboBoxItem Content="全部类型" Tag="all" />
-                                <ComboBoxItem Content="图片" Tag="images" />
-                                <ComboBoxItem Content="视频" Tag="videos" />
-                                <ComboBoxItem Content="音频" Tag="audio" />
-                                <ComboBoxItem Content="文档" Tag="documents" />
-                                <ComboBoxItem Content="压缩包" Tag="archives" />
-                                <ComboBoxItem Content="安装包" Tag="packages" />
-                                <ComboBoxItem Content="其他" Tag="other" />
+        <TabView
+            x:Name="SourceTabs"
+            Margin="24,12,24,0"
+            Padding="0"
+            FontSize="14"
+            IsAddTabButtonVisible="False"
+            CanDragTabs="True"
+            CanReorderTabs="True"
+            AllowDropTabs="True"
+            TabWidthMode="SizeToContent" />
+        <ContentControl
+            x:Name="WebDavHost"
+            Grid.Row="1"
+            Visibility="Collapsed"
+            HorizontalContentAlignment="Stretch"
+            VerticalContentAlignment="Stretch" />
+        <Grid
+            x:Name="DropRootGrid"
+            Grid.Row="1"
+            Margin="24,12,24,24"
+            Background="Transparent"
+            AllowDrop="True"
+            DragEnter="DropRootGrid_DragOver"
+            DragOver="DropRootGrid_DragOver"
+            DragLeave="DropRootGrid_DragLeave"
+            Drop="DropRootGrid_Drop">
+            <Grid ColumnSpacing="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="12">
+                    <TextBlock
+                        Text="分类"
+                        Style="{StaticResource HingeM3TitleMediumStyle}"
+                        FontSize="16"
+                        Margin="0,4,0,0" />
+                    <local:HandCursorListView
+                        x:Name="FileCategoryList"
+                        AutomationProperties.AutomationId="FileManagementPage.FileCategoryList"
+                        AutomationProperties.Name="文件分类"
+                        SelectionMode="Single"
+                        Background="Transparent">
+                        <local:HandCursorListView.Resources>
+                            <SolidColorBrush x:Key="ListViewItemBackground" Color="Transparent" />
+                        </local:HandCursorListView.Resources>
+                        <local:HandCursorListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource HingeM3ListViewItemStyle}">
+                                <Setter Property="MinHeight" Value="44" />
+                                <Setter Property="Padding" Value="12,0" />
+                                <Setter Property="Margin" Value="0" />
+                                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </local:HandCursorListView.ItemContainerStyle>
+                        <local:HandCursorListViewItem Content="最近文件" Tag="recent" />
+                        <local:HandCursorListViewItem Content="图片" Tag="images" />
+                        <local:HandCursorListViewItem Content="视频" Tag="videos" />
+                        <local:HandCursorListViewItem Content="音频" Tag="audio" />
+                        <local:HandCursorListViewItem Content="文档" Tag="documents" />
+                        <local:HandCursorListViewItem Content="微信" Tag="wechat" />
+                        <local:HandCursorListViewItem Content="QQ" Tag="qq" />
+                        <local:HandCursorListViewItem Content="手机存储" Tag="storage" />
+                    </local:HandCursorListView>
+                </StackPanel>
+                <Grid Grid.Column="1" RowSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <local:HandCursorButton
+                            x:Name="NavigateBackButton"
+                            AutomationProperties.AutomationId="FileManagementPage.NavigateBackButton"
+                            Width="40"
+                            Height="40"
+                            Padding="0"
+                            Style="{StaticResource HingeIconButtonStyle}"
+                            Visibility="Collapsed"
+                            VerticalAlignment="Center"
+                            ToolTipService.ToolTip="返回上一级文件夹"
+                            AutomationProperties.Name="返回上一级文件夹">
+                            <SymbolIcon Symbol="Back" />
+                        </local:HandCursorButton>
+                        <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center" MinWidth="180">
+                            <TextBlock
+                                x:Name="FilePathText"
+                                Text="最近文件"
+                                FontSize="18"
+                                FontWeight="SemiBold"
+                                TextTrimming="CharacterEllipsis" />
+                            <TextBlock
+                                x:Name="FileManagementStatusText"
+                                Text="正在检查设备连接…"
+                                FontSize="13"
+                                Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}"
+                                TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </Grid>
+                    <CommandBar
+                        Grid.Row="1"
+                        Background="Transparent"
+                        IsDynamicOverflowEnabled="True"
+                        DefaultLabelPosition="Right"
+                        OverflowButtonVisibility="Auto">
+                        <CommandBar.PrimaryCommands>
+                            <local:HandCursorAppBarButton
+                                x:Name="SelectFilesButton"
+                                AutomationProperties.AutomationId="FileManagementPage.SelectFilesButton"
+                                Label="选择"
+                                AutomationProperties.Name="选择文件">
+                                <local:HandCursorAppBarButton.Icon><SymbolIcon Symbol="SelectAll" /></local:HandCursorAppBarButton.Icon>
+                            </local:HandCursorAppBarButton>
+                            <local:HandCursorAppBarButton
+                                x:Name="ImportFileButton"
+                                AutomationProperties.AutomationId="FileManagementPage.ImportFileButton"
+                                Label="导入电脑文件"
+                                AutomationProperties.Name="导入电脑文件">
+                                <local:HandCursorAppBarButton.Icon><SymbolIcon Symbol="Add" /></local:HandCursorAppBarButton.Icon>
+                            </local:HandCursorAppBarButton>
+                            <local:HandCursorAppBarButton
+                                x:Name="ReconnectPhoneButton"
+                                AutomationProperties.AutomationId="FileManagementPage.ReconnectPhoneButton"
+                                Label="重新连接"
+                                Visibility="Collapsed">
+                                <local:HandCursorAppBarButton.Icon><SymbolIcon Symbol="Sync" /></local:HandCursorAppBarButton.Icon>
+                            </local:HandCursorAppBarButton>
+                            <local:HandCursorAppBarButton
+                                x:Name="RefreshFilesButton"
+                                AutomationProperties.AutomationId="FileManagementPage.RefreshFilesButton"
+                                Label="刷新"
+                                ToolTipService.ToolTip="刷新文件"
+                                AutomationProperties.Name="刷新文件">
+                                <local:HandCursorAppBarButton.Icon><SymbolIcon Symbol="Refresh" /></local:HandCursorAppBarButton.Icon>
+                            </local:HandCursorAppBarButton>
+                        </CommandBar.PrimaryCommands>
+                        <CommandBar.Content>
+                            <ComboBox
+                                x:Name="FileViewModeOptions"
+                                AutomationProperties.Name="文件视图"
+                                AutomationProperties.AutomationId="FileManagementPage.FileViewModeOptions"
+                                SelectedIndex="0"
+                                SelectedValuePath="Tag"
+                                MinWidth="112"
+                                MinHeight="36">
+                                <ComboBoxItem Content="宫格" Tag="grid" />
+                                <ComboBoxItem Content="列表" Tag="list" />
                             </ComboBox>
-                            <ComboBox x:Name="DocumentFilterOptions" AutomationProperties.AutomationId="FileManagementPage.DocumentFilterOptions" Visibility="Collapsed" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" Height="36">
-                                <ComboBoxItem Content="全部文档" Tag="all" />
-                                <ComboBoxItem Content="PDF" Tag="pdf" />
-                                <ComboBoxItem Content="Word" Tag="doc" />
-                                <ComboBoxItem Content="Excel" Tag="xls" />
-                                <ComboBoxItem Content="PowerPoint" Tag="ppt" />
-                                <ComboBoxItem Content="TXT" Tag="txt" />
-                                <ComboBoxItem Content="其他" Tag="other" />
-                            </ComboBox>
-                            <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <ComboBox x:Name="FileSortOptions" AutomationProperties.Name="文件排序" AutomationProperties.AutomationId="FileManagementPage.FileSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" Height="36">
-                                <ComboBoxItem Content="名称" Tag="name" />
-                                <ComboBoxItem Content="类型" Tag="type" />
-                                <ComboBoxItem Content="大小（小到大）" Tag="sizeAsc" />
-                                <ComboBoxItem Content="大小（大到小）" Tag="sizeDesc" />
-                                <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
-                                <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
-                            </ComboBox>
-                        </local:HingeWrapPanel>
-                        <local:HingeWrapPanel x:Name="SelectionActionBar" Grid.Row="2" Spacing="8" LineSpacing="8" VerticalAlignment="Center" Visibility="Collapsed">
-                            <TextBlock x:Name="SelectedCountText" Text="已选 0 项" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <Button x:Name="SaveSelectedFilesButton" AutomationProperties.AutomationId="FileManagementPage.SaveSelectedFilesButton" Content="保存到电脑" />
-                            <Button x:Name="DeleteSelectedFilesButton" AutomationProperties.AutomationId="FileManagementPage.DeleteSelectedFilesButton" Content="删除" />
-                            <Button x:Name="CancelSelectionButton" AutomationProperties.AutomationId="FileManagementPage.CancelSelectionButton" Content="取消" />
-                        </local:HingeWrapPanel>
-                        <Grid Grid.Row="3">
-                            <ListView x:Name="FileListView" AutomationProperties.AutomationId="FileManagementPage.FileListView" IsItemClickEnabled="True" SelectionMode="None" />
-                            <GridView x:Name="FileGridView" AutomationProperties.AutomationId="FileManagementPage.FileGridView" IsItemClickEnabled="True" SelectionMode="None" Visibility="Collapsed">
-                                <GridView.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" />
-                                    </ItemsPanelTemplate>
-                                </GridView.ItemsPanel>
-                            </GridView>
-                        </Grid>
+                        </CommandBar.Content>
+                    </CommandBar>
+                    <local:HingeWrapPanel
+                        x:Name="FileFilterBar"
+                        Grid.Row="2"
+                        Spacing="8"
+                        LineSpacing="8"
+                        JustifyLastLine="False"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                        <TextBlock Text="类型" VerticalAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
+                        <ComboBox x:Name="FileTypeFilterOptions" AutomationProperties.AutomationId="FileManagementPage.FileTypeFilterOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" MinHeight="36">
+                            <ComboBoxItem Content="全部类型" Tag="all" />
+                            <ComboBoxItem Content="图片" Tag="images" />
+                            <ComboBoxItem Content="视频" Tag="videos" />
+                            <ComboBoxItem Content="音频" Tag="audio" />
+                            <ComboBoxItem Content="文档" Tag="documents" />
+                            <ComboBoxItem Content="压缩包" Tag="archives" />
+                            <ComboBoxItem Content="安装包" Tag="packages" />
+                            <ComboBoxItem Content="其他" Tag="other" />
+                        </ComboBox>
+                        <ComboBox x:Name="DocumentFilterOptions" AutomationProperties.AutomationId="FileManagementPage.DocumentFilterOptions" Visibility="Collapsed" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" MinHeight="36">
+                            <ComboBoxItem Content="全部文档" Tag="all" />
+                            <ComboBoxItem Content="PDF" Tag="pdf" />
+                            <ComboBoxItem Content="Word" Tag="doc" />
+                            <ComboBoxItem Content="Excel" Tag="xls" />
+                            <ComboBoxItem Content="PowerPoint" Tag="ppt" />
+                            <ComboBoxItem Content="TXT" Tag="txt" />
+                            <ComboBoxItem Content="其他" Tag="other" />
+                        </ComboBox>
+                        <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
+                        <ComboBox x:Name="FileSortOptions" AutomationProperties.Name="文件排序" AutomationProperties.AutomationId="FileManagementPage.FileSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" MinHeight="36">
+                            <ComboBoxItem Content="名称" Tag="name" />
+                            <ComboBoxItem Content="类型" Tag="type" />
+                            <ComboBoxItem Content="大小（小到大）" Tag="sizeAsc" />
+                            <ComboBoxItem Content="大小（大到小）" Tag="sizeDesc" />
+                            <ComboBoxItem Content="时间（旧到新）" Tag="timeAsc" />
+                            <ComboBoxItem Content="时间（新到旧）" Tag="timeDesc" />
+                        </ComboBox>
+                    </local:HingeWrapPanel>
+                    <local:HingeWrapPanel x:Name="SelectionActionBar" Grid.Row="3" Spacing="8" LineSpacing="8" VerticalAlignment="Center" Visibility="Collapsed">
+                        <TextBlock x:Name="SelectedCountText" Text="已选 0 项" VerticalAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
+                        <local:HandCursorButton x:Name="SaveSelectedFilesButton" AutomationProperties.AutomationId="FileManagementPage.SaveSelectedFilesButton" Content="保存到电脑" />
+                        <local:HandCursorButton x:Name="DeleteSelectedFilesButton" AutomationProperties.AutomationId="FileManagementPage.DeleteSelectedFilesButton" Content="删除" />
+                        <local:HandCursorButton x:Name="CancelSelectionButton" AutomationProperties.AutomationId="FileManagementPage.CancelSelectionButton" Content="取消" />
+                    </local:HingeWrapPanel>
+                    <Grid Grid.Row="4" Background="Transparent">
+                        <local:HandCursorListView x:Name="FileListView" AutomationProperties.AutomationId="FileManagementPage.FileListView" IsItemClickEnabled="True" SelectionMode="None" Background="Transparent" />
+                        <local:HandCursorGridView x:Name="FileGridView" AutomationProperties.AutomationId="FileManagementPage.FileGridView" IsItemClickEnabled="True" SelectionMode="None" Background="Transparent" Visibility="Collapsed">
+                            <local:HandCursorGridView.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <ItemsWrapGrid Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </local:HandCursorGridView.ItemsPanel>
+                        </local:HandCursorGridView>
+                        <StackPanel
+                            x:Name="PhoneDisconnectedState"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            MaxWidth="420"
+                            Spacing="12"
+                            Visibility="Collapsed">
+                            <Border Width="56" Height="56" CornerRadius="28" Background="{ThemeResource HingeM3SurfaceContainerLowBrush}" HorizontalAlignment="Center">
+                                <SymbolIcon Symbol="Phone" Foreground="{ThemeResource HingeM3PrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="手机尚未连接" Style="{StaticResource HingeM3TitleMediumStyle}" FontSize="18" TextAlignment="Center" />
+                            <TextBlock Text="请先在首页连接 Android 手机，连接后即可浏览文件。" Style="{StaticResource HingeM3BodyVariantStyle}" FontSize="14" TextAlignment="Center" TextWrapping="Wrap" />
+                            <local:HandCursorButton
+                                x:Name="ConnectPhoneActionButton"
+                                Content="前往首页连接"
+                                Style="{StaticResource HingeM3TonalButtonStyle}"
+                                HorizontalAlignment="Center"
+                                Click="ConnectPhoneActionButton_Click" />
+                        </StackPanel>
                     </Grid>
                 </Grid>
-            </Border>
-            <Border x:Name="DropHintOverlay" Margin="24,16,24,32" CornerRadius="12" Background="{ThemeResource AccentFillColorDefaultBrush}" BorderBrush="{ThemeResource AccentControlElevationBorderBrush}" BorderThickness="2" Visibility="Collapsed" IsHitTestVisible="False" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            </Grid>
+            <Border
+                x:Name="DropHintOverlay"
+                CornerRadius="12"
+                Background="{ThemeResource HingeM3PrimaryBrush}"
+                BorderBrush="{ThemeResource HingeM3PrimaryBrush}"
+                BorderThickness="2"
+                Visibility="Collapsed"
+                IsHitTestVisible="False"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch">
                 <Border.RenderTransform>
                     <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
                 </Border.RenderTransform>
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-                    <FontIcon Glyph="&#xE898;" FontSize="42" HorizontalAlignment="Center" />
-                    <TextBlock x:Name="DropHintTitle" Text="释放以发送到手机" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" HorizontalAlignment="Center" />
-                    <TextBlock x:Name="DropHintSubtitle" Text="自动分类保存到 /Download/Hinge/视频、图片或文件" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" FontSize="14" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                    <FontIcon Glyph="&#xE898;" FontSize="42" HorizontalAlignment="Center" Foreground="{ThemeResource HingeM3OnPrimaryBrush}" />
+                    <TextBlock x:Name="DropHintTitle" Text="释放以发送到手机" Foreground="{ThemeResource HingeM3OnPrimaryBrush}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="DropHintSubtitle" Text="自动分类保存到 /Download/Hinge/视频、图片或文件" Foreground="{ThemeResource HingeM3OnPrimaryBrush}" FontSize="14" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" />
                 </StackPanel>
             </Border>
         </Grid>

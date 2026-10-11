@@ -21,5 +21,6 @@ public sealed partial class CloudRelaySettingsPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+        SettingsPageLayout.MatchViewportWidth(CloudRelaySettingsScrollViewer, CloudRelaySettingsPageContentRoot);
     }
 }

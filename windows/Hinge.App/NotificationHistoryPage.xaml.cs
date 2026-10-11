@@ -100,6 +100,7 @@ public sealed partial class NotificationHistoryPage : Page
 
         _loading = true;
         LoadingIndicator.IsActive = true;
+        LoadingIndicator.Visibility = Visibility.Visible;
         ClearButton.IsEnabled = false;
         LoadMoreButton.IsEnabled = false;
         if (reset)
@@ -151,6 +152,7 @@ public sealed partial class NotificationHistoryPage : Page
         {
             _loading = false;
             LoadingIndicator.IsActive = false;
+            LoadingIndicator.Visibility = Visibility.Collapsed;
             ClearButton.IsEnabled = _total > 0 && _clearItems != null;
             LoadMoreButton.IsEnabled = true;
             if (_pendingReset)
@@ -261,14 +263,13 @@ public sealed partial class NotificationHistoryPage : Page
             Text = string.IsNullOrWhiteSpace(item.Title)
                 ? item.AppName
                 : $"{item.AppName} · {item.Title}",
-            FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Style = (Style)Application.Current.Resources["HingeM3RowTitleStyle"],
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
         details.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(item.Content) ? "（无正文）" : item.Content,
-            FontSize = 14,
+            Style = (Style)Application.Current.Resources["HingeM3BodyStyle"],
             MaxLines = 3,
             TextWrapping = TextWrapping.Wrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -277,9 +278,8 @@ public sealed partial class NotificationHistoryPage : Page
         {
             Text = FormatTime(item.Timestamp) +
                 (item.Ongoing ? " · 持续通知" : string.Empty),
-            FontSize = 13,
             Foreground = ThemeBrushes.Secondary(this),
-        }));
+        }, "HingeM3CaptionStyle"));
         Grid.SetColumn(details, 1);
         row.Children.Add(details);
 
@@ -291,7 +291,7 @@ public sealed partial class NotificationHistoryPage : Page
         };
         if (item.IsVerificationCode && !string.IsNullOrWhiteSpace(item.VerificationCode))
         {
-            var copy = new Button
+            var copy = new HandCursorButton
             {
                 Content = "复制验证码",
                 Tag = item,
@@ -303,7 +303,7 @@ public sealed partial class NotificationHistoryPage : Page
         }
         if (IsChatApp(item.PackageName))
         {
-            var open = new Button
+            var open = new HandCursorButton
             {
                 Content = "打开",
                 Tag = item,
@@ -313,7 +313,7 @@ public sealed partial class NotificationHistoryPage : Page
             open.Click += OpenButton_Click;
             actions.Children.Add(open);
         }
-        var delete = new Button
+        var delete = new HandCursorButton
         {
             Content = "删除",
             Tag = item,
@@ -485,6 +485,9 @@ public sealed partial class NotificationHistoryPage : Page
         StatusInfoBar.Title = title;
         StatusInfoBar.Message = message;
         StatusInfoBar.Severity = severity;
+        StatusInfoBar.IconSource = severity == InfoBarSeverity.Informational
+            ? new FontIconSource { Glyph = "\uE946", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 20, Foreground = ThemeBrushes.AccentText(this) }
+            : null;
     }
 
     private static bool IsChatApp(string packageName) =>

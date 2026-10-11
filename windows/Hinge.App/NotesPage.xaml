@@ -5,8 +5,8 @@
     xmlns:local="using:Hinge.App"
     NavigationCacheMode="Required">
     <Grid x:Name="RootGrid">
-        <ListView x:Name="NotesList" SizeChanged="NotesList_SizeChanged" AutomationProperties.AutomationId="NotesPage.NotesList" IsItemClickEnabled="True" SelectionMode="None" ItemClick="NotesList_ItemClick"  Margin="{StaticResource HingePageMargin}">
-            <ListView.Header>
+        <local:HandCursorListView x:Name="NotesList" SizeChanged="NotesList_SizeChanged" AutomationProperties.AutomationId="NotesPage.NotesList" IsItemClickEnabled="True" SelectionMode="None" ItemClick="NotesList_ItemClick"  Margin="{StaticResource HingePageMargin}">
+            <local:HandCursorListView.Header>
                 <StackPanel Spacing="16" Margin="0,0,0,16">
             <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
                 <StackPanel Spacing="4">
@@ -14,15 +14,15 @@
                     <TextBlock Text="笔记保存在已连接的 Android 设备上，Windows 端提供完整的查看与编辑入口。" Style="{StaticResource HingePageDescriptionStyle}" />
                 </StackPanel>
                 <local:HingeWrapPanel Spacing="8" LineSpacing="8" JustifyLastLine="False" VerticalAlignment="Center">
-                    <Button x:Name="RefreshButton" AutomationProperties.AutomationId="NotesPage.RefreshButton" Content="刷新" Click="RefreshButton_Click" />
-                    <Button x:Name="NewNoteButton" AutomationProperties.AutomationId="NotesPage.NewNoteButton" Content="新建笔记" Click="NewNoteButton_Click" />
+                    <local:HandCursorButton x:Name="RefreshButton" AutomationProperties.AutomationId="NotesPage.RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                    <local:HandCursorButton x:Name="NewNoteButton" AutomationProperties.AutomationId="NotesPage.NewNoteButton" Content="新建笔记" Click="NewNoteButton_Click" />
                 </local:HingeWrapPanel>
             </local:HingeWrapPanel>
 
             <InfoBar x:Name="StatusInfoBar" IsOpen="False" IsClosable="False" Severity="Informational" Title="笔记" Message="等待连接设备。" />
 
                 </StackPanel>
-            </ListView.Header>
-        </ListView>
+            </local:HandCursorListView.Header>
+        </local:HandCursorListView>
     </Grid>
 </Page>

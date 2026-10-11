@@ -1,0 +1,481 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="HingeM3PrimaryBrush" Color="#FF6750A4" />
+            <SolidColorBrush x:Key="HingeM3OnPrimaryBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="HingeM3PrimaryContainerBrush" Color="#FFEADDFF" />
+            <SolidColorBrush x:Key="HingeM3OnPrimaryContainerBrush" Color="#FF21005D" />
+            <SolidColorBrush x:Key="HingeM3SecondaryBrush" Color="#FF6750A4" />
+            <SolidColorBrush x:Key="HingeM3OnSecondaryBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="HingeM3SecondaryContainerBrush" Color="#FFEADDFF" />
+            <SolidColorBrush x:Key="HingeM3OnSecondaryContainerBrush" Color="#FF21005D" />
+            <SolidColorBrush x:Key="HingeM3TertiaryBrush" Color="#FF6750A4" />
+            <SolidColorBrush x:Key="HingeM3OnTertiaryBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="HingeM3TertiaryContainerBrush" Color="#FFEADDFF" />
+            <SolidColorBrush x:Key="HingeM3OnTertiaryContainerBrush" Color="#FF21005D" />
+            <SolidColorBrush x:Key="HingeM3SurfaceBrush" Color="#FFFEF7FF" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerLowestBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerLowBrush" Color="#FFF7F2FA" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerBrush" Color="#FFF3EDF7" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerHighBrush" Color="#FFECE6F0" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerHighestBrush" Color="#FFE6E0E9" />
+            <SolidColorBrush x:Key="HingeM3OnSurfaceBrush" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="HingeM3OnSurfaceVariantBrush" Color="#FF49454F" />
+            <SolidColorBrush x:Key="HingeM3OutlineBrush" Color="#FF79747E" />
+            <SolidColorBrush x:Key="HingeM3OutlineVariantBrush" Color="#FFCAC4D0" />
+            <SolidColorBrush x:Key="HingeM3ErrorBrush" Color="#FFB3261E" />
+            <SolidColorBrush x:Key="HingeM3OnErrorBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="HingeM3ErrorContainerBrush" Color="#FFF9DEDC" />
+            <SolidColorBrush x:Key="HingeM3OnErrorContainerBrush" Color="#FF410E0B" />
+            <SolidColorBrush x:Key="HingeM3InverseSurfaceBrush" Color="#FF322F35" />
+            <SolidColorBrush x:Key="HingeM3OnInverseSurfaceBrush" Color="#FFF5EFF7" />
+            <SolidColorBrush x:Key="HingeM3InversePrimaryBrush" Color="#FFD0BCFF" />
+            <SolidColorBrush x:Key="HingeM3SurfaceTintBrush" Color="#FF65558F" />
+            <SolidColorBrush x:Key="HingeM3ShadowBrush" Color="#FF000000" />
+            <SolidColorBrush x:Key="HingeM3ScrimBrush" Color="#FF000000" />
+            <SolidColorBrush x:Key="HingeM3SurfaceDimBrush" Color="#FFDED8E0" />
+            <SolidColorBrush x:Key="HingeM3SurfaceBrightBrush" Color="#FFFDF7FF" />
+            <SolidColorBrush x:Key="HingeM3StateHoverBrush" Color="#FF1D1B20" Opacity="0.08" />
+            <SolidColorBrush x:Key="HingeM3StatePressedBrush" Color="#FF1D1B20" Opacity="0.12" />
+            <SolidColorBrush x:Key="HingeM3DisabledContentBrush" Color="#FF1D1B20" Opacity="0.38" />
+
+            <!-- Keep WinUI's native selected controls on the active M3 color family. -->
+            <StaticResource x:Key="FocusStrokeColorOuterBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="FocusStrokeColorInnerBrush" ResourceKey="HingeM3SurfaceBrush" />
+            <StaticResource x:Key="ComboBoxItemPillFillBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForeground" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForegroundPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForegroundPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedStroke" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedStrokePointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedStrokePressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedFill" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedFillPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedFillPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonCheckGlyphFill" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="RadioButtonCheckGlyphFillPointerOver" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="RadioButtonCheckGlyphFillPressed" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOn" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOnPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOnPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOnDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOn" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOnPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOnPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOnDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOn" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOnPointerOver" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOnPressed" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOnDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="SliderThumbBackground" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFill" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFillPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFillPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFillDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="ProgressRingForegroundThemeBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ProgressBarForeground" ResourceKey="HingeM3PrimaryBrush" />
+
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFF7F2FA" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FFF7F2FA" />
+            <SolidColorBrush x:Key="NavigationViewItemBackground" Color="Transparent" />
+            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#141D1B20" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="#1F1D1B20" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPressed" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="#FFEADDFF" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FF21005D" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="#FFEADDFF" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="#FF21005D" />
+            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="#FF6750A4" />
+
+            <StaticResource x:Key="ListViewItemBackground" ResourceKey="HingeM3SurfaceBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="HingeM3StatePressedBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelected" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelectedPointerOver" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelectedPressed" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemCheckBrush" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorPointerOverBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorPressedBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorDisabledBrush" ResourceKey="HingeM3DisabledContentBrush" />
+
+            <StaticResource x:Key="GridViewItemBackground" ResourceKey="HingeM3SurfaceBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundPressed" ResourceKey="HingeM3StatePressedBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundSelected" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundSelectedPointerOver" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundSelectedPressed" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemForegroundSelected" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemCheckBrush" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemSelectedBorderBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="GridViewItemSelectedPointerOverBorderBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="GridViewItemSelectedPressedBorderBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="GridViewItemSelectedDisabledBorderBrush" ResourceKey="HingeM3DisabledContentBrush" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="HingeM3PrimaryBrush" Color="#FFCFBDFE" />
+            <SolidColorBrush x:Key="HingeM3OnPrimaryBrush" Color="#FF36275D" />
+            <SolidColorBrush x:Key="HingeM3PrimaryContainerBrush" Color="#FF4D3D75" />
+            <SolidColorBrush x:Key="HingeM3OnPrimaryContainerBrush" Color="#FFE9DDFF" />
+            <SolidColorBrush x:Key="HingeM3SecondaryBrush" Color="#FFCFBDFE" />
+            <SolidColorBrush x:Key="HingeM3OnSecondaryBrush" Color="#FF36275D" />
+            <SolidColorBrush x:Key="HingeM3SecondaryContainerBrush" Color="#FF4D3D75" />
+            <SolidColorBrush x:Key="HingeM3OnSecondaryContainerBrush" Color="#FFE9DDFF" />
+            <SolidColorBrush x:Key="HingeM3TertiaryBrush" Color="#FFCFBDFE" />
+            <SolidColorBrush x:Key="HingeM3OnTertiaryBrush" Color="#FF36275D" />
+            <SolidColorBrush x:Key="HingeM3TertiaryContainerBrush" Color="#FF4D3D75" />
+            <SolidColorBrush x:Key="HingeM3OnTertiaryContainerBrush" Color="#FFE9DDFF" />
+            <SolidColorBrush x:Key="HingeM3SurfaceBrush" Color="#FF141218" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerLowestBrush" Color="#FF0F0D13" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerLowBrush" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerBrush" Color="#FF211F24" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerHighBrush" Color="#FF2B292F" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerHighestBrush" Color="#FF36343A" />
+            <SolidColorBrush x:Key="HingeM3OnSurfaceBrush" Color="#FFE6E0E9" />
+            <SolidColorBrush x:Key="HingeM3OnSurfaceVariantBrush" Color="#FFCAC4CF" />
+            <SolidColorBrush x:Key="HingeM3OutlineBrush" Color="#FF948F99" />
+            <SolidColorBrush x:Key="HingeM3OutlineVariantBrush" Color="#FF49454E" />
+            <SolidColorBrush x:Key="HingeM3ErrorBrush" Color="#FFFFB4AB" />
+            <SolidColorBrush x:Key="HingeM3OnErrorBrush" Color="#FF690005" />
+            <SolidColorBrush x:Key="HingeM3ErrorContainerBrush" Color="#FF93000A" />
+            <SolidColorBrush x:Key="HingeM3OnErrorContainerBrush" Color="#FFFFDAD6" />
+            <SolidColorBrush x:Key="HingeM3InverseSurfaceBrush" Color="#FFE6E0E9" />
+            <SolidColorBrush x:Key="HingeM3OnInverseSurfaceBrush" Color="#FF322F35" />
+            <SolidColorBrush x:Key="HingeM3InversePrimaryBrush" Color="#FF65558F" />
+            <SolidColorBrush x:Key="HingeM3SurfaceTintBrush" Color="#FFCFBDFE" />
+            <SolidColorBrush x:Key="HingeM3ShadowBrush" Color="#FF000000" />
+            <SolidColorBrush x:Key="HingeM3ScrimBrush" Color="#FF000000" />
+            <SolidColorBrush x:Key="HingeM3SurfaceDimBrush" Color="#FF141218" />
+            <SolidColorBrush x:Key="HingeM3SurfaceBrightBrush" Color="#FF3B383E" />
+            <SolidColorBrush x:Key="HingeM3StateHoverBrush" Color="#FFE6E0E9" Opacity="0.08" />
+            <SolidColorBrush x:Key="HingeM3StatePressedBrush" Color="#FFE6E0E9" Opacity="0.12" />
+            <SolidColorBrush x:Key="HingeM3DisabledContentBrush" Color="#FFE6E0E9" Opacity="0.38" />
+
+            <!-- Keep WinUI's native selected controls on the active M3 color family. -->
+            <StaticResource x:Key="FocusStrokeColorOuterBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="FocusStrokeColorInnerBrush" ResourceKey="HingeM3SurfaceBrush" />
+            <StaticResource x:Key="ComboBoxItemPillFillBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForeground" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForegroundPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForegroundPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="HyperlinkButtonForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedStroke" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedStrokePointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedStrokePressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedFill" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedFillPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonOuterEllipseCheckedFillPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="RadioButtonCheckGlyphFill" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="RadioButtonCheckGlyphFillPointerOver" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="RadioButtonCheckGlyphFillPressed" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOn" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOnPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOnPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchFillOnDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOn" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOnPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOnPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchStrokeOnDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOn" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOnPointerOver" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOnPressed" ResourceKey="HingeM3OnPrimaryBrush" />
+            <StaticResource x:Key="ToggleSwitchKnobFillOnDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="SliderThumbBackground" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFill" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFillPointerOver" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFillPressed" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="SliderTrackValueFillDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+            <StaticResource x:Key="ProgressRingForegroundThemeBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ProgressBarForeground" ResourceKey="HingeM3PrimaryBrush" />
+
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="NavigationViewItemBackground" Color="Transparent" />
+            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FFE6E0E9" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#14E6E0E9" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FFE6E0E9" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="#1FE6E0E9" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPressed" Color="#FFE6E0E9" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="#FF4D3D75" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FFE9DDFF" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="#FF4D3D75" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="#FFE9DDFF" />
+            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="#FFCFBDFE" />
+
+            <StaticResource x:Key="ListViewItemBackground" ResourceKey="HingeM3SurfaceBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="HingeM3StatePressedBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelected" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelectedPointerOver" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelectedPressed" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemCheckBrush" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorPointerOverBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorPressedBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="ListViewItemSelectionIndicatorDisabledBrush" ResourceKey="HingeM3DisabledContentBrush" />
+
+            <StaticResource x:Key="GridViewItemBackground" ResourceKey="HingeM3SurfaceBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundPressed" ResourceKey="HingeM3StatePressedBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundSelected" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundSelectedPointerOver" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemBackgroundSelectedPressed" ResourceKey="HingeM3PrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemForegroundSelected" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemCheckBrush" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+            <StaticResource x:Key="GridViewItemSelectedBorderBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="GridViewItemSelectedPointerOverBorderBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="GridViewItemSelectedPressedBorderBrush" ResourceKey="HingeM3PrimaryBrush" />
+            <StaticResource x:Key="GridViewItemSelectedDisabledBorderBrush" ResourceKey="HingeM3DisabledContentBrush" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="HingeM3PrimaryBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3OnPrimaryBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="HingeM3PrimaryContainerBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3OnPrimaryContainerBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="HingeM3SecondaryBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3OnSecondaryBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="HingeM3SecondaryContainerBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3OnSecondaryContainerBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="HingeM3TertiaryBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3OnTertiaryBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="HingeM3TertiaryContainerBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3OnTertiaryContainerBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerLowestBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerLowBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerHighBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceContainerHighestBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3OnSurfaceBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3OnSurfaceVariantBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3OutlineBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3OutlineVariantBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3ErrorBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3OnErrorBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3ErrorContainerBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3OnErrorContainerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3InverseSurfaceBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3OnInverseSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3InversePrimaryBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceTintBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3ShadowBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3ScrimBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceDimBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3SurfaceBrightBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HingeM3StateHoverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3StatePressedBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="HingeM3DisabledContentBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemBackground" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="{ThemeResource SystemColorHighlightColor}" />
+
+            <SolidColorBrush x:Key="ListViewItemBackground" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ListViewItemForegroundSelectedPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ListViewItemForegroundSelectedPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ListViewItemCheckBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorDisabledBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+
+            <SolidColorBrush x:Key="GridViewItemBackground" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="GridViewItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="GridViewItemCheckBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="GridViewItemSelectedBorderBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemSelectedPointerOverBorderBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemSelectedPressedBorderBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="GridViewItemSelectedDisabledBorderBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <CornerRadius x:Key="HingeM3ShapeExtraSmall">4</CornerRadius>
+    <CornerRadius x:Key="HingeM3ShapeSmall">8</CornerRadius>
+    <CornerRadius x:Key="HingeM3ShapeMedium">12</CornerRadius>
+    <CornerRadius x:Key="HingeM3ShapeLarge">16</CornerRadius>
+    <CornerRadius x:Key="HingeM3ShapeExtraLarge">24</CornerRadius>
+    <x:Double x:Key="HingeM3Space4">4</x:Double>
+    <x:Double x:Key="HingeM3Space8">8</x:Double>
+    <x:Double x:Key="HingeM3Space12">12</x:Double>
+    <x:Double x:Key="HingeM3Space16">16</x:Double>
+    <x:Double x:Key="HingeM3Space24">24</x:Double>
+    <x:Double x:Key="HingeM3Space32">32</x:Double>
+
+    <Style x:Key="HingeM3HeadlineSmallStyle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextBlockStyle}">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="29" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="HingeM3TitleMediumStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="17" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="HingeM3RowTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3TitleMediumStyle}" />
+    <Style x:Key="HingeM3BodyStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="HingeM3BodyVariantStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="HingeM3SupportingStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3BodyVariantStyle}" />
+    <Style x:Key="HingeM3SectionHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="19" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3PrimaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="HingeM3CaptionStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3BodyVariantStyle}">
+        <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style x:Key="HingeM3LabelStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="HingeM3TextButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3PrimaryBrush}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeSmall}" />
+        <Setter Property="MinHeight" Value="36" />
+        <Setter Property="Padding" Value="12,0" />
+    </Style>
+    <Style x:Key="HingeM3SettingsRowButtonStyle" TargetType="Button" BasedOn="{StaticResource HingeM3TextButtonStyle}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="MinHeight" Value="84" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="HingeM3FilledButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource HingeM3PrimaryBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnPrimaryBrush}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="MinHeight" Value="38" />
+        <Setter Property="Padding" Value="16,0" />
+    </Style>
+    <Style x:Key="HingeM3TonalButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource HingeM3SecondaryContainerBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSecondaryContainerBrush}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="MinHeight" Value="38" />
+        <Setter Property="Padding" Value="16,0" />
+    </Style>
+    <Style x:Key="HingeM3OutlinedButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource HingeM3OutlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="MinHeight" Value="38" />
+        <Setter Property="Padding" Value="16,0" />
+    </Style>
+    <Style x:Key="HingeM3IconButtonStyle" TargetType="Button" BasedOn="{StaticResource HingeM3TextButtonStyle}">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
+        <Setter Property="MinWidth" Value="40" />
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="20" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="HingeM3TextFieldStyle" TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerHighestBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource HingeM3OutlineVariantBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+    </Style>
+    <Style x:Key="HingeM3PasswordFieldStyle" TargetType="PasswordBox" BasedOn="{StaticResource DefaultPasswordBoxStyle}">
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerHighestBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource HingeM3OutlineVariantBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+    </Style>
+    <Style x:Key="HingeM3ComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerHighestBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource HingeM3OutlineVariantBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+    </Style>
+    <Style x:Key="HingeM3DatePickerStyle" TargetType="DatePicker" BasedOn="{StaticResource DefaultDatePickerStyle}">
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerHighestBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource HingeM3OutlineVariantBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+    </Style>
+    <Style x:Key="HingeM3TimePickerStyle" TargetType="TimePicker">
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerHighestBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource HingeM3OutlineVariantBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+    </Style>
+    <Style x:Key="HingeM3ListViewItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+        <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeSmall}" />
+    </Style>
+    <Style x:Key="HingeM3GridViewItemStyle" TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
+        <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeSmall}" />
+    </Style>
+    <DataTemplate x:Key="HingeM3DialogTitleTemplate">
+        <TextBlock Text="{Binding}" Style="{StaticResource HingeM3TitleMediumStyle}" />
+    </DataTemplate>
+    <DataTemplate x:Key="HingeM3DialogMessageTemplate">
+        <TextBlock Text="{Binding}" Style="{StaticResource HingeM3BodyStyle}" />
+    </DataTemplate>
+</ResourceDictionary>

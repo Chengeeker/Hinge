@@ -1,110 +1,269 @@
-<Page
+<Page xmlns:local="using:Hinge.App"
     x:Class="Hinge.App.TransferSettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Style="{StaticResource HingePageStackStyle}">
+    <ScrollViewer
+        x:Name="TransferSettingsScrollViewer"
+        HorizontalScrollBarVisibility="Disabled"
+        HorizontalContentAlignment="Stretch">
+        <Grid x:Name="TransferSettingsPageContentRoot" HorizontalAlignment="Stretch">
+        <StackPanel Style="{StaticResource HingeSettingsPageStackStyle}" Spacing="24">
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button
-                    x:Name="BackToSettingsButton" AutomationProperties.AutomationId="TransferSettingsPage.BackToSettingsButton"
+                <local:HandCursorButton
+                    x:Name="BackToSettingsButton"
+                    AutomationProperties.AutomationId="TransferSettingsPage.BackToSettingsButton"
                     Grid.Column="0"
                     Style="{StaticResource HingeIconButtonStyle}"
                     ToolTipService.ToolTip="返回设置"
                     AutomationProperties.Name="返回设置">
                     <SymbolIcon Symbol="Back" />
-                </Button>
+                </local:HandCursorButton>
                 <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Text="传输与连接" Style="{StaticResource HingePageTitleStyle}" />
-                    <TextBlock Text="设置文件接收位置、连接安全与 Android 自动唤醒。" Style="{StaticResource HingePageDescriptionStyle}" />
+                    <TextBlock Text="管理文件保存位置、连接安全和 Android 唤醒。" Style="{StaticResource HingePageDescriptionStyle}" />
                 </StackPanel>
             </Grid>
 
-            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="文件接收" Style="{StaticResource HingeSectionTitleStyle}" />
-                    <TextBlock Text="自定义存储位置" Style="{StaticResource HingeCaptionStyle}" />
-                    <Grid ColumnSpacing="8">
+            <StackPanel Spacing="10">
+                <TextBlock Text="文件接收" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="4,0,0,0" />
+                <Border Style="{StaticResource HingeCardStyle}" Padding="0">
+                    <Grid Padding="20,16" ColumnSpacing="20">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="3*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4" VerticalAlignment="Center">
+                            <TextBlock Text="默认保存目录" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                            <TextBlock Text="批量保存文件和照片时使用；未设置时存入 Downloads\Hinge。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                        </StackPanel>
                         <TextBox
-                            x:Name="StoragePathTextBox" AutomationProperties.Name="默认保存目录" AutomationProperties.AutomationId="TransferSettingsPage.StoragePathTextBox"
-                            Grid.Column="0"
+                            x:Name="StoragePathTextBox"
+                            AutomationProperties.Name="默认保存目录"
+                            AutomationProperties.AutomationId="TransferSettingsPage.StoragePathTextBox"
+                            Grid.Column="1"
                             IsReadOnly="True"
                             PlaceholderText="未设置时使用 Downloads\Hinge"
-                            HorizontalAlignment="Stretch" />
-                        <Button x:Name="StorageButton" AutomationProperties.AutomationId="TransferSettingsPage.StorageButton" Grid.Column="1" Content="浏览" MinWidth="72" HorizontalAlignment="Right" />
+                            HorizontalAlignment="Stretch"
+                            ToolTipService.ToolTip="可选择并复制保存路径" />
+                        <local:HandCursorButton
+                            x:Name="StorageButton"
+                            AutomationProperties.AutomationId="TransferSettingsPage.StorageButton"
+                            Grid.Column="2"
+                            Content="浏览"
+                            Style="{StaticResource HingeM3OutlinedButtonStyle}"
+                            MinWidth="76" />
                     </Grid>
-                    <TextBlock Text="批量保存文件和照片时使用此目录。更新应用不会清除该设置。" Style="{StaticResource HingePageDescriptionStyle}" />
-                </StackPanel>
-            </Border>
+                </Border>
+            </StackPanel>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="设备连接" Style="{StaticResource HingeSectionTitleStyle}" />
-            <Border Style="{StaticResource HingeCardStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Android 无线调试" Style="{StaticResource HingeSectionTitleStyle}" />
-                        <TextBlock Text="手机开启开发者选项中的无线调试后，首次输入配对地址、配对端口和 6 位码。电脑需安装 Android SDK Platform-Tools；保存的 ADB 主机密钥会继续使用，配对码不会保存。连接端口可能在手机重启后变化。" Style="{StaticResource HingePageDescriptionStyle}" />
-                        <ToggleSwitch x:Name="WirelessAdbClipboardSyncToggle" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbClipboardSyncToggle" Header="无线 ADB 剪贴板同步" OffContent="关闭" OnContent="开启" />
-                        <TextBlock Text="开启后，Hinge 运行时会在无线 ADB 可用后双向同步纯文本，并在断线后自动重连。内容通过已授权电脑的 ADB shell 通道传输；该授权不限于剪贴板。Hinge 不会把剪贴板内容写入日志或文件。" Style="{StaticResource HingePageDescriptionStyle}" />
-                        <TextBox x:Name="WirelessAdbHostTextBox" AutomationProperties.Name="手机 IP 地址" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbHostTextBox" PlaceholderText="手机 IP 地址，例如 192.168.1.20" HorizontalAlignment="Stretch" />
-                        <Grid ColumnSpacing="8">
+            <StackPanel Spacing="10">
+                <TextBlock Text="设备连接" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="4,0,0,0" />
+                <Border Style="{StaticResource HingeCardStyle}" Padding="0">
+                    <StackPanel>
+                        <Grid Padding="20,14" ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="WirelessAdbPairingPortTextBox" AutomationProperties.Name="无线 ADB 配对端口" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPairingPortTextBox" Grid.Column="0" PlaceholderText="配对端口" />
-                            <TextBox x:Name="WirelessAdbConnectPortTextBox" AutomationProperties.Name="无线 ADB 连接端口" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbConnectPortTextBox" Grid.Column="1" PlaceholderText="连接端口" />
-                        </Grid>
-                        <PasswordBox x:Name="WirelessAdbPairingCodeTextBox" AutomationProperties.Name="无线 ADB 配对码" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPairingCodeTextBox" MaxLength="6" PlaceholderText="首次配对时输入 6 位码" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="WirelessAdbPairButton" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPairButton" Content="配对并连接" />
-                            <Button x:Name="WirelessAdbConnectButton" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbConnectButton" Content="连接" />
-                            <Button x:Name="WirelessAdbPullLogsButton" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPullLogsButton" Content="提取 Hinge 日志" />
-                        </StackPanel>
-                        <TextBlock x:Name="WirelessAdbStatusText" AutomationProperties.Name="无线 ADB 状态" AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbStatusText" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    </StackPanel>
-            </Border>
-                <Border Style="{StaticResource HingeCardStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="连接安全" Style="{StaticResource HingeSectionTitleStyle}" />
-                        <TextBlock Text="设置后，其他设备连接到本机时需要输入这个 6 位数字；留空表示不启用。" Style="{StaticResource HingePageDescriptionStyle}" />
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="180" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="PairingCodeTextBox" AutomationProperties.Name="设备配对码" AutomationProperties.AutomationId="TransferSettingsPage.PairingCodeTextBox" Grid.Column="0" MaxLength="6" PlaceholderText="输入 6 位数字" HorizontalAlignment="Stretch" />
-                            <Button x:Name="SavePairingCodeButton" AutomationProperties.AutomationId="TransferSettingsPage.SavePairingCodeButton" Grid.Column="1" Content="保存" MinWidth="72" />
-                            <Button x:Name="ClearPairingCodeButton" AutomationProperties.AutomationId="TransferSettingsPage.ClearPairingCodeButton" Grid.Column="2" Content="清除" MinWidth="72" />
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="连接安全" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                                <TextBlock Text="本机配对码；留空表示不启用。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            </StackPanel>
+                            <TextBox
+                                x:Name="PairingCodeTextBox"
+                                AutomationProperties.Name="设备配对码"
+                                AutomationProperties.AutomationId="TransferSettingsPage.PairingCodeTextBox"
+                                Grid.Column="1"
+                                MaxLength="6"
+                                PlaceholderText="6 位数字"
+                                Width="180"
+                                HorizontalAlignment="Left" />
+                            <local:HandCursorButton
+                                x:Name="SavePairingCodeButton"
+                                AutomationProperties.AutomationId="TransferSettingsPage.SavePairingCodeButton"
+                                Grid.Column="2"
+                                Content="保存"
+                                Style="{StaticResource HingeM3FilledButtonStyle}"
+                                MinWidth="72" />
+                            <local:HandCursorButton
+                                x:Name="ClearPairingCodeButton"
+                                AutomationProperties.AutomationId="TransferSettingsPage.ClearPairingCodeButton"
+                                Grid.Column="3"
+                                Content="清除"
+                                MinWidth="72" />
                         </Grid>
-                        <TextBlock x:Name="PairingCodeStatusText" Text="未启用本机配对码" Style="{StaticResource HingePageDescriptionStyle}" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource HingeCardStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="历史设备" Style="{StaticResource HingeSectionTitleStyle}" />
-                        <TextBlock Text="清理旧版本或重装产生的同名旧记录。需确认属于同一台手机；保留最近记录、当前连接和未完成传输目标，清理前自动备份。" Style="{StaticResource HingePageDescriptionStyle}" />
-                        <Button x:Name="CleanDeviceHistoryButton" AutomationProperties.AutomationId="TransferSettingsPage.CleanDeviceHistoryButton" Content="清理重复历史设备" HorizontalAlignment="Left" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource HingeCardStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Android 自动唤醒" Style="{StaticResource HingeSectionTitleStyle}" />
-                        <TextBlock Text="右键发送文件时，先用短暂 BLE 广播唤醒已绑定的 Android Hinge，再沿用局域网连接传输。广播不承载文件或配对码。" Style="{StaticResource HingePageDescriptionStyle}" />
-                        <Button x:Name="StartBlePairingButton" AutomationProperties.AutomationId="TransferSettingsPage.StartBlePairingButton" Content="开启 60 秒 BLE 配对广播" HorizontalAlignment="Left" />
+                        <Border Height="1" Margin="20,0" Background="{ThemeResource HingeM3OutlineVariantBrush}" />
+                        <Grid Padding="20,14" ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Android 自动唤醒" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                                <TextBlock Text="右键发送时启动一次 60 秒 BLE 广播；广播不承载文件或配对码。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            </StackPanel>
+                            <local:HandCursorButton
+                                x:Name="StartBlePairingButton"
+                                AutomationProperties.AutomationId="TransferSettingsPage.StartBlePairingButton"
+                                Grid.Column="1"
+                                Content="开启 60 秒广播"
+                                Style="{StaticResource HingeM3TonalButtonStyle}"
+                                HorizontalAlignment="Right" />
+                        </Grid>
+                        <Border Height="1" Margin="20,0" Background="{ThemeResource HingeM3OutlineVariantBrush}" />
+                        <Grid Padding="20,14" ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="历史设备" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                                <TextBlock Text="清理同一台手机的重复记录；当前连接和未完成传输会保留，并在清理前自动备份。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            </StackPanel>
+                            <local:HandCursorButton
+                                x:Name="CleanDeviceHistoryButton"
+                                AutomationProperties.AutomationId="TransferSettingsPage.CleanDeviceHistoryButton"
+                                Grid.Column="1"
+                                Content="清理重复记录"
+                                Style="{StaticResource HingeM3OutlinedButtonStyle}"
+                                HorizontalAlignment="Right" />
+                        </Grid>
+                        <Border Height="1" Margin="20,0" Background="{ThemeResource HingeM3OutlineVariantBrush}" />
+                        <TextBlock
+                            x:Name="PairingCodeStatusText"
+                            Text="未启用本机配对码"
+                            Style="{StaticResource HingeM3BodyVariantStyle}"
+                            Margin="20,10,20,14" />
                     </StackPanel>
                 </Border>
             </StackPanel>
 
-            <TextBlock x:Name="TransferSettingsStatusText" Text="传输与连接设置会立即保存。" Style="{StaticResource HingePageDescriptionStyle}" />
+            <StackPanel Spacing="10">
+                <TextBlock Text="高级诊断" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="4,0,0,0" />
+                <Border Style="{StaticResource HingeCardStyle}" Padding="0">
+                    <Grid Padding="20,16,20,18" RowSpacing="12" HorizontalAlignment="Stretch">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="1" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Spacing="3" HorizontalAlignment="Stretch">
+                            <TextBlock Text="Android 无线 ADB" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                            <TextBlock Text="配对、连接与日志提取；配对码不会保存。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            <TextBlock
+                                x:Name="WirelessAdbStatusText"
+                                AutomationProperties.Name="无线 ADB 状态"
+                                AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbStatusText"
+                                Style="{StaticResource HingeM3CaptionStyle}"
+                                MaxLines="1"
+                                TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <Border Grid.Row="1" Background="{ThemeResource HingeM3OutlineVariantBrush}" Opacity="0.65" />
+                        <StackPanel Grid.Row="2" Spacing="12" HorizontalAlignment="Stretch">
+                                <TextBlock Text="手机需开启无线调试，电脑需安装 Android SDK Platform-Tools。ADB 主机密钥会复用；连接端口可能在手机重启后变化。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                <ToggleSwitch
+                                    x:Name="WirelessAdbClipboardSyncToggle"
+                                    AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbClipboardSyncToggle"
+                                    Header="无线 ADB 剪贴板同步"
+                                    OffContent="关闭"
+                                    OnContent="开启" />
+                                <TextBlock Text="ADB 自动连接独立运行；剪贴板桥异常退出时只重启剪贴板桥。内容仅经已授权电脑的 ADB shell 通道传输，不写入日志或文件。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                <TextBlock Text="首次配对" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="180" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <PasswordBox
+                                        x:Name="WirelessAdbPairingCodeTextBox"
+                                        AutomationProperties.Name="无线 ADB 配对码"
+                                        AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPairingCodeTextBox"
+                                        MaxLength="6"
+                                        Width="180"
+                                        PlaceholderText="6 位配对码"
+                                        HorizontalAlignment="Left" />
+                                    <local:HandCursorButton
+                                        x:Name="WirelessAdbPairButton"
+                                        AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPairButton"
+                                        Grid.Column="1"
+                                        Content="配对此手机"
+                                        Style="{StaticResource HingeM3FilledButtonStyle}" />
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                        <local:HandCursorButton
+                                            x:Name="WirelessAdbConnectButton"
+                                            AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbConnectButton"
+                                            Content="立即连接"
+                                            Style="{StaticResource HingeM3TonalButtonStyle}" />
+                                        <local:HandCursorButton
+                                            x:Name="WirelessAdbPullLogsButton"
+                                            AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPullLogsButton"
+                                            Content="提取 Hinge 日志" />
+                                    </StackPanel>
+                                </Grid>
+                                <Expander Header="高级设置（目标 IP 和端口）" IsExpanded="False">
+                                    <StackPanel Spacing="10" Padding="0,8,0,0">
+                                        <TextBlock Text="通常只需输入配对码。多台手机或网络不支持 mDNS 时，可填写手机 IP 与系统显示的端口。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                                        <TextBox
+                                            x:Name="WirelessAdbHostTextBox"
+                                            AutomationProperties.Name="手机 IP 地址"
+                                            AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbHostTextBox"
+                                            PlaceholderText="手机 IP 地址，例如 192.168.1.20"
+                                            HorizontalAlignment="Stretch" />
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox
+                                                x:Name="WirelessAdbPairingPortTextBox"
+                                                AutomationProperties.Name="无线 ADB 配对端口"
+                                                AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPairingPortTextBox"
+                                                Grid.Column="0"
+                                                PlaceholderText="配对端口" />
+                                            <TextBox
+                                                x:Name="WirelessAdbConnectPortTextBox"
+                                                AutomationProperties.Name="无线 ADB 连接端口"
+                                                AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbConnectPortTextBox"
+                                                Grid.Column="1"
+                                                PlaceholderText="连接端口" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Expander>
+                                <TextBlock
+                                    x:Name="WirelessAdbClipboardStatusText"
+                                    AutomationProperties.Name="无线 ADB 剪贴板同步状态"
+                                    AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbClipboardStatusText"
+                                    Style="{StaticResource HingeM3CaptionStyle}"
+                                    Text="剪贴板同步已关闭。"
+                                    TextWrapping="Wrap" />
+                                <InfoBar
+                                    x:Name="WirelessAdbStatusInfoBar"
+                                    AutomationProperties.Name="无线 ADB 详细状态"
+                                    IsOpen="False"
+                                    IsClosable="False"
+                                    IsIconVisible="False"
+                                    Message="{Binding Text, ElementName=WirelessAdbStatusDetailsText}"
+                                    Margin="0,2,0,0" />
+                                <TextBlock x:Name="WirelessAdbStatusDetailsText" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </StackPanel>
+
+            <TextBlock
+                x:Name="TransferSettingsStatusText"
+                Text="传输与连接设置会立即保存。"
+                Style="{StaticResource HingePageDescriptionStyle}" />
         </StackPanel>
+        </Grid>
     </ScrollViewer>
 </Page>

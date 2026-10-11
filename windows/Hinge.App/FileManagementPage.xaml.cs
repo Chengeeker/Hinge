@@ -1,5 +1,6 @@
 using Hinge.Core;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -23,6 +24,7 @@ public sealed partial class FileManagementPage : Page
     public bool IsPhoneSelected => (SourceTabs.SelectedItem as TabViewItem)?.Tag is not string id || id == "phone" || id.StartsWith("phone:", StringComparison.Ordinal);
     public string? SelectedPhoneDeviceId => (SourceTabs.SelectedItem as TabViewItem)?.Tag is string id && id.StartsWith("phone:", StringComparison.Ordinal) ? id[6..] : null;
     public event EventHandler? PhoneSelected;
+    public event EventHandler? ConnectPhoneRequested;
     public event EventHandler? SourceSelected;
     private WebDavBrowserView? SelectedWebDav => WebDavHost.Content as WebDavBrowserView;
 
@@ -73,7 +75,7 @@ public sealed partial class FileManagementPage : Page
             }
             _rebuildingTabs = true;
             var tabs = _phones.Select(phone => new TabViewItem
-            { Header = CreateCenteredTabHeader(phone.DisplayName), Tag = "phone:" + phone.DeviceId, IsClosable = false }).ToList();
+            { Header = CreatePhoneTabHeader(phone.DisplayName), Tag = "phone:" + phone.DeviceId, IsClosable = false }).ToList();
             if (tabs.Count == 0) tabs.Add(new() { Header = CreateCenteredTabHeader("手机（未连接）"), Tag = "phone", IsClosable = false });
             tabs.AddRange(state.Profiles.Select(profile => new TabViewItem
             { Header = CreateCenteredTabHeader(profile.DisplayName), Tag = profile.Id, IsClosable = false }));
@@ -94,6 +96,29 @@ public sealed partial class FileManagementPage : Page
                 SelectSource();
         }
         catch (Exception exception) { _rebuildingTabs = false; StatusText.Text = "WebDAV 配置读取失败：" + exception.Message; }
+    }
+
+    private static FrameworkElement CreatePhoneTabHeader(string title)
+    {
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Width = 160,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        header.Children.Add(MainWindow.BuildOfficialBrandLogo(string.Empty, title, 34, 24));
+        header.Children.Add(new TextBlock
+        {
+            Text = title,
+            Width = 118,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        AutomationProperties.SetName(header, title);
+        ToolTipService.SetToolTip(header, title);
+        return header;
     }
 
     private static TextBlock CreateCenteredTabHeader(string title)
@@ -182,11 +207,11 @@ public sealed partial class FileManagementPage : Page
     public ComboBox ViewMode => FileViewModeOptions;
     public TextBlock PathText => FilePathText;
     public TextBlock StatusText => FileManagementStatusText;
-    public Button ImportFile => ImportFileButton;
-    public Button ReconnectPhone => ReconnectPhoneButton;
-    public Button RefreshFiles => RefreshFilesButton;
+    public AppBarButton ImportFile => ImportFileButton;
+    public AppBarButton ReconnectPhone => ReconnectPhoneButton;
+    public AppBarButton RefreshFiles => RefreshFilesButton;
     public Button NavigateBack => NavigateBackButton;
-    public Button SelectFiles => SelectFilesButton;
+    public AppBarButton SelectFiles => SelectFilesButton;
     public Button SaveSelectedFiles => SaveSelectedFilesButton;
     public Button DeleteSelectedFiles => DeleteSelectedFilesButton;
     public Button CancelSelection => CancelSelectionButton;
@@ -196,6 +221,21 @@ public sealed partial class FileManagementPage : Page
 
     public bool IsGridMode => ViewMode.SelectedIndex == 0;
     public bool IsSelectionMode => Files.SelectionMode != ListViewSelectionMode.None;
+
+    public void ShowPhoneDisconnectedState()
+    {
+        PhoneDisconnectedState.Visibility = Visibility.Visible;
+        ApplyViewMode();
+    }
+
+    public void HidePhoneDisconnectedState()
+    {
+        PhoneDisconnectedState.Visibility = Visibility.Collapsed;
+        ApplyViewMode();
+    }
+
+    private void ConnectPhoneActionButton_Click(object sender, RoutedEventArgs e) =>
+        ConnectPhoneRequested?.Invoke(this, EventArgs.Empty);
 
     public void HandleExternalDragOver(DragEventArgs e) =>
         DropRootGrid_DragOver(this, e);
@@ -312,8 +352,9 @@ public sealed partial class FileManagementPage : Page
 
     public void ApplyViewMode()
     {
-        FileGridView.Visibility = IsGridMode ? Visibility.Visible : Visibility.Collapsed;
-        FileListView.Visibility = IsGridMode ? Visibility.Collapsed : Visibility.Visible;
+        var disconnected = PhoneDisconnectedState.Visibility == Visibility.Visible;
+        FileGridView.Visibility = IsGridMode && !disconnected ? Visibility.Visible : Visibility.Collapsed;
+        FileListView.Visibility = !IsGridMode && !disconnected ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public FileManagementPage()

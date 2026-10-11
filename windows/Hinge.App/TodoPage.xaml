@@ -14,8 +14,8 @@
                     <TextBlock Text="在电脑上管理手机工作区中的待办事项，完成状态会立即保存到手机。" Style="{StaticResource HingePageDescriptionStyle}" />
                 </StackPanel>
                 <local:HingeWrapPanel Spacing="8" LineSpacing="8" JustifyLastLine="False" VerticalAlignment="Center">
-                    <Button x:Name="RefreshButton" AutomationProperties.AutomationId="TodoPage.RefreshButton" Content="刷新" Click="RefreshButton_Click" />
-                    <Button x:Name="NewTaskButton" AutomationProperties.AutomationId="TodoPage.NewTaskButton" Content="新建待办" Click="NewTaskButton_Click" />
+                    <local:HandCursorButton x:Name="RefreshButton" AutomationProperties.AutomationId="TodoPage.RefreshButton" Content="刷新" Click="RefreshButton_Click" />
+                    <local:HandCursorButton x:Name="NewTaskButton" AutomationProperties.AutomationId="TodoPage.NewTaskButton" Content="新建待办" Click="NewTaskButton_Click" />
                 </local:HingeWrapPanel>
             </local:HingeWrapPanel>
 

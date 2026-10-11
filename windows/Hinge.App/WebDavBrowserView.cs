@@ -26,18 +26,18 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     private Uri? _directory;
     private readonly TextBlock _path = new() { TextWrapping = TextWrapping.Wrap, FontSize = 18 };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly ListView _files = new() { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true };
-    private readonly GridView _gridFiles = new() { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true, Visibility = Visibility.Collapsed };
+    private readonly HandCursorListView _files = new() { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true };
+    private readonly HandCursorGridView _gridFiles = new() { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true, Visibility = Visibility.Collapsed };
     private readonly ComboBox _viewMode = new() { MinWidth = 120, Height = 36 };
     private readonly ComboBox _sort = new() { MinWidth = 148, Height = 36 };
-    private readonly Button _select = new() { Content = "选择", Height = 36 };
+    private readonly HandCursorButton _select = new() { Content = "选择", Height = 36 };
     private readonly Grid _fileHeader = new() { ColumnSpacing = 12, Padding = new Thickness(12, 8, 12, 8) };
     private bool _selectionMode;
     private bool _updatingView;
     private ListViewBase CurrentFiles => _gridFiles.Visibility == Visibility.Visible ? _gridFiles : _files;
     private readonly ProgressBar _progress = new() { Minimum = 0, Maximum = 100, Visibility = Visibility.Collapsed };
     private readonly HingeWrapPanel _actions = new() { Spacing = 8, LineSpacing = 8 };
-    private readonly Button _cancel = new() { Content = "取消传输", Visibility = Visibility.Collapsed };
+    private readonly HandCursorButton _cancel = new() { Content = "取消传输", Visibility = Visibility.Collapsed };
     private IReadOnlyList<WebDavEntry> _entries = [];
     private bool _busy;
     private bool _actionPending;
@@ -57,8 +57,8 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     {
         _profile = profile;
         // Construct theme resources directly; do not parse resource alias XAML at runtime.
-        Resources.ThemeDictionaries["Light"] = CreateSelectionTheme(false);
-        Resources.ThemeDictionaries["Dark"] = CreateSelectionTheme(true);
+        RefreshSelectionThemeResources();
+        ThemeBrushes.PaletteChanged += RefreshSelectionThemeResources;
         var root = new Grid { Margin = new Thickness(24, 12, 24, 24), RowSpacing = 12 };
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -84,7 +84,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
             _files.SelectionMode = _gridFiles.SelectionMode = _selectionMode ? ListViewSelectionMode.Multiple : ListViewSelectionMode.None;
             UpdateSelectionStatus();
         };
-        var all = new Button { Content = "全选", Height = 36 };
+        var all = new HandCursorButton { Content = "全选", Height = 36 };
         all.Click += (_, _) => { if (!_selectionMode) { _selectionMode = true; _select.Content = "取消选择"; _files.SelectionMode = _gridFiles.SelectionMode = ListViewSelectionMode.Multiple; } CurrentFiles.SelectAll(); };
         _actions.Children.Add(all);
         foreach (var label in new[] { "列表", "宫格" }) _viewMode.Items.Add(new ComboBoxItem { Content = label });
@@ -145,7 +145,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
         _gridFiles.ItemTemplate = (DataTemplate)XamlReader.Load("""
             <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
                 <StackPanel Width="180" Padding="12" Spacing="8">
-                    <Grid Height="112" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <Grid Height="112" Background="{ThemeResource HingeM3SurfaceContainerBrush}">
                         <FontIcon Glyph="{Binding IconGlyph}" FontSize="40" />
                         <Image x:Name="MediaThumbnail" Stretch="UniformToFill" />
                     </Grid>
@@ -173,13 +173,21 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     private static ResourceDictionary CreateSelectionTheme(bool dark)
     {
         var resources = new ResourceDictionary();
-        var border = new SolidColorBrush(dark ? Windows.UI.Color.FromArgb(255, 183, 201, 224) : Windows.UI.Color.FromArgb(255, 77, 95, 117));
-        var fill = new SolidColorBrush(dark ? Windows.UI.Color.FromArgb(255, 140, 189, 255) : Windows.UI.Color.FromArgb(255, 18, 90, 181));
-        var check = new SolidColorBrush(dark ? Windows.UI.Color.FromArgb(255, 16, 32, 51) : Windows.UI.Color.FromArgb(255, 255, 255, 255));
+        var theme = dark ? ElementTheme.Dark : ElementTheme.Light;
+        var border = new SolidColorBrush(ThemeBrushes.Color(theme, "HingeM3OutlineBrush"));
+        var fill = new SolidColorBrush(ThemeBrushes.Color(theme, "HingeM3PrimaryBrush"));
+        var check = new SolidColorBrush(ThemeBrushes.Color(theme, "HingeM3OnPrimaryBrush"));
         foreach (var key in new[] { "ListViewItemCheckBoxBorderBrush", "ListViewItemCheckBoxPointerOverBorderBrush", "ListViewItemCheckBoxPressedBorderBrush" }) resources[key] = border;
         foreach (var key in new[] { "ListViewItemCheckBoxSelectedBrush", "ListViewItemCheckBoxSelectedPointerOverBrush", "ListViewItemCheckBoxSelectedPressedBrush" }) resources[key] = fill;
         foreach (var key in new[] { "ListViewItemCheckBrush", "ListViewItemCheckPressedBrush" }) resources[key] = check;
         return resources;
+    }
+
+    private void RefreshSelectionThemeResources()
+    {
+        Resources.ThemeDictionaries["Light"] = CreateSelectionTheme(false);
+        Resources.ThemeDictionaries["Dark"] = CreateSelectionTheme(true);
+        Resources.ThemeDictionaries["HighContrast"] = CreateSelectionTheme(false);
     }
 
     private void ThumbnailContainerChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
@@ -395,7 +403,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
 
     private void AddButton(string label, Func<Task> action, bool requiresClient = true)
     {
-        var button = new Button { Content = label };
+        var button = new HandCursorButton { Content = label };
         button.Click += async (_, _) =>
         {
             if (_busy || _actionPending || (requiresClient && (_client == null || _directory == null))) return;
@@ -715,6 +723,7 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     }
     public void Dispose()
     {
+        ThemeBrushes.PaletteChanged -= RefreshSelectionThemeResources;
         _lifetime.Cancel(); _listing?.Cancel(); _transfer?.Cancel();
         _outgoingDragCancellation?.Cancel(); _outgoingDragCancellation?.Dispose();
         _client?.Dispose();

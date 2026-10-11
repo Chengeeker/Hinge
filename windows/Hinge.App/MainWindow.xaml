@@ -1,4 +1,4 @@
-<Window
+<Window xmlns:local="using:Hinge.App"
     x:Class="Hinge.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -9,43 +9,22 @@
 
     <Grid
         x:Name="PageRoot"
-        Background="Transparent"
+        SizeChanged="PageRoot_SizeChanged"
+        ActualThemeChanged="PageRoot_ActualThemeChanged"
+        Background="{ThemeResource HingeM3SurfaceBrush}"
         AllowDrop="True"
         DragEnter="PageRoot_DragOver"
         DragOver="PageRoot_DragOver"
         DragLeave="PageRoot_DragLeave"
         Drop="PageRoot_Drop">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
         <Image
             x:Name="WindowBackgroundImage"
-            Grid.RowSpan="2"
             Stretch="UniformToFill"
             Opacity="0.10"
             IsHitTestVisible="False"
             Visibility="Collapsed" />
 
-        <TitleBar
-            x:Name="AppTitleBar"
-            Grid.Row="0"
-            AllowDrop="True"
-            DragEnter="PageRoot_DragOver"
-            DragOver="PageRoot_DragOver"
-            DragLeave="PageRoot_DragLeave"
-            Drop="PageRoot_Drop"
-            Title="Hinge"
-            IsBackButtonVisible="False"
-            IsPaneToggleButtonVisible="False">
-            <TitleBar.IconSource>
-                <ImageIconSource ImageSource="ms-appx:///Assets/app_icon.png" />
-            </TitleBar.IconSource>
-        </TitleBar>
-
         <Grid
-            Grid.Row="1"
             Background="Transparent"
             AllowDrop="True"
             DragEnter="PageRoot_DragOver"
@@ -57,7 +36,7 @@
                 AllowDrop="True"
                 PaneDisplayMode="Auto"
                 OpenPaneLength="200"
-                CompactPaneLength="48"
+                CompactPaneLength="72"
                 HorizontalContentAlignment="Stretch"
                 IsBackButtonVisible="Collapsed"
                 IsSettingsVisible="False"
@@ -66,49 +45,51 @@
                 Loaded="AppNavigation_Loaded"
                 PaneOpened="AppNavigation_PaneStateChanged"
                 PaneClosed="AppNavigation_PaneStateChanged"
-                SelectionChanged="AppNavigation_SelectionChanged"
-                ItemInvoked="AppNavigation_ItemInvoked">
+                DisplayModeChanged="AppNavigation_DisplayModeChanged"
+                SelectionChanged="AppNavigation_SelectionChanged">
             <NavigationView.Resources>
+                <Thickness x:Key="NavigationViewContentGridBorderThickness">0</Thickness>
+                <CornerRadius x:Key="NavigationViewContentGridCornerRadius">0</CornerRadius>
                 <Thickness x:Key="NavigationViewContentMargin">0</Thickness>
                 <Thickness x:Key="NavigationViewMinimalContentMargin">0</Thickness>
-                <Thickness x:Key="NavigationViewContentPresenterMargin">0,16,0,0</Thickness>
+                <Thickness x:Key="NavigationViewContentPresenterMargin">0</Thickness>
             </NavigationView.Resources>
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="首页" AutomationProperties.AutomationId="Navigation.home" Tag="home">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Home" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="文件管理" AutomationProperties.AutomationId="Navigation.files" Tag="files">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="首页" AutomationProperties.AutomationId="Navigation.home" Tag="home">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Home" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="文件管理" AutomationProperties.AutomationId="Navigation.files" Tag="files">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
                 <NavigationViewItemSeparator />
-                <NavigationViewItem Content="笔记" AutomationProperties.AutomationId="Navigation.notes" Tag="notes">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Edit" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="待办" AutomationProperties.AutomationId="Navigation.todo" Tag="todo">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Accept" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="日历" AutomationProperties.AutomationId="Navigation.calendar" Tag="calendar">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Calendar" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="相册" AutomationProperties.AutomationId="Navigation.photos" Tag="photos">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Pictures" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="通知" AutomationProperties.AutomationId="Navigation.notificationHistory" Tag="notificationHistory">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="笔记" AutomationProperties.AutomationId="Navigation.notes" Tag="notes">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Edit" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="待办" AutomationProperties.AutomationId="Navigation.todo" Tag="todo">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Accept" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="日历" AutomationProperties.AutomationId="Navigation.calendar" Tag="calendar">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Calendar" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="相册" AutomationProperties.AutomationId="Navigation.photos" Tag="photos">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Pictures" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="通知" AutomationProperties.AutomationId="Navigation.notificationHistory" Tag="notificationHistory">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Message" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem Content="设置" AutomationProperties.AutomationId="Navigation.settings" Tag="settings">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Setting" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="关于应用" AutomationProperties.AutomationId="Navigation.about" Tag="about">
-                    <NavigationViewItem.Icon><SymbolIcon Symbol="Help" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="设置" AutomationProperties.AutomationId="Navigation.settings" Tag="settings">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Setting" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
+                <local:HandCursorNavigationViewItem Content="关于应用" AutomationProperties.AutomationId="Navigation.about" Tag="about">
+                    <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Help" /></local:HandCursorNavigationViewItem.Icon>
+                </local:HandCursorNavigationViewItem>
             </NavigationView.FooterMenuItems>
 
             <NavigationView.Content>
-                <Grid
+                <Grid x:Name="WorkspaceContent"
                     Background="Transparent"
                     AllowDrop="True"
                     DragEnter="PageRoot_DragOver"
@@ -153,7 +134,7 @@
                 Height="0"
                 Visibility="Collapsed"
                 IsHitTestVisible="False">
-                <Button
+                <local:HandCursorButton
                     x:Name="HeaderBackButton" AutomationProperties.AutomationId="MainWindow.HeaderBackButton"
                     Width="0"
                     Height="0"
@@ -175,7 +156,7 @@
                     IsThumbToolTipEnabled="False" UseSystemFocusVisuals="True" IsTabStop="True"
                     Width="12" MinWidth="0"
                     Background="Transparent"
-                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderBrush="{ThemeResource HingeM3OutlineVariantBrush}"
                     BorderThickness="1,0,0,0"
                     ToolTipService.ToolTip="拖动或使用左右方向键调整侧边栏宽度"
                     PointerPressed="PaneResizeHandle_PointerPressed"
@@ -203,7 +184,7 @@
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
                 CornerRadius="12"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                Background="{ThemeResource HingeM3SurfaceContainerBrush}"
                 BorderBrush="{ThemeResource SystemFillColorCriticalBrush}"
                 BorderThickness="2"
                 DragEnter="DragCancelZone_DragOver"
@@ -213,7 +194,7 @@
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10">
                     <FontIcon Glyph="&#xE711;" FontSize="30" HorizontalAlignment="Center" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
                     <TextBlock x:Name="DragCancelTitle" Text="取消发送" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock x:Name="DragCancelDescription" Text="松开鼠标取消本次发送" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="DragCancelDescription" Text="松开鼠标取消本次发送" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
                 </StackPanel>
             </Border>
         </Grid>

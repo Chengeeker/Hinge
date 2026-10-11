@@ -14,6 +14,7 @@ public sealed partial class WebDavSettingsPage : Page
     public WebDavSettingsPage()
     {
         InitializeComponent();
+        SettingsPageLayout.MatchViewportWidth(WebDavSettingsScrollViewer, WebDavSettingsPageContentRoot);
         Loaded += (_, _) => Reload();
     }
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -42,7 +43,7 @@ public sealed partial class WebDavSettingsPage : Page
             SavedAddresses.Children.Clear();
             foreach (var profile in profiles)
             {
-                var button = new Button
+                var button = new HandCursorButton
                 {
                     Content = CreateAddressCard(profile.DisplayName),
                     Padding = new Thickness(0),

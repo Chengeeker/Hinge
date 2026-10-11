@@ -10,6 +10,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Foundation;
 using Microsoft.UI;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -155,6 +156,9 @@ public sealed partial class MainWindow : Window
     private bool _resizingPane;
     private uint _resizePointerId;
     private AppWindow? _appWindow;
+    private InputNonClientPointerSource? _titleBarInput;
+    private XamlRoot? _windowXamlRoot;
+    private long _paneOpenChangedToken;
     private bool _allowClose;
     private bool _minimizeToTray;
     private bool _showTrayBackgroundNotice;
@@ -164,7 +168,7 @@ public sealed partial class MainWindow : Window
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _cloudRelayPollTimer;
     private bool _cloudRelayPollInFlight;
     private readonly Dictionary<string, string> _remotePairingCodes = new(StringComparer.OrdinalIgnoreCase);
-    private readonly SemaphoreSlim _contentDialogGate = new(1, 1);
+    private static readonly SemaphoreSlim _contentDialogGate = new(1, 1);
     private readonly SemaphoreSlim _remoteMediaReceiveGate = new(1, 1);
     private TaskCompletionSource<string>? _pendingRemoteMedia;
     private string? _pendingRemoteMediaName;
@@ -398,6 +402,7 @@ public sealed partial class MainWindow : Window
         App.LogLifecycle("main-window-constructor-enter");
         InitializeComponent();
         App.LogLifecycle("main-window-initialize-component-complete");
+        ApplyWindowFont(LoadWindowFont());
         PageRoot.AddHandler(
             UIElement.PointerPressedEvent,
             new PointerEventHandler(PageRoot_PointerPressed),
@@ -412,6 +417,9 @@ public sealed partial class MainWindow : Window
         _localPairingCode = LoadPairingCode();
         _cloudRelaySettings = LoadCloudRelaySettings();
         AppNavigation.OpenPaneLength = 200;
+        _paneOpenChangedToken = AppNavigation.RegisterPropertyChangedCallback(
+            NavigationView.IsPaneOpenProperty, (_, _) => UpdatePaneResizeHandle());
+        ThemeBrushes.ApplyPalette(LoadWindowPalette());
         var initialWindowTheme = LoadWindowTheme();
         ApplyWindowTheme(initialWindowTheme);
         ApplyWindowMaterial(LoadWindowMaterial());
@@ -421,7 +429,15 @@ public sealed partial class MainWindow : Window
         App.LogLifecycle("configure-app-window-complete");
         ApplyAppWindowTitleBarTheme(initialWindowTheme);
         ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
+        SetTitleBar(null);
+        if (_appWindow is { } window)
+        {
+            window.TitleBar.PreferredHeightOption = TitleBarHeightOption.Standard;
+            window.TitleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
+            _titleBarInput = InputNonClientPointerSource.GetForWindowId(window.Id);
+            window.Changed += IntegratedTitleBar_WindowChanged;
+        }
+        ThemeBrushes.PaletteChanged += IntegratedTitleBar_PaletteChanged;
         ContentFrame.Navigated += ContentFrame_Navigated;
         ContentFrame.Navigate(typeof(HomePage));
         AppNavigation.SelectedItem = AppNavigation.MenuItems[0];
@@ -613,6 +629,9 @@ public sealed partial class MainWindow : Window
                 ConfigureFeaturePage(feature);
                 break;
         }
+
+        ApplyCurrentFontToVisualTree();
+        DispatcherQueue.TryEnqueue(ApplyCurrentFontToVisualTree);
     }
 
     private void PageRoot_DragOver(object sender, DragEventArgs e)
@@ -828,6 +847,7 @@ public sealed partial class MainWindow : Window
             _filePhoneDeviceId = null;
             page.NearEndReached += FilePage_NearEndReached;
             page.PhoneSelected += (_, _) => SelectFilePhone(page);
+            page.ConnectPhoneRequested += (_, _) => NavigateTo("首页", 0);
             page.SourceSelected += (_, _) =>
             {
                 Interlocked.Increment(ref _fileLoadGeneration);
@@ -1161,7 +1181,8 @@ public sealed partial class MainWindow : Window
         page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
         page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
         page.WirelessAdbClipboardSync.IsOn = LoadWirelessAdbClipboardSync();
-        page.WirelessAdbStatus.Text = _wirelessAdbConnectionStatus;
+        page.SetWirelessAdbStatus(_wirelessAdbConnectionStatus);
+        page.SetWirelessAdbClipboardStatus(_wirelessAdbClipboardStatus);
         page.WirelessAdbClipboardSync.Toggled += WirelessAdbClipboardSync_Toggled;
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
@@ -1189,7 +1210,7 @@ public sealed partial class MainWindow : Window
             if (FindTrustedAndroidDeviceId(pairing.Host) is { } hingeDeviceId)
                 WirelessAdbClient.SaveHingeDeviceId(hingeDeviceId);
             _wirelessAdbConnectionStatus = "已完成无线 ADB 配对，正在等待设备自动连接。配对码已清除。";
-            page.WirelessAdbStatus.Text = _wirelessAdbConnectionStatus;
+            page.SetWirelessAdbStatus(_wirelessAdbConnectionStatus);
             StartWirelessAdbConnectionManager();
             if (page.WirelessAdbClipboardSync.IsOn)
             {
@@ -1363,8 +1384,10 @@ public sealed partial class MainWindow : Window
                     cancellationToken);
                 _wirelessAdbClipboardBridge = bridge;
                 _lastAndroidClipboardText = null;
+                var bridgeStarted = DateTime.UtcNow;
                 SetWirelessAdbClipboardStatus("无线 ADB 剪贴板同步已连接。");
                 await bridge.Completion.WaitAsync(cancellationToken);
+                if (DateTime.UtcNow - bridgeStarted >= TimeSpan.FromMinutes(1)) bridgeFailures = 0;
                 SetWirelessAdbClipboardStatus("无线 ADB 剪贴板桥已断开，正在重连…");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1383,7 +1406,8 @@ public sealed partial class MainWindow : Window
                 Interlocked.Increment(ref _wirelessAdbClipboardGeneration);
             }
 
-            try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); }
+            var delay = TimeSpan.FromSeconds(Math.Min(30, 1 << Math.Min(bridgeFailures++, 5)));
+            try { await Task.Delay(delay, cancellationToken); }
             catch (OperationCanceledException) { break; }
         }
     }
@@ -1438,7 +1462,7 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             _wirelessAdbClipboardStatus = status;
-            if (_transferSettingsPage != null) _transferSettingsPage.WirelessAdbStatus.Text = status;
+            if (_transferSettingsPage != null) _transferSettingsPage.SetWirelessAdbClipboardStatus(status);
         });
     }
 
@@ -1447,7 +1471,7 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             _wirelessAdbConnectionStatus = status;
-            if (_transferSettingsPage != null) _transferSettingsPage.WirelessAdbStatus.Text = status;
+            if (_transferSettingsPage != null) _transferSettingsPage.SetWirelessAdbStatus(status);
         });
     }
 
@@ -1750,168 +1774,25 @@ public sealed partial class MainWindow : Window
         if (!_configuredPages.Add(page)) return;
 
         page.ThemeOptionsControl.SelectedIndex = WindowThemeIndex(LoadWindowTheme());
+        page.PaletteOptionsControl.SelectedValue = LoadWindowPalette();
         page.MaterialOptionsControl.SelectedValue = LoadWindowMaterial();
         page.SetPreview(LoadWindowBackgroundPath());
+        var selectedFont = LoadWindowFont();
+        page.SetFonts(CustomFontLibrary.GetFonts(), selectedFont, CustomFontLibrary.Find(selectedFont)?.FontFamilySource);
         page.ThemeOptionsControl.SelectionChanged += PersonalizationTheme_SelectionChanged;
+        page.PaletteOptionsControl.SelectionChanged += PersonalizationPalette_SelectionChanged;
         page.MaterialOptionsControl.SelectionChanged += PersonalizationMaterial_SelectionChanged;
+        page.FontOptionsControl.SelectionChanged += PersonalizationFontFamily_SelectionChanged;
+        page.FontWeightOptionsControl.SelectionChanged += PersonalizationFont_SelectionChanged;
         page.ImportBackground.Click += ImportBackground_Click;
         page.ClearBackground.Click += ClearBackground_Click;
         page.BackToSettings.Click += HeaderBackButton_Click;
     }
 
-    private async Task ShowAboutDialogAsync()
+    private void ShowAboutPage()
     {
-        var owner = (FrameworkElement)Content;
-        var content = new StackPanel { Spacing = 14 };
-
-        content.Children.Add(new Border
-        {
-            Width = 76,
-            Height = 76,
-            Padding = new Thickness(10),
-            CornerRadius = new CornerRadius(20),
-            Background = ThemeBrushes.MutedSurface(owner),
-            BorderBrush = ThemeBrushes.Border(owner),
-            BorderThickness = new Thickness(1),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Child = new Image
-            {
-                Source = new BitmapImage(new Uri("ms-appx:///Assets/app_icon.png")),
-                Stretch = Stretch.Uniform
-            }
-        });
-
-        var titleRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Spacing = 10
-        };
-        titleRow.Children.Add(new TextBlock
-        {
-            Text = "Hinge",
-            FontSize = 26,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        titleRow.Children.Add(new Border
-        {
-            Padding = new Thickness(10, 5, 10, 5),
-            CornerRadius = new CornerRadius(999),
-            Background = ThemeBrushes.MutedSurface(owner),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = ThemeBrushes.Text(new TextBlock
-            {
-                Text = $"v{Constants.AppVersion}",
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = ThemeBrushes.AccentText(owner),
-                VerticalAlignment = VerticalAlignment.Center
-            })
-        });
-        content.Children.Add(titleRow);
-
-        content.Children.Add(ThemeBrushes.Text(new TextBlock
-        {
-            Text = "局域网优先的跨设备办公套件",
-            FontSize = 16,
-            Foreground = ThemeBrushes.Secondary(owner),
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap
-        }));
-        content.Children.Add(ThemeBrushes.Text(new TextBlock
-        {
-            Text = "Windows：WinUI 3　·　Android：Flutter + Material 3",
-            FontSize = 12,
-            Foreground = ThemeBrushes.Muted(owner),
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap
-        }));
-
-        void AddFeature(Symbol symbol, string description)
-        {
-            var row = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 12
-            };
-            row.Children.Add(new SymbolIcon(symbol)
-            {
-                Width = 22,
-                Height = 22,
-                Foreground = ThemeBrushes.AccentText(owner),
-                VerticalAlignment = VerticalAlignment.Top
-            });
-            row.Children.Add(new TextBlock
-            {
-                Text = description,
-                TextWrapping = TextWrapping.Wrap,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            content.Children.Add(row);
-        }
-
-        AddFeature(Symbol.Phone, "设备发现、连接与文件访问");
-        AddFeature(Symbol.AllApps, "笔记、待办、日历与相册工作区");
-        AddFeature(Symbol.Save, "数据默认保存在设备本地；文件可通过局域网或自建 Cloud Relay 传输");
-
-        var projectInfo = new Grid { ColumnSpacing = 16 };
-        projectInfo.ColumnDefinitions.Add(new ColumnDefinition
-        {
-            Width = new GridLength(1, GridUnitType.Star)
-        });
-        projectInfo.ColumnDefinitions.Add(new ColumnDefinition
-        {
-            Width = GridLength.Auto
-        });
-
-        var projectDetails = new StackPanel
-        {
-            Spacing = 4,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        projectDetails.Children.Add(new TextBlock
-        {
-            Text = "GitHub 开源项目",
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        });
-        projectDetails.Children.Add(ThemeBrushes.Text(new TextBlock
-        {
-            Text = "github.com/Chengeeker/Hinge",
-            FontSize = 12,
-            Foreground = ThemeBrushes.Secondary(owner),
-            TextTrimming = TextTrimming.CharacterEllipsis
-        }));
-        projectInfo.Children.Add(projectDetails);
-
-        var projectHomeLink = new HyperlinkButton
-        {
-            Content = "访问项目主页",
-            NavigateUri = new Uri("https://github.com/Chengeeker/Hinge"),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            Padding = new Thickness(12, 8, 12, 8)
-        };
-        Grid.SetColumn(projectHomeLink, 1);
-        projectInfo.Children.Add(projectHomeLink);
-
-        content.Children.Add(new Border
-        {
-            Padding = new Thickness(14),
-            CornerRadius = new CornerRadius(14),
-            Background = ThemeBrushes.MutedSurface(owner),
-            BorderBrush = ThemeBrushes.Border(owner),
-            BorderThickness = new Thickness(1),
-            Child = projectInfo
-        });
-
-        var dialog = new ContentDialog
-        {
-            Title = null,
-            Content = content,
-            CloseButtonText = "我知道了",
-            XamlRoot = owner.XamlRoot
-        };
-        await ShowContentDialogAsync(dialog);
+        ContentFrame.Navigate(typeof(AboutPage));
+        PageTitle.Text = "关于应用";
     }
 
     private void HeaderBackButton_Click(object sender, RoutedEventArgs e)
@@ -2798,9 +2679,69 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void AppNavigation_Loaded(object sender, RoutedEventArgs e) => UpdatePaneResizeHandle();
+    private void AppNavigation_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_windowXamlRoot == null && PageRoot.XamlRoot is { } root)
+        {
+            _windowXamlRoot = root;
+            root.Changed += IntegratedTitleBar_RootChanged;
+        }
+        UpdatePaneResizeHandle();
+    }
+
+    private void PageRoot_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateIntegratedTitleBar();
+
+    private void PageRoot_ActualThemeChanged(FrameworkElement sender, object args) =>
+        ApplyAppWindowTitleBarTheme(LoadWindowTheme());
+
+    private void IntegratedTitleBar_PaletteChanged() => ApplyAppWindowTitleBarTheme(LoadWindowTheme());
+
+    private void IntegratedTitleBar_RootChanged(XamlRoot sender, XamlRootChangedEventArgs args) =>
+        UpdateIntegratedTitleBar();
+
+    private void IntegratedTitleBar_WindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (args.DidSizeChange || args.DidPresenterChange) UpdateIntegratedTitleBar();
+    }
+
+    private void UpdateIntegratedTitleBar()
+    {
+        if (_appWindow?.TitleBar is not { } titleBar || _titleBarInput == null ||
+            PageRoot.XamlRoot is not { } root || PageRoot.ActualWidth <= 0) return;
+
+        var scale = root.RasterizationScale;
+        var height = Math.Max(titleBar.Height / scale, 32);
+        var leftInset = titleBar.LeftInset / scale;
+        var rightInset = titleBar.RightInset / scale;
+        AppNavigation.Margin = new Thickness(leftInset, 0, 0, 0);
+        WorkspaceContent.Margin = new Thickness(0, height, 0, 0);
+        Canvas.SetLeft(PaneResizeHandle, leftInset + Math.Max(0, AppNavigation.OpenPaneLength - 4));
+
+        // Only empty top space is caption input; the menu and resize handle stay client input.
+        var paneEdge = leftInset + (AppNavigation.IsPaneOpen
+            ? AppNavigation.OpenPaneLength : AppNavigation.CompactPaneLength);
+        var rightEdge = Math.Max(leftInset, PageRoot.ActualWidth - rightInset);
+        var menuEdge = leftInset + AppNavigation.CompactPaneLength;
+        var regions = new List<RectInt32>(2);
+        AddRegion(menuEdge, Math.Min(paneEdge - 8, rightEdge));
+        AddRegion(Math.Max(menuEdge, paneEdge + 8), rightEdge);
+        System.Diagnostics.Debug.Assert(regions.All(region => region.Width > 0 && region.Height > 0 &&
+            region.X >= menuEdge * scale && region.X + region.Width <= rightEdge * scale));
+        _titleBarInput.SetRegionRects(NonClientRegionKind.Caption, regions.ToArray());
+
+        void AddRegion(double left, double right)
+        {
+            if (right <= left) return;
+            var x = (int)Math.Ceiling(left * scale);
+            var width = (int)Math.Floor(right * scale) - x;
+            if (width > 0) regions.Add(new RectInt32(x, 0, width, (int)Math.Ceiling(height * scale)));
+        }
+    }
 
     private void AppNavigation_PaneStateChanged(NavigationView sender, object args) => UpdatePaneResizeHandle();
+
+    private void AppNavigation_DisplayModeChanged(NavigationView sender, NavigationViewDisplayModeChangedEventArgs args) =>
+        UpdatePaneResizeHandle();
 
     private void PaneResizeCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => UpdatePaneResizeHandle();
 
@@ -2808,11 +2749,15 @@ public sealed partial class MainWindow : Window
     {
         PaneResizeHandle.Value = AppNavigation.OpenPaneLength;
         PaneResizeHandle.Height = PaneResizeCanvas.ActualHeight;
-        PaneResizeHandle.Visibility = AppNavigation.IsPaneOpen
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        var canResize = AppNavigation.IsPaneOpen && AppNavigation.DisplayMode == NavigationViewDisplayMode.Expanded;
+        // A drawer transition must retire its resize target before PaneClosed fires.
+        PaneResizeCanvas.Visibility = canResize ? Visibility.Visible : Visibility.Collapsed;
+        PaneResizeCanvas.IsHitTestVisible = canResize;
+        PaneResizeHandle.IsHitTestVisible = canResize;
+        PaneResizeHandle.Visibility = canResize ? Visibility.Visible : Visibility.Collapsed;
         Canvas.SetLeft(PaneResizeHandle, Math.Max(0, AppNavigation.OpenPaneLength - 4));
         Canvas.SetTop(PaneResizeHandle, 0);
+        UpdateIntegratedTitleBar();
     }
 
     private void PaneResizeHandle_PointerPressed(object sender, PointerRoutedEventArgs e)
@@ -2831,7 +2776,7 @@ public sealed partial class MainWindow : Window
         var point = e.GetCurrentPoint(PaneResizeCanvas);
         if (!_resizingPane || point.PointerId != _resizePointerId) return;
 
-        SetPaneWidth(point.Position.X);
+        SetPaneWidth(point.Position.X - AppNavigation.Margin.Left);
         UpdatePaneResizeHandle();
         e.Handled = true;
     }
@@ -3582,6 +3527,23 @@ public sealed partial class MainWindow : Window
         WriteUserSetting("WindowTheme", theme);
     }
 
+    private static string LoadWindowPalette()
+    {
+        try
+        {
+            if (ApplicationData.Current.LocalSettings.Values["WindowPalette"] is string palette)
+                return ThemeBrushes.NormalizePaletteName(palette);
+        }
+        catch { }
+        return "sage";
+    }
+
+    private static void SaveWindowPalette(string palette)
+    {
+        try { ApplicationData.Current.LocalSettings.Values["WindowPalette"] = palette; }
+        catch { }
+    }
+
     private void ApplyWindowTheme(string theme)
     {
         PageRoot.RequestedTheme = theme switch
@@ -3604,20 +3566,11 @@ public sealed partial class MainWindow : Window
     {
         if (_appWindow?.TitleBar is not { } titleBar) return;
 
-        var dark = theme == "dark" ||
-            (theme == "system" && Application.Current.RequestedTheme == ApplicationTheme.Dark);
-        var foreground = dark
-            ? Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)
-            : Windows.UI.Color.FromArgb(0xFF, 0x00, 0x00, 0x00);
-        var inactiveForeground = dark
-            ? Windows.UI.Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)
-            : Windows.UI.Color.FromArgb(0x99, 0x00, 0x00, 0x00);
-        var hoverBackground = dark
-            ? Windows.UI.Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)
-            : Windows.UI.Color.FromArgb(0x10, 0x00, 0x00, 0x00);
-        var pressedBackground = dark
-            ? Windows.UI.Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF)
-            : Windows.UI.Color.FromArgb(0x18, 0x00, 0x00, 0x00);
+        var foreground = ThemeBrushes.Color(PageRoot, "HingeM3OnSurfaceBrush");
+        var inactiveForeground = ThemeBrushes.Color(PageRoot, "HingeM3OnSurfaceVariantBrush");
+        var surface = ThemeBrushes.Color(PageRoot, "HingeM3SurfaceBrush");
+        var hoverBackground = CompositeState("HingeM3StateHoverBrush");
+        var pressedBackground = CompositeState("HingeM3StatePressedBrush");
 
         titleBar.ButtonForegroundColor = foreground;
         titleBar.ButtonInactiveForegroundColor = inactiveForeground;
@@ -3627,6 +3580,17 @@ public sealed partial class MainWindow : Window
         titleBar.ButtonHoverBackgroundColor = hoverBackground;
         titleBar.ButtonPressedForegroundColor = foreground;
         titleBar.ButtonPressedBackgroundColor = pressedBackground;
+
+        // Native caption hover/pressed colors do not reliably blend their alpha channel.
+        Windows.UI.Color CompositeState(string resourceKey)
+        {
+            var state = ThemeBrushes.Color(PageRoot, resourceKey);
+            var opacity = ((SolidColorBrush)Application.Current.Resources[resourceKey]).Opacity * state.A / 255;
+            byte Blend(byte channel, byte background) =>
+                (byte)Math.Round(channel * opacity + background * (1 - opacity));
+            return Windows.UI.Color.FromArgb(255,
+                Blend(state.R, surface.R), Blend(state.G, surface.G), Blend(state.B, surface.B));
+        }
     }
 
     private static int WindowThemeIndex(string theme) => theme switch
@@ -4324,24 +4288,37 @@ public sealed partial class MainWindow : Window
             bool suspended = connected && device.ConnectionState == ConnectionState.Suspended;
             var row = new Grid
             {
-                MinHeight = 58,
+                MinHeight = 72,
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(42) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var icon = new SymbolIcon
+            FrameworkElement icon = device.Platform == DevicePlatform.Android
+                ? BuildOfficialBrandLogo(device.Manufacturer, $"{device.Model} {device.Name}", 40, 30)
+                : new SymbolIcon { Symbol = Symbol.AllApps, Width = 28, Height = 28 };
+            if (icon is SymbolIcon phoneIcon)
+                phoneIcon.Foreground = ThemeBrushes.AccentText(PageRoot);
+            var logoSlot = new Grid
             {
-                Symbol = device.Platform == DevicePlatform.Android ? Symbol.Phone : Symbol.AllApps,
-                Foreground = ThemeBrushes.AccentText(PageRoot),
-                Width = 28,
-                Height = 28
+                Width = 56,
+                Height = 56,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
             };
-            Grid.SetColumn(icon, 0);
-            row.Children.Add(icon);
+            icon.HorizontalAlignment = HorizontalAlignment.Center;
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            logoSlot.Children.Add(icon);
+            Grid.SetColumn(logoSlot, 0);
+            row.Children.Add(logoSlot);
 
-            var details = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+            var details = new StackPanel
+            {
+                Spacing = 3,
+                Margin = new Thickness(12, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
             details.Children.Add(new TextBlock { Text = device.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
             details.Children.Add(ThemeBrushes.Text(new TextBlock
             {
@@ -4353,6 +4330,7 @@ public sealed partial class MainWindow : Window
                         ? $"在线 · {string.Join(", ", device.NetworkAddresses)}"
                     : "离线",
                 FontSize = 14,
+                TextWrapping = TextWrapping.Wrap,
                 Foreground = online
                     ? ThemeBrushes.AccentText(PageRoot)
                     : ThemeBrushes.Secondary(PageRoot)
@@ -4364,10 +4342,11 @@ public sealed partial class MainWindow : Window
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 6,
+                HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center
             };
 
-            var connectButton = new Button
+            var connectButton = new HandCursorButton
             {
                 Content = connected ? "断开连接" : online ? "连接" : "重试",
                 Tag = device,
@@ -4376,7 +4355,8 @@ public sealed partial class MainWindow : Window
                 MinHeight = 36,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment = VerticalAlignment.Center
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Style = (Style)Application.Current.Resources["HingeM3FilledButtonStyle"]
             };
             AutomationProperties.SetAutomationId(connectButton, $"Device.Connect.{device.DeviceId}");
             AutomationProperties.SetName(connectButton, $"{connectButton.Content}：{device.Name}");
@@ -4385,6 +4365,15 @@ public sealed partial class MainWindow : Window
 
             Grid.SetColumn(actions, 2);
             row.Children.Add(actions);
+            row.Children.Add(new Border
+            {
+                Height = 1,
+                Margin = new Thickness(56, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Background = ThemeBrushes.Border(PageRoot),
+                Opacity = 0.45,
+                IsHitTestVisible = false
+            });
 
             DeviceListView.Items.Add(new ListViewItem
             {
@@ -4731,7 +4720,7 @@ public sealed partial class MainWindow : Window
         };
         var error = new TextBlock
         {
-            Foreground = new SolidColorBrush(Colors.Red),
+            Foreground = ThemeBrushes.Error(PageRoot),
             TextWrapping = TextWrapping.Wrap
         };
         var dialog = new ContentDialog
@@ -4899,17 +4888,12 @@ public sealed partial class MainWindow : Window
             case "settings":
                 NavigateTo("设置", 0);
                 break;
+            case "about":
+                ShowAboutPage();
+                break;
             case "transfers":
                 NavigateTo("设备操作", 0);
                 break;
-        }
-    }
-
-    private void AppNavigation_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
-    {
-        if (args.InvokedItemContainer is NavigationViewItem { Tag: "about" })
-        {
-            _ = ShowAboutDialogAsync();
         }
     }
 
@@ -5200,6 +5184,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        DispatcherQueue.TryEnqueue(() => UpdateHomeSendFileAvailability());
         var deviceId = connection.RemoteDeviceId ?? string.Empty;
         if (state == SessionState.Suspended)
         {
@@ -5360,11 +5345,12 @@ public sealed partial class MainWindow : Window
     private void SetHeroDevice(Device? device)
     {
         RefreshFilePhoneSources();
+        UpdateHomeSendFileAvailability();
         if (device == null)
         {
             HeroDeviceName.Text = _localIdentity.Name;
             HeroDeviceDetail.Text = $"本机设备 ID：{ShortId(_localIdentity.DeviceId)} · 局域网服务已启动";
-            HeroDeviceLogo.Content = new SymbolIcon { Symbol = Symbol.Phone, Width = 24, Height = 24 };
+            HeroDeviceLogo.Content = BuildOfficialBrandLogo(string.Empty, string.Empty);
             return;
         }
 
@@ -5379,28 +5365,35 @@ public sealed partial class MainWindow : Window
                     : "局域网已发现，尚未建立会话";
         HeroDeviceDetail.Text =
             $"手机设备 · {connectionLabel} · {string.Join(", ", device.NetworkAddresses)}";
-        HeroDeviceLogo.Content = BuildOfficialBrandLogo(device.Manufacturer, device.Model);
+        HeroDeviceLogo.Content = BuildOfficialBrandLogo(device.Manufacturer, $"{device.Model} {device.Name}");
     }
 
-    private static FrameworkElement BuildOfficialBrandLogo(string manufacturer, string model)
+    private void UpdateHomeSendFileAvailability()
     {
-        string? assetName = ResolveBrandAsset(manufacturer, model);
-        if (assetName != null)
+        Home.SendFile.IsEnabled = _sessionManager.ActiveConnections.Any(connection =>
+            connection.IsSessionReady && connection.State == SessionState.Connected);
+    }
+
+    internal static FrameworkElement BuildOfficialBrandLogo(string manufacturer, string model, double width = 40, double height = 30)
+    {
+        string assetName = ResolveBrandAsset(manufacturer, model) ?? "android-default.jpg";
+        try
         {
-            try
+            var assetUri = new Uri($"ms-appx:///Assets/Brands/{assetName}");
+            ImageSource source = assetName.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
+                ? new SvgImageSource(assetUri)
+                : new BitmapImage(assetUri);
+            return new Image
             {
-                return new Image
-                {
-                    Width = 40,
-                    Height = 30,
-                    Stretch = Stretch.Uniform,
-                    Source = new SvgImageSource(new Uri($"ms-appx:///Assets/Brands/{assetName}"))
-                };
-            }
-            catch
-            {
-                // The package can still run if an optional brand asset is absent.
-            }
+                Width = width,
+                Height = height,
+                Stretch = Stretch.Uniform,
+                Source = source
+            };
+        }
+        catch
+        {
+            // The package can still run if a brand or fallback asset is absent.
         }
 
         return new SymbolIcon { Symbol = Symbol.Phone, Width = 24, Height = 24 };
@@ -5526,10 +5519,12 @@ public sealed partial class MainWindow : Window
         if (connection == null)
         {
             ClearFileItemViews();
+            filePage.ShowPhoneDisconnectedState();
             filePage.ReconnectPhone.Visibility = filePage.SelectedPhoneDeviceId == null ? Visibility.Collapsed : Visibility.Visible;
             FileManagementStatusText.Text = filePage.SelectedPhoneDeviceId == null ? "请先连接手机" : "此手机已离线；重新连接后可浏览，发送文件可使用 Cloud Relay。";
             return;
         }
+        filePage.HidePhoneDisconnectedState();
         filePage.ReconnectPhone.Visibility = Visibility.Collapsed;
 
         _activeConnection = connection;
@@ -5593,7 +5588,7 @@ public sealed partial class MainWindow : Window
     private void ShowFileLoadingState()
     {
         ClearFileItemViews();
-        FileListView.Items.Add(new ListViewItem
+        FileListView.Items.Add(new HandCursorListViewItem
         {
             IsHitTestVisible = false,
             Content = new StackPanel
@@ -5612,7 +5607,7 @@ public sealed partial class MainWindow : Window
                 }
             }
         });
-        _filePage?.GridFiles.Items.Add(new GridViewItem
+        _filePage?.GridFiles.Items.Add(new HandCursorGridViewItem
         {
             IsHitTestVisible = false,
             Content = new StackPanel
@@ -5636,7 +5631,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowEmptyFileState(string message)
     {
-        FileListView.Items.Add(new ListViewItem
+        FileListView.Items.Add(new HandCursorListViewItem
         {
             IsHitTestVisible = false,
             Content = ThemeBrushes.Text(new TextBlock
@@ -5647,7 +5642,7 @@ public sealed partial class MainWindow : Window
                 Foreground = ThemeBrushes.Secondary(PageRoot)
             })
         });
-        _filePage?.GridFiles.Items.Add(new GridViewItem
+        _filePage?.GridFiles.Items.Add(new HandCursorGridViewItem
         {
             IsHitTestVisible = false,
             Content = ThemeBrushes.Text(new TextBlock
@@ -5663,7 +5658,7 @@ public sealed partial class MainWindow : Window
     private void ShowFileErrorState(string message)
     {
         ClearFileItemViews();
-        FileListView.Items.Add(new ListViewItem
+        FileListView.Items.Add(new HandCursorListViewItem
         {
             IsHitTestVisible = false,
             Content = new TextBlock
@@ -5674,7 +5669,7 @@ public sealed partial class MainWindow : Window
                 Foreground = (Brush)Application.Current.Resources["SystemFillColorCriticalBrush"]
             }
         });
-        _filePage?.GridFiles.Items.Add(new GridViewItem
+        _filePage?.GridFiles.Items.Add(new HandCursorGridViewItem
         {
             IsHitTestVisible = false,
             Content = new TextBlock
@@ -5750,7 +5745,7 @@ public sealed partial class MainWindow : Window
 
                 if (!gridMode)
                 {
-                    var listItem = new ListViewItem
+                    var listItem = new HandCursorListViewItem
                     {
                         Tag = entry,
                         Content = BuildRemoteFileRow(entry)
@@ -5769,7 +5764,7 @@ public sealed partial class MainWindow : Window
                             cancellation);
                         tile.Thumbnail.Loaded += FileThumbnail_Loaded;
                     }
-                    var gridItem = new GridViewItem
+                    var gridItem = new HandCursorGridViewItem
                     {
                         Tag = entry,
                         Content = tile.Tile
@@ -5830,10 +5825,10 @@ public sealed partial class MainWindow : Window
         var icon = new FontIcon
         {
             Glyph = FileGlyph(entry),
-            FontSize = 24,
+            FontSize = 22,
             Foreground = entry.IsDirectory
                 ? FolderBrush()
-                : (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"],
+                : ThemeBrushes.Primary(PageRoot),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -5853,7 +5848,7 @@ public sealed partial class MainWindow : Window
             Text = entry.IsDirectory
                 ? "文件夹"
                 : $"{entry.MimeType} · {FormatBytes(entry.SizeBytes)}",
-            FontSize = 14,
+            FontSize = 12,
             Foreground = ThemeBrushes.Secondary(PageRoot),
             TextTrimming = TextTrimming.CharacterEllipsis
         }));
@@ -5863,7 +5858,7 @@ public sealed partial class MainWindow : Window
         var date = ThemeBrushes.Text(new TextBlock
         {
             Text = FormatUnixMilliseconds(entry.ModifiedAt),
-            FontSize = 14,
+            FontSize = 12,
             Foreground = ThemeBrushes.Secondary(PageRoot),
             VerticalAlignment = VerticalAlignment.Center
         });
@@ -5880,18 +5875,18 @@ public sealed partial class MainWindow : Window
         {
             thumbnail = new Image
             {
-                Width = 132,
-                Height = 92,
+                Width = 116,
+                Height = 78,
                 Stretch = Stretch.UniformToFill,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
             visual = new Border
             {
-                Width = 140,
-                Height = 100,
+                Width = 124,
+                Height = 86,
                 CornerRadius = new CornerRadius(8),
-                Background = (Brush)Application.Current.Resources["CardBackgroundFillColorSecondaryBrush"],
+                Background = ThemeBrushes.MutedSurface(PageRoot),
                 Child = thumbnail
             };
         }
@@ -5900,48 +5895,48 @@ public sealed partial class MainWindow : Window
             var icon = new FontIcon
             {
                 Glyph = FileGlyph(entry),
-                FontSize = entry.IsDirectory ? 46 : 30,
+                FontSize = entry.IsDirectory ? 38 : 28,
                 Foreground = entry.IsDirectory
                     ? FolderBrush()
-                    : (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"]
+                    : ThemeBrushes.Primary(PageRoot)
             };
             visual = entry.IsDirectory
                 ? icon
                 : new Border
                 {
-                    Width = 64,
-                    Height = 64,
-                    CornerRadius = new CornerRadius(12),
+                    Width = 56,
+                    Height = 56,
+                    CornerRadius = new CornerRadius(8),
                     // 文件图标使用 Windows 的中性图标底，不把音频文件渲染成
                     // 一块突兀的蓝色卡片；文件类型仍由 glyph 区分。
-                    Background = (Brush)Application.Current.Resources["CardBackgroundFillColorSecondaryBrush"],
+                    Background = ThemeBrushes.MutedSurface(PageRoot),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     Child = icon
                 };
         }
         var panel = new StackPanel
         {
-            Width = 170,
+            Width = 148,
             Spacing = 8,
-            Padding = new Thickness(12),
+            Padding = new Thickness(8),
             HorizontalAlignment = HorizontalAlignment.Center
         };
         panel.Children.Add(visual);
         panel.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = entry.Name,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 14,
             TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         }));
         panel.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = entry.IsDirectory ? "文件夹" : FormatBytes(entry.SizeBytes),
-            FontSize = 13,
+            FontSize = 12,
             Foreground = ThemeBrushes.Secondary(PageRoot),
             TextAlignment = TextAlignment.Center
         }));
-        return (new Grid { MinHeight = 150, Children = { panel } }, thumbnail);
+        return (new Grid { MinHeight = 144, Children = { panel } }, thumbnail);
     }
 
     private static bool IsImageEntry(RemoteFileEntry entry) =>
@@ -6407,8 +6402,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static Brush FolderBrush() =>
-        new SolidColorBrush(ColorHelper.FromArgb(0xFF, 0xFF, 0xC1, 0x07));
+    private Brush FolderBrush() => ThemeBrushes.Accent(PageRoot);
 
     private static int GetFileThumbnailConcurrency()
     {
@@ -6687,6 +6681,17 @@ public sealed partial class MainWindow : Window
         StatusText.Text = $"窗口主题已切换：{WindowThemeName(theme)}";
     }
 
+    private void PersonalizationPalette_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_personalizationPage?.PaletteOptionsControl.SelectedValue is not string palette ||
+            palette is not ("sage" or "blue" or "purple" or "teal" or "orange" or "neutral")) return;
+        SaveWindowPalette(palette);
+        ThemeBrushes.ApplyPalette(palette);
+        ApplyAppWindowTitleBarTheme(LoadWindowTheme());
+        _homePage?.ApplyThemePalette();
+        if (_homePage != null) RefreshDeviceList(_registry.GetAllDevices());
+    }
+
     private void PersonalizationMaterial_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_personalizationPage?.MaterialOptionsControl.SelectedValue is not string material) return;
@@ -6694,6 +6699,172 @@ public sealed partial class MainWindow : Window
         ApplyWindowMaterial(material);
         StatusText.Text = $"窗口材质已切换：{WindowMaterialName(material)}";
     }
+
+    private void PersonalizationFontFamily_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_personalizationPage is not { IsUpdatingFontOptions: false } page) return;
+        string familyName = page.FontOptionsControl.SelectedValue as string ?? string.Empty;
+        page.SetAvailableFontWeights(familyName);
+        PersonalizationFont_SelectionChanged(sender, e);
+    }
+
+    private void PersonalizationFont_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_personalizationPage is not { IsUpdatingFontOptions: false } page) return;
+        string fileName = page.SelectedFontFileName;
+        page.DeleteFont.IsEnabled = !string.IsNullOrEmpty(fileName);
+        SaveWindowFont(fileName);
+        ApplyWindowFont(fileName);
+        page.SetFontPreview(page.FindFont(fileName)?.FontFamilySource);
+        StatusText.Text = string.IsNullOrEmpty(fileName) ? "已恢复内置界面字体" : "界面字体已应用";
+    }
+
+    internal async Task ImportCustomFontsAsync(PersonalizationPage page)
+    {
+        try
+        {
+            var picker = new FileOpenPicker();
+            foreach (var extension in new[] { ".ttf", ".otf", ".zip" }) picker.FileTypeFilter.Add(extension);
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            var files = await picker.PickMultipleFilesAsync();
+            if (files.Count == 0)
+            {
+                page.SetFontImportStatus("未选择字体文件。");
+                return;
+            }
+
+            var selectedBeforeImport = page.SelectedFontFileName;
+            var result = await CustomFontLibrary.ImportAsync(files);
+            var fonts = CustomFontLibrary.GetFonts();
+            var selectedFont = fonts.FirstOrDefault(font => font.FileName == selectedBeforeImport);
+            page.SetFonts(fonts, selectedBeforeImport, selectedFont?.FontFamilySource);
+            string message = result.Imported.Count > 0
+                ? $"已导入 {result.Imported.Count} 款字体；当前选择保持不变"
+                : result.Duplicates > 0
+                    ? "字体包中的字体已导入过，未重复添加。"
+                    : "所选文件中没有可用的 TTF 或 OTF 字体。";
+            if (result.Duplicates > 0 && result.Imported.Count > 0) message += $"，另有 {result.Duplicates} 款重复字体已跳过";
+            if (result.Skipped > 0) message += $"，跳过 {result.Skipped} 个无效或超限文件";
+            page.SetFontImportStatus(message);
+            if (result.Imported.Count > 0) StatusText.Text = message;
+        }
+        catch (Exception exception)
+        {
+            page.SetFontImportStatus($"打开或导入失败：{exception.Message}");
+            App.LogLifecycle($"custom-font-import-failed type={exception.GetType().Name}");
+        }
+    }
+
+    internal async Task DeleteCustomFontAsync(PersonalizationPage page)
+    {
+        string fileName = page.SelectedFontFileName;
+        if (string.IsNullOrEmpty(fileName) || CustomFontLibrary.Find(fileName) is not { } font) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = page.XamlRoot,
+            Title = "删除导入字体？",
+            Content = font.DisplayName,
+            PrimaryButtonText = "删除字体",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await ShowM3ContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
+
+        SaveWindowFont(string.Empty);
+        ApplyWindowFont(string.Empty);
+        page.SetFontPreview(null);
+        try
+        {
+            int deleted = await CustomFontLibrary.DeleteAsync(font);
+            if (deleted == 0)
+            {
+                SaveWindowFont(fileName);
+                ApplyWindowFont(fileName);
+                page.SetFonts(CustomFontLibrary.GetFonts(), fileName, font.FontFamilySource);
+                page.SetFontImportStatus("字体文件未能删除，可能正在被系统使用。");
+                return;
+            }
+
+            page.SetFonts(CustomFontLibrary.GetFonts(), string.Empty, null);
+            page.SetFontImportStatus($"已删除字体：{font.DisplayName}");
+            StatusText.Text = "所选字体已删除，已恢复内置字体";
+        }
+        catch (Exception exception)
+        {
+            SaveWindowFont(fileName);
+            ApplyWindowFont(fileName);
+            page.SetFontImportStatus($"删除字体失败：{exception.Message}");
+        }
+    }
+
+    private static string LoadWindowFont()
+    {
+        if (ReadUserSetting("WindowFontFileName") is string registryFile && CustomFontLibrary.Find(registryFile) is not null)
+            return registryFile;
+        try
+        {
+            if (ApplicationData.Current.LocalSettings.Values["WindowFontFileName"] is string localFile &&
+                CustomFontLibrary.Find(localFile) is not null)
+            {
+                WriteUserSetting("WindowFontFileName", localFile);
+                return localFile;
+            }
+        }
+        catch { }
+        return string.Empty;
+    }
+
+    private static void SaveWindowFont(string fileName)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(fileName)) ApplicationData.Current.LocalSettings.Values.Remove("WindowFontFileName");
+            else ApplicationData.Current.LocalSettings.Values["WindowFontFileName"] = fileName;
+        }
+        catch { }
+        WriteUserSetting("WindowFontFileName", string.IsNullOrEmpty(fileName) ? null : fileName);
+    }
+
+    private void ApplyWindowFont(string fileName)
+    {
+        var source = CustomFontLibrary.Find(fileName)?.FontFamilySource ??
+            "ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC";
+        var fontFamily = new FontFamily(source);
+        Application.Current.Resources["ContentControlThemeFontFamily"] = fontFamily;
+        ApplyFontFamily(PageRoot, fontFamily);
+        DispatcherQueue.TryEnqueue(() => ApplyFontFamily(PageRoot, fontFamily));
+    }
+
+    private void ApplyCurrentFontToVisualTree()
+    {
+        if (Application.Current.Resources["ContentControlThemeFontFamily"] is FontFamily fontFamily)
+            ApplyFontFamily(PageRoot, fontFamily);
+    }
+
+    private static void ApplyFontFamily(DependencyObject root, FontFamily fontFamily)
+    {
+        if (root is IconElement) return;
+
+        if (root is TextBlock textBlock && !ContainsPrivateUseGlyph(textBlock.Text))
+            textBlock.FontFamily = fontFamily;
+        else if (root is RichTextBlock richTextBlock)
+            richTextBlock.FontFamily = fontFamily;
+        else if (root is TextBox textBox)
+            textBox.FontFamily = fontFamily;
+        else if (root is PasswordBox passwordBox)
+            passwordBox.FontFamily = fontFamily;
+        else if (root is RichEditBox richEditBox)
+            richEditBox.FontFamily = fontFamily;
+
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            ApplyFontFamily(VisualTreeHelper.GetChild(root, index), fontFamily);
+    }
+
+    private static bool ContainsPrivateUseGlyph(string text) => text.EnumerateRunes().Any(rune =>
+        rune.Value is >= 0xE000 and <= 0xF8FF or
+            >= 0xF0000 and <= 0xFFFFD or
+            >= 0x100000 and <= 0x10FFFD);
 
     private async void ImportBackground_Click(object sender, RoutedEventArgs e)
     {
@@ -6919,11 +7090,9 @@ public sealed partial class MainWindow : Window
 
     private async Task PickAndSendFileAsync()
     {
-        var connection = GetConnectedConnection();
-        var cloudDeviceId = connection?.RemoteDeviceId ?? GetPreferredTrustedDeviceId();
-        if (connection == null && cloudDeviceId == null)
+        if (GetConnectedConnection() is not { State: SessionState.Connected } connection)
         {
-            await ShowDialogAsync("无法发送文件", "请先连接或信任一台设备，并在设置中配置 Cloud Relay。", false);
+            await ShowDialogAsync("无法发送文件", "请先连接设备。", false);
             return;
         }
 
@@ -6932,29 +7101,27 @@ public sealed partial class MainWindow : Window
         InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
         var file = await picker.PickSingleFileAsync();
         if (file == null) return;
+        if (connection.State != SessionState.Connected)
+        {
+            await ShowDialogAsync("无法发送文件", "连接已断开，请重新连接设备后重试。", false);
+            return;
+        }
 
         try
         {
-            var result = connection != null
-                ? await SendFilesToConnectionAsync(
+            var result = await SendFilesToConnectionAsync(
                     connection,
                     new[] { file.Path },
                     string.Empty,
                     CancellationToken.None,
-                    showFailureDialog: true)
-                : await SendFilesViaCloudAsync(
-                    cloudDeviceId!,
-                    new[] { file.Path },
-                    CancellationToken.None);
+                    showFailureDialog: true);
             if (result is { Completed: > 0 })
             {
-                StatusText.Text = connection != null
-                    ? $"文件已发送：{file.Name}"
-                    : $"文件已上传 Cloud Relay，等待设备接收：{file.Name}";
+                StatusText.Text = $"文件已发送：{file.Name}";
             }
             else if (result == null)
             {
-                await ShowDialogAsync("无法发送文件", "当前没有可用的局域网连接，且 Cloud Relay 尚未完成配置或目标设备未注册。", false);
+                await ShowDialogAsync("无法发送文件", "连接已不可用，请重新连接设备后重试。", false);
             }
         }
         catch (Exception exception)
@@ -7968,7 +8135,43 @@ public sealed partial class MainWindow : Window
     private SessionConnection? GetFileConnection(RemoteFileEntry entry) =>
         string.IsNullOrWhiteSpace(entry.SourceDeviceId) ? GetConnectedConnection() : _sessionManager.ConnectionForDevice(entry.SourceDeviceId);
 
-    private async Task<ContentDialogResult> ShowContentDialogAsync(ContentDialog dialog)
+    internal static async Task<ContentDialogResult> ShowM3ContentDialogAsync(ContentDialog dialog)
+    {
+        ApplyM3ContentDialogStyle(dialog);
+        var primaryByKeyboard = false;
+        if (dialog.DefaultButton == ContentDialogButton.Primary)
+        {
+            dialog.DefaultButton = ContentDialogButton.None;
+            dialog.KeyDown += (_, args) =>
+            {
+                if (args.Key != Windows.System.VirtualKey.Enter || args.Handled || !dialog.IsPrimaryButtonEnabled) return;
+                args.Handled = true;
+                primaryByKeyboard = true;
+                dialog.Hide();
+            };
+        }
+        var result = await ShowContentDialogAsync(dialog);
+        return primaryByKeyboard ? ContentDialogResult.Primary : result;
+    }
+
+    internal static void ApplyM3ContentDialogStyle(ContentDialog dialog)
+    {
+        var resources = Application.Current.Resources;
+        var primaryStyle = (Style)resources["HingeM3FilledButtonStyle"];
+
+        dialog.Background = (Brush)resources["HingeM3SurfaceContainerLowBrush"];
+        dialog.Foreground = (Brush)resources["HingeM3OnSurfaceBrush"];
+        dialog.BorderBrush = (Brush)resources["HingeM3OutlineVariantBrush"];
+        dialog.BorderThickness = new Thickness(1);
+        dialog.CornerRadius = (CornerRadius)resources["HingeM3ShapeExtraLarge"];
+        dialog.PrimaryButtonStyle = primaryStyle;
+        dialog.CloseButtonStyle = (Style)resources["HingeM3TextButtonStyle"];
+        dialog.TitleTemplate = (DataTemplate)resources["HingeM3DialogTitleTemplate"];
+        if (dialog.Content is string)
+            dialog.ContentTemplate = (DataTemplate)resources["HingeM3DialogMessageTemplate"];
+    }
+
+    internal static async Task<ContentDialogResult> ShowContentDialogAsync(ContentDialog dialog)
     {
         await _contentDialogGate.WaitAsync();
         try
@@ -8014,6 +8217,9 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        ThemeBrushes.PaletteChanged -= IntegratedTitleBar_PaletteChanged;
+        AppNavigation.UnregisterPropertyChangedCallback(NavigationView.IsPaneOpenProperty, _paneOpenChangedToken);
+        if (_windowXamlRoot != null) _windowXamlRoot.Changed -= IntegratedTitleBar_RootChanged;
         CancelHistoricalReconnect();
         Clipboard.ContentChanged -= DesktopClipboard_ContentChanged;
         _wirelessAdbClipboardSyncCancellation?.Cancel();
@@ -8028,6 +8234,7 @@ public sealed partial class MainWindow : Window
         if (_appWindow != null)
         {
             _appWindow.Closing -= AppWindow_Closing;
+            _appWindow.Changed -= IntegratedTitleBar_WindowChanged;
         }
         _discoveryService.Dispose();
         _sessionManager.Dispose();

@@ -1099,6 +1099,7 @@ class WorkspaceCommandRouter {
   StreamSubscription<SessionConnection>? _connectionsSubscription;
   final List<StreamSubscription<ProtocolFrame>> _frameSubscriptions = [];
   final Map<SessionConnection, _AsyncPermitPool> _connectionGates = {};
+  final Set<SessionConnection> _watchedConnections = {};
 
   WorkspaceCommandRouter({
     required this.sessionManager,
@@ -1108,12 +1109,20 @@ class WorkspaceCommandRouter {
   });
 
   void start() {
-    _connectionsSubscription ??= sessionManager.onConnectionCreated.listen(
+    if (_connectionsSubscription != null) return;
+    _connectionsSubscription = sessionManager.onConnectionCreated.listen(
       _watchConnection,
     );
+    // Native Android sessions may already be restored before this router
+    // starts. The broadcast only covers future connections, so attach to the
+    // current snapshot as well.
+    for (final connection in sessionManager.activeConnections) {
+      _watchConnection(connection);
+    }
   }
 
   void _watchConnection(SessionConnection connection) {
+    if (connection.isDisposed || !_watchedConnections.add(connection)) return;
     final gate = _connectionGates.putIfAbsent(
       connection,
       () => _AsyncPermitPool(_maxConcurrentCommandsPerConnection),

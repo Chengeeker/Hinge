@@ -1,0 +1,81 @@
+<Page
+    x:Class="Hinge.App.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <StackPanel Style="{StaticResource HingePageStackStyle}" MaxWidth="720" Spacing="24">
+            <StackPanel Spacing="4">
+                <TextBlock Text="关于应用" Style="{StaticResource HingePageTitleStyle}" />
+                <TextBlock Text="Hinge 是局域网优先的跨设备办公套件。" Style="{StaticResource HingePageDescriptionStyle}" />
+            </StackPanel>
+
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
+                <Grid ColumnSpacing="20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Image
+                        Width="64"
+                        Height="64"
+                        Stretch="Uniform"
+                        Source="ms-appx:///Assets/app_icon.png"
+                        AutomationProperties.Name="Hinge 应用图标" />
+                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock Text="Hinge" Style="{StaticResource HingeM3HeadlineSmallStyle}" />
+                        <TextBlock x:Name="VersionText" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="产品信息" Style="{StaticResource HingeM3SectionHeaderStyle}" />
+                <TextBlock Text="Windows：Material 3　·　Android：Flutter + Material 3" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                <TextBlock Text="界面字体：HarmonyOS Sans SC · © 2021 Huawei Device Co., Ltd." Style="{StaticResource HingeM3BodyVariantStyle}" />
+            </StackPanel>
+
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="主要功能" Style="{StaticResource HingeM3SectionHeaderStyle}" />
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <SymbolIcon Symbol="Phone" Foreground="{ThemeResource HingeM3PrimaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="设备发现、连接与文件访问" Style="{StaticResource HingeM3BodyStyle}" VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <SymbolIcon Symbol="AllApps" Foreground="{ThemeResource HingeM3PrimaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="笔记、待办、日历与相册工作区" Style="{StaticResource HingeM3BodyStyle}" VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <SymbolIcon Symbol="Save" Foreground="{ThemeResource HingeM3PrimaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="数据默认保存在设备本地；文件可通过局域网或自建 Cloud Relay 传输" Style="{StaticResource HingeM3BodyStyle}" VerticalAlignment="Center" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4" VerticalAlignment="Center">
+                        <TextBlock Text="GitHub 开源项目" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                        <TextBlock Text="github.com/Chengeeker/Hinge" Style="{StaticResource HingeM3BodyVariantStyle}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <HyperlinkButton
+                        Grid.Column="1"
+                        Content="访问项目主页"
+                        NavigateUri="https://github.com/Chengeeker/Hinge"
+                        Foreground="{ThemeResource HingeM3PrimaryBrush}"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Padding="12,8,12,8" />
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

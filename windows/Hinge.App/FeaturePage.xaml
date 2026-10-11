@@ -6,14 +6,14 @@
         <StackPanel Style="{StaticResource HingePageStackStyle}">
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="8">
-                    <TextBlock x:Name="FeatureIcon" FontSize="28" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                    <TextBlock x:Name="FeatureDescription" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="FeatureIcon" FontSize="28" Foreground="{ThemeResource HingeM3PrimaryBrush}" />
+                    <TextBlock x:Name="FeatureDescription" FontSize="14" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
                     <TextBlock Text="当前状态" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock x:Name="FeatureStatus" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="FeatureStatus" FontSize="14" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" TextWrapping="Wrap" />
                     <StackPanel x:Name="FeatureActions" Orientation="Horizontal" Spacing="8" />
                 </StackPanel>
             </Border>

@@ -5,19 +5,19 @@
     xmlns:local="using:Hinge.App"
     NavigationCacheMode="Required">
     <Grid x:Name="RootGrid">
-        <ListView x:Name="HistoryList" SizeChanged="HistoryList_SizeChanged" AutomationProperties.AutomationId="NotificationHistoryPage.HistoryList" AutomationProperties.Name="手机历史通知" Margin="24,16,24,32"
+        <local:HandCursorListView x:Name="HistoryList" SizeChanged="HistoryList_SizeChanged" AutomationProperties.AutomationId="NotificationHistoryPage.HistoryList" AutomationProperties.Name="手机历史通知" Margin="24,16,24,32"
                   IsItemClickEnabled="True" SelectionMode="None"
                   ItemClick="HistoryList_ItemClick" Loaded="HistoryList_Loaded"
                   ContainerContentChanging="HistoryList_ContainerContentChanging">
-            <ListView.ItemContainerStyle>
+            <local:HandCursorListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ItemTemplate>
+            </local:HandCursorListView.ItemContainerStyle>
+            <local:HandCursorListView.ItemTemplate>
                 <DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate>
-            </ListView.ItemTemplate>
-            <ListView.Header>
+            </local:HandCursorListView.ItemTemplate>
+            <local:HandCursorListView.Header>
             <StackPanel Spacing="16" Margin="0,0,0,16">
                 <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="True">
                     <StackPanel Spacing="4">
@@ -30,7 +30,7 @@
                             <ComboBoxItem Content="时间（早到晚）" Tag="asc" />
                             <ComboBoxItem Content="时间（晚到早）" Tag="desc" />
                         </ComboBox>
-                        <Button
+                        <local:HandCursorButton
                             x:Name="ClearButton" AutomationProperties.AutomationId="NotificationHistoryPage.ClearButton"
                             Content="清空"
                             MinHeight="36"
@@ -38,7 +38,7 @@
                             HorizontalContentAlignment="Center"
                             VerticalContentAlignment="Center"
                             Click="ClearButton_Click" />
-                        <Button
+                        <local:HandCursorButton
                             x:Name="RefreshButton" AutomationProperties.AutomationId="NotificationHistoryPage.RefreshButton"
                             Style="{StaticResource HingeIconButtonStyle}"
                             Height="36"
@@ -48,20 +48,20 @@
                             ToolTipService.ToolTip="刷新通知"
                             AutomationProperties.Name="刷新通知">
                             <SymbolIcon Symbol="Refresh" />
-                        </Button>
+                        </local:HandCursorButton>
                     </local:HingeWrapPanel>
                 </local:HingeWrapPanel>
 
                 <InfoBar x:Name="StatusInfoBar" IsOpen="False" IsClosable="False" Severity="Informational" Title="手机历史通知" Message="等待连接设备。" />
-                <TextBlock x:Name="SummaryText" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                <ProgressRing x:Name="LoadingIndicator" Width="32" Height="32" HorizontalAlignment="Center" IsActive="False" />
+                <TextBlock x:Name="SummaryText" FontSize="14" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
+                <ProgressRing x:Name="LoadingIndicator" Width="32" Height="32" HorizontalAlignment="Center" IsActive="False" Visibility="Collapsed" />
 
             </StackPanel>
-            </ListView.Header>
-            <ListView.Footer>
-                <Button x:Name="LoadMoreButton" AutomationProperties.AutomationId="NotificationHistoryPage.LoadMoreButton" Content="加载更多通知" Margin="0,16,0,0"
+            </local:HandCursorListView.Header>
+            <local:HandCursorListView.Footer>
+                <local:HandCursorButton x:Name="LoadMoreButton" AutomationProperties.AutomationId="NotificationHistoryPage.LoadMoreButton" Content="加载更多通知" Margin="0,16,0,0"
                         Visibility="Collapsed" Click="LoadMoreButton_Click" />
-            </ListView.Footer>
-        </ListView>
+            </local:HandCursorListView.Footer>
+        </local:HandCursorListView>
     </Grid>
 </Page>

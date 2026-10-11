@@ -164,6 +164,7 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
       pairingManager: _pairingManager,
       transferManager: _transferManager,
     );
+    _commandRouter.start();
     _loadNativeDynamicColors();
 
     if (!Platform.environment.containsKey('FLUTTER_TEST')) {
@@ -190,7 +191,6 @@ class _HingeAppState extends State<HingeApp> with WidgetsBindingObserver {
       }
     }
     if (!mounted) return;
-    _commandRouter.start();
     if (_ownsDiscovery) {
       try {
         await _discoveryService.start();
@@ -4131,10 +4131,15 @@ class _DevicesScreenState extends State<DevicesScreen>
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: SvgPicture.asset(
-                      'assets/brands/$brandAsset',
-                      fit: BoxFit.contain,
-                    ),
+                    child: brandAsset.endsWith('.svg')
+                        ? SvgPicture.asset(
+                            'assets/brands/$brandAsset',
+                            fit: BoxFit.contain,
+                          )
+                        : Image.asset(
+                            'assets/brands/$brandAsset',
+                            fit: BoxFit.contain,
+                          ),
                   ),
           ],
         ),
@@ -4167,7 +4172,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
     if (name.contains('huawei')) return 'huawei.svg';
     if (name.contains('oppo')) return 'oppo.svg';
-    return null;
+    return 'android-default.jpg';
   }
 
   Widget _buildDeviceSummaryCard(Device? selected) {

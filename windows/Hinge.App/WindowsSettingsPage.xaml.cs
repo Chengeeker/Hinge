@@ -18,5 +18,6 @@ public sealed partial class WindowsSettingsPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+        SettingsPageLayout.MatchViewportWidth(WindowsSettingsScrollViewer, WindowsSettingsPageContentRoot);
     }
 }

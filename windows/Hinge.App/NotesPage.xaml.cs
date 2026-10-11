@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Hinge.Core;
 
@@ -50,7 +51,7 @@ public sealed partial class NotesPage : Page
             if (version != _loadVersion) return;
             foreach (var note in notes.OrderByDescending(note => note.Pinned).ThenByDescending(note => note.UpdatedAt))
             {
-                NotesList.Items.Add(new ListViewItem
+                NotesList.Items.Add(new HandCursorListViewItem
                 {
                     Tag = note,
                     Content = BuildNoteRow(note)
@@ -59,7 +60,7 @@ public sealed partial class NotesPage : Page
 
             if (notes.Count == 0)
             {
-                NotesList.Items.Add(new ListViewItem
+                NotesList.Items.Add(new HandCursorListViewItem
                 {
                     IsHitTestVisible = false,
                     Content = ThemeBrushes.Text(new TextBlock
@@ -88,27 +89,24 @@ public sealed partial class NotesPage : Page
         text.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(note.Title) ? "未命名笔记" : note.Title,
-            FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Style = (Style)Application.Current.Resources["HingeM3RowTitleStyle"],
             TextTrimming = TextTrimming.CharacterEllipsis
         });
         text.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(note.Content) ? "无正文" : note.Content.Replace('\n', ' '),
-            FontSize = 14,
             Foreground = ThemeBrushes.Secondary(this),
             TextTrimming = TextTrimming.CharacterEllipsis
-        }));
+        }, "HingeM3SupportingStyle"));
         text.Children.Add(ThemeBrushes.Text(new TextBlock
         {
             Text = FormatTime(note.UpdatedAt) + (note.Pinned ? " · 已置顶" : string.Empty),
-            FontSize = 13,
             Foreground = ThemeBrushes.Secondary(this)
-        }));
+        }, "HingeM3CaptionStyle"));
         Grid.SetColumn(text, 0);
         row.Children.Add(text);
 
-        var delete = new Button { Content = "删除", Tag = note, VerticalAlignment = VerticalAlignment.Center };
+        var delete = new HandCursorButton { Content = "删除", Tag = note, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetAutomationId(delete, $"Notes.Delete.{note.Id}");
         delete.Click += DeleteButton_Click;
         Grid.SetColumn(delete, 1);
@@ -138,7 +136,7 @@ public sealed partial class NotesPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await MainWindow.ShowM3ContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
 
         var connection = _connectionProvider?.Invoke() ?? _connection;
         if (_client == null || connection?.IsSessionReady != true)
@@ -175,9 +173,9 @@ public sealed partial class NotesPage : Page
         AutomationProperties.SetAutomationId(content, "Notes.Editor.Content");
         AutomationProperties.SetAutomationId(pinned, "Notes.Editor.Pinned");
         var panel = new StackPanel { Spacing = 12 };
-        panel.Children.Add(new TextBlock { Text = "标题" });
+        panel.Children.Add(ThemeBrushes.Text(new TextBlock { Text = "标题" }, "HingeM3LabelStyle"));
         panel.Children.Add(title);
-        panel.Children.Add(new TextBlock { Text = "正文" });
+        panel.Children.Add(ThemeBrushes.Text(new TextBlock { Text = "正文" }, "HingeM3LabelStyle"));
         panel.Children.Add(content);
         panel.Children.Add(pinned);
 
@@ -190,7 +188,7 @@ public sealed partial class NotesPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await MainWindow.ShowM3ContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
         if (string.IsNullOrWhiteSpace(title.Text) && string.IsNullOrWhiteSpace(content.Text))
         {
             SetStatus("无法保存", "标题和正文不能同时为空。", InfoBarSeverity.Warning);
@@ -230,6 +228,9 @@ public sealed partial class NotesPage : Page
         StatusInfoBar.Title = title;
         StatusInfoBar.Message = message;
         StatusInfoBar.Severity = severity;
+        StatusInfoBar.IconSource = severity == InfoBarSeverity.Informational
+            ? new FontIconSource { Glyph = "\uE946", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 20, Foreground = ThemeBrushes.AccentText(this) }
+            : null;
     }
 
     private static string FormatTime(long milliseconds)

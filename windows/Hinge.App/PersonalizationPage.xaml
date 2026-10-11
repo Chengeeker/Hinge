@@ -1,23 +1,33 @@
-<Page
+<Page xmlns:local="using:Hinge.App"
     x:Class="Hinge.App.PersonalizationPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Style="{StaticResource HingePageStackStyle}">
+    <Page.Resources>
+        <Style x:Key="HingeM3MaterialOptionItemStyle" TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
+            <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
+            <Setter Property="Padding" Value="16,10" />
+            <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeSmall}" />
+            <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource HingeM3PrimaryBrush}" />
+            <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource HingeM3SurfaceBrush}" />
+        </Style>
+    </Page.Resources>
+    <ScrollViewer x:Name="PersonalizationScrollViewer" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <Grid x:Name="PersonalizationPageContentRoot" HorizontalAlignment="Stretch">
+        <StackPanel Style="{StaticResource HingeSettingsPageStackStyle}">
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button
+                <local:HandCursorButton
                     x:Name="BackToSettingsButton" AutomationProperties.AutomationId="PersonalizationPage.BackToSettingsButton"
                     Grid.Column="0"
                     Style="{StaticResource HingeIconButtonStyle}"
                     ToolTipService.ToolTip="返回设置"
                     AutomationProperties.Name="返回设置">
                     <SymbolIcon Symbol="Back" />
-                </Button>
+                </local:HandCursorButton>
                 <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Text="个性化" Style="{StaticResource HingePageTitleStyle}" />
                     <TextBlock Text="调整窗口的显示方式，设置会立即保存。" Style="{StaticResource HingePageDescriptionStyle}" />
@@ -26,43 +36,177 @@
 
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="窗口主题" FontSize="20" FontWeight="SemiBold" />
-                    <TextBlock Text="选择应用窗口使用的浅色或深色外观。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock Text="窗口主题" Style="{StaticResource HingeM3SectionHeaderStyle}" />
+                    <TextBlock Text="主题模式独立于配色方案；浅色、深色与跟随系统都会使用同一色种。" Style="{StaticResource HingeM3BodyVariantStyle}" />
                     <RadioButtons x:Name="ThemeOptions" AutomationProperties.AutomationId="PersonalizationPage.ThemeOptions" AutomationProperties.Name="窗口主题">
                         <RadioButton Content="跟随系统" Tag="system" />
                         <RadioButton Content="浅色模式" Tag="light" />
                         <RadioButton Content="深色模式" Tag="dark" />
                     </RadioButtons>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="窗口材质" FontSize="20" FontWeight="SemiBold" />
-                    <TextBlock Text="使用 Windows App SDK 提供的系统背景材质，窗口会根据系统能力自动回退。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <ComboBox x:Name="MaterialOptions" AutomationProperties.Name="窗口材质" AutomationProperties.AutomationId="PersonalizationPage.MaterialOptions" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="240" MaxWidth="440">
-                        <ComboBoxItem Content="MICA · 柔和云母" Tag="mica" />
-                        <ComboBoxItem Content="MICA Alt · 层次云母" Tag="micaAlt" />
-                        <ComboBoxItem Content="亚克力 · 磨砂玻璃" Tag="acrylic" />
-                        <ComboBoxItem Content="细亚克力 · 更透亮的磨砂" Tag="acrylicThin" />
+                    <TextBlock Text="Material 3 配色" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                    <TextBlock Text="选择后会立即应用并保存；每种方案都同时包含浅色与深色角色。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                    <ComboBox x:Name="PaletteOptions" AutomationProperties.AutomationId="PersonalizationPage.PaletteOptions" AutomationProperties.Name="Material 3 配色方案" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="420" MaxWidth="440">
+                        <ComboBoxItem AutomationProperties.Name="鼠尾草绿" Tag="sage">
+                            <Grid Width="420" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock Text="鼠尾草绿" VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF3E6837" />
+                                    <Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFBEF0B2" />
+                                    <Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFF2F5EB" />
+                                    <Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFC2C8BC" />
+                                    <Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF42493F" />
+                                </StackPanel>
+                            </Grid>
+                        </ComboBoxItem>
+                        <ComboBoxItem AutomationProperties.Name="海蓝" Tag="blue">
+                            <Grid Width="420" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="海蓝" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF39608F" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFD3E4FF" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFF2F3FA" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFC3C6CF" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF43474E" /></StackPanel></Grid>
+                        </ComboBoxItem>
+                        <ComboBoxItem AutomationProperties.Name="紫色" Tag="purple">
+                            <Grid Width="420" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="紫色" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF6750A4" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFEADDFF" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFF7F2FA" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFCAC4D0" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF49454F" /></StackPanel></Grid>
+                        </ComboBoxItem>
+                        <ComboBoxItem AutomationProperties.Name="青绿" Tag="teal">
+                            <Grid Width="420" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="青绿" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF006A60" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF9EF2E4" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFEFF5F2" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFBEC9C6" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF3F4947" /></StackPanel></Grid>
+                        </ComboBoxItem>
+                        <ComboBoxItem AutomationProperties.Name="暖橙" Tag="orange">
+                            <Grid Width="420" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="暖橙" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF855318" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFFFDCBE" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFFFF1E7" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFD5C3B5" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF51453A" /></StackPanel></Grid>
+                        </ComboBoxItem>
+                        <ComboBoxItem AutomationProperties.Name="中性灰" Tag="neutral">
+                            <Grid Width="420" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="中性灰" VerticalAlignment="Center" /><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF516164" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFD4E6E9" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFF4F3F3" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FFC7C6C6" /><Rectangle Width="16" Height="16" RadiusX="3" RadiusY="3" Fill="#FF464747" /></StackPanel></Grid>
+                        </ComboBoxItem>
                     </ComboBox>
                 </StackPanel>
             </Border>
 
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="主界面背景图片" FontSize="20" FontWeight="SemiBold" />
-                    <TextBlock Text="导入一张本机图片作为窗口背景。图片仅保存在当前电脑，删除文件后会自动回退到纯材质背景。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <TextBlock x:Name="BackgroundPathText" Text="未设置背景图片" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock Text="窗口材质" Style="{StaticResource HingeM3SectionHeaderStyle}" />
+                    <TextBlock Text="使用 Windows App SDK 提供的系统背景材质，窗口会根据系统能力自动回退。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                    <ComboBox
+                        x:Name="MaterialOptions"
+                        AutomationProperties.Name="窗口材质"
+                        AutomationProperties.AutomationId="PersonalizationPage.MaterialOptions"
+                        SelectedValuePath="Tag"
+                        ItemContainerStyle="{StaticResource HingeM3MaterialOptionItemStyle}"
+                        Foreground="{ThemeResource HingeM3OnSurfaceBrush}"
+                        HorizontalAlignment="Left"
+                        MinWidth="240"
+                        MaxWidth="440">
+                        <ComboBox.Resources>
+                            <ResourceDictionary>
+                                <ResourceDictionary.ThemeDictionaries>
+                                    <ResourceDictionary x:Key="Light">
+                                        <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                        <StaticResource x:Key="ComboBoxDropDownBorderBrush" ResourceKey="HingeM3OutlineVariantBrush" />
+                                        <StaticResource x:Key="ComboBoxDropDownForeground" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundPressed" ResourceKey="HingeM3StatePressedBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedUnfocused" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedPointerOver" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedPressed" ResourceKey="HingeM3PrimaryBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundPressed" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedUnfocused" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedPointerOver" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedPressed" ResourceKey="HingeM3OnPrimaryBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+                                        <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="Transparent" />
+                                        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="HingeM3ShapeMedium" />
+                                    </ResourceDictionary>
+                                    <ResourceDictionary x:Key="Dark">
+                                        <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                        <StaticResource x:Key="ComboBoxDropDownBorderBrush" ResourceKey="HingeM3OutlineVariantBrush" />
+                                        <StaticResource x:Key="ComboBoxDropDownForeground" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundPressed" ResourceKey="HingeM3StatePressedBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedUnfocused" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedPointerOver" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedPressed" ResourceKey="HingeM3PrimaryBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundPressed" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedUnfocused" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedPointerOver" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedPressed" ResourceKey="HingeM3OnPrimaryBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+                                        <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="Transparent" />
+                                        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="HingeM3ShapeMedium" />
+                                    </ResourceDictionary>
+                                    <ResourceDictionary x:Key="HighContrast">
+                                        <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                        <StaticResource x:Key="ComboBoxDropDownBorderBrush" ResourceKey="HingeM3OutlineVariantBrush" />
+                                        <StaticResource x:Key="ComboBoxDropDownForeground" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundPressed" ResourceKey="HingeM3StatePressedBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedUnfocused" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedPointerOver" ResourceKey="HingeM3PrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemBackgroundSelectedPressed" ResourceKey="HingeM3PrimaryBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundPressed" ResourceKey="HingeM3OnSurfaceBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedUnfocused" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedPointerOver" ResourceKey="HingeM3OnPrimaryContainerBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedPressed" ResourceKey="HingeM3OnPrimaryBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+                                        <StaticResource x:Key="ComboBoxItemForegroundSelectedDisabled" ResourceKey="HingeM3DisabledContentBrush" />
+                                        <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="Transparent" />
+                                        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="HingeM3ShapeMedium" />
+                                    </ResourceDictionary>
+                                </ResourceDictionary.ThemeDictionaries>
+                            </ResourceDictionary>
+                        </ComboBox.Resources>
+                        <ComboBoxItem Tag="mica"><TextBlock Text="MICA · 柔和云母" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                        <ComboBoxItem Tag="micaAlt"><TextBlock Text="MICA Alt · 层次云母" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                        <ComboBoxItem Tag="acrylic"><TextBlock Text="亚克力 · 磨砂玻璃" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                        <ComboBoxItem Tag="acrylicThin"><TextBlock Text="细亚克力 · 更透亮的磨砂" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                    </ComboBox>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="主界面背景图片" Style="{StaticResource HingeM3SectionHeaderStyle}" />
+                    <TextBlock Text="导入一张本机图片作为窗口背景。图片仅保存在当前电脑，删除文件后会自动回退到纯材质背景。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                    <TextBlock x:Name="BackgroundPathText" Text="未设置背景图片" Style="{StaticResource HingeM3BodyVariantStyle}" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="ImportBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ImportBackgroundButton" Content="导入图片" />
-                        <Button x:Name="ClearBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ClearBackgroundButton" Content="清除背景" />
+                        <local:HandCursorButton x:Name="ImportBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ImportBackgroundButton" Content="导入图片" />
+                        <local:HandCursorButton x:Name="ClearBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ClearBackgroundButton" Content="清除背景" />
                     </StackPanel>
                     <Border x:Name="BackgroundPreviewBorder" Height="160" CornerRadius="8" Visibility="Collapsed">
                         <Image x:Name="BackgroundPreview" Stretch="UniformToFill" />
                     </Border>
                 </StackPanel>
             </Border>
+
+            <Border Style="{StaticResource HingeCardStyle}" Padding="24">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="界面字体" Style="{StaticResource HingeM3SectionHeaderStyle}" />
+                    <TextBlock Text="导入 TTF 或 OTF 字体文件，也可以导入包含这些字体的 ZIP 压缩包。可分别选择字体系列和字重；导入不会自动切换当前字体。字体仅保存在 Hinge 本地字体库，不安装到 Windows 系统。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                    <TextBlock Text="字体系列" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                    <ComboBox x:Name="FontOptions" AutomationProperties.AutomationId="PersonalizationPage.FontOptions" AutomationProperties.Name="字体系列" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="320" MaxWidth="520" />
+                    <TextBlock Text="字重 / 样式" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                    <ComboBox x:Name="FontWeightOptions" AutomationProperties.AutomationId="PersonalizationPage.FontWeightOptions" AutomationProperties.Name="字重和样式" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="240" MaxWidth="360" />
+                    <TextBlock x:Name="FontPreviewText" Text="字体预览 · Hinge 你好 123" Style="{StaticResource HingeM3BodyStyle}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <local:HandCursorButton x:Name="ImportFontButton" AutomationProperties.AutomationId="PersonalizationPage.ImportFontButton" Content="导入字体文件或 ZIP" Click="ImportFontButton_Click" />
+                        <local:HandCursorButton x:Name="DeleteFontButton" AutomationProperties.AutomationId="PersonalizationPage.DeleteFontButton" Content="删除所选字体" IsEnabled="False" Click="DeleteFontButton_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="FontImportStatusText" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
         </StackPanel>
+        </Grid>
     </ScrollViewer>
 </Page>

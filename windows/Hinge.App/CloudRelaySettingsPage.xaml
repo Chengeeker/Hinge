@@ -1,23 +1,24 @@
-<Page
+<Page xmlns:local="using:Hinge.App"
     x:Class="Hinge.App.CloudRelaySettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-        <StackPanel Style="{StaticResource HingePageStackStyle}">
+    <ScrollViewer x:Name="CloudRelaySettingsScrollViewer" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <Grid x:Name="CloudRelaySettingsPageContentRoot" HorizontalAlignment="Stretch">
+        <StackPanel Style="{StaticResource HingeSettingsPageStackStyle}">
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button
+                <local:HandCursorButton
                     x:Name="BackToSettingsButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.BackToSettingsButton"
                     Grid.Column="0"
                     Style="{StaticResource HingeIconButtonStyle}"
                     ToolTipService.ToolTip="返回设置"
                     AutomationProperties.Name="返回设置">
                     <SymbolIcon Symbol="Back" />
-                </Button>
+                </local:HandCursorButton>
                 <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Text="Cloud Relay" Style="{StaticResource HingePageTitleStyle}" />
                     <TextBlock Text="使用你自己的 Cloudflare Worker 与 R2，在局域网不可用时异步中转文件。" Style="{StaticResource HingePageDescriptionStyle}" />
@@ -27,20 +28,21 @@
             <Border Style="{StaticResource HingeCardStyle}" Padding="24">
                 <StackPanel Spacing="12">
                     <ToggleSwitch x:Name="CloudRelayEnabledToggle" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayEnabledToggle" Header="启用 Cloud Relay" OnContent="开启" OffContent="关闭" />
-                    <TextBlock Text="局域网连接仍然优先；两台已信任设备需要使用同一 Relay 加密密钥。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock Text="局域网连接仍然优先；两台已信任设备需要使用同一 Relay 加密密钥。" FontSize="14" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" TextWrapping="Wrap" />
                     <TextBox x:Name="CloudRelayEndpointTextBox" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayEndpointTextBox" Header="Worker 地址" PlaceholderText="https://hinge-relay.example.workers.dev" />
                     <TextBox x:Name="CloudRelayKeyTextBox" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayKeyTextBox" Header="Relay 加密密钥" PlaceholderText="Base64URL 32 字节密钥" />
                     <PasswordBox x:Name="CloudRelayAdminTokenTextBox" AutomationProperties.AutomationId="CloudRelaySettingsPage.CloudRelayAdminTokenTextBox" Header="部署 Token（仅注册时使用）" />
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
-                        <Button x:Name="GenerateCloudRelayKeyButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.GenerateCloudRelayKeyButton" Content="生成密钥" />
-                        <Button x:Name="CopyCloudRelayKeyButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.CopyCloudRelayKeyButton" Content="复制密钥" />
-                        <Button x:Name="SaveCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.SaveCloudRelayButton" Content="保存配置" />
-                        <Button x:Name="RegisterCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.RegisterCloudRelayButton" Content="注册此设备" />
-                        <Button x:Name="TestCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.TestCloudRelayButton" Content="测试 Worker" />
+                        <local:HandCursorButton x:Name="GenerateCloudRelayKeyButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.GenerateCloudRelayKeyButton" Content="生成密钥" />
+                        <local:HandCursorButton x:Name="CopyCloudRelayKeyButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.CopyCloudRelayKeyButton" Content="复制密钥" />
+                        <local:HandCursorButton x:Name="SaveCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.SaveCloudRelayButton" Content="保存配置" />
+                        <local:HandCursorButton x:Name="RegisterCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.RegisterCloudRelayButton" Content="注册此设备" />
+                        <local:HandCursorButton x:Name="TestCloudRelayButton" AutomationProperties.AutomationId="CloudRelaySettingsPage.TestCloudRelayButton" Content="测试 Worker" />
                     </StackPanel>
-                    <TextBlock x:Name="CloudRelayStatusText" Text="未配置 Cloud Relay" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="CloudRelayStatusText" Text="未配置 Cloud Relay" FontSize="14" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
         </StackPanel>
+        </Grid>
     </ScrollViewer>
 </Page>

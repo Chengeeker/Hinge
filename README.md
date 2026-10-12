@@ -15,7 +15,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 - LAN-first：局域网直连优先，不把用户数据上传到项目服务器；
 - 可选 Cloud Relay：只有用户主动配置并开启自己的 Worker 后，LAN 不可用时才上传加密文件；Hinge 不托管 Relay，也不支持互联网首次配对；
-- Native-first：Windows 使用 WinUI 3 / Windows App SDK，媒体文件交给 Windows 默认关联应用打开；Android 使用 Flutter UI 和 Android 原生桥接；
+- 原生体验：Windows 桌面端与系统文件、托盘和资源管理器集成，媒体文件交给 Windows 默认关联应用打开；Android 使用 Flutter 界面和 Android 原生桥接；
 - 事实优先：Mock、回环测试和真实手机验收分开记录，不把自动化测试当作所有机型都已验证。
 
 ## 当前版本包含的功能
@@ -46,7 +46,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 ### Windows
 
-- .NET 8 + Windows App SDK + WinUI 3 原生桌面客户端；
+- 面向 Windows 10/11 的原生桌面客户端，提供文件管理、日历、通知、系统托盘与资源管理器集成；
 - 独立的首页、文件管理、笔记、待办、日历、相册、工具和设置页面；
 - 侧边栏“通知”（页面标题仍为“手机历史通知”）：从已连接的 Android 设备分页读取通知历史，默认按最新到最早显示，支持时间顺序、应用筛选和验证码复制；微信/QQ只唤醒已运行的桌面客户端主窗口，避免重复启动到新的登录界面；
 - 显示手机设备名称、品牌标识和连接状态；
@@ -70,7 +70,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 - 支持在 Hinge 运行且手机已连接时，从 Windows 11 第一层右键菜单的“通过 Hinge 发送到”悬停选择目标机型；支持资源管理器多选，复用同一传输链路并自动保存到 Android `/storage/emulated/0/Download/Hinge/` 下的类型目录。设备快照读取失败时根项仍保留并显示禁用提示；EXE 安装版把 Shell DLL 放入签名稀疏身份包；便携版未注册包身份时使用“显示更多选项”中的兼容菜单；
 - Windows 右键发送在手机未连接时会先保存到持久化队列，并尝试通过 BLE 唤醒已关联的 Android 设备；BLE、适配器或厂商后台策略不可用时，用户点击 Android 常驻通知即可恢复连接并继续发送；
 - 图片、视频、音频使用当前 Windows 文件关联打开，避免应用内播放器的后台播放和释放问题；
-- WinUI 3 主题、窗口材质、背景图、开机启动、静默启动和关闭时最小化到托盘；后台运行提示可在设置中单独控制，默认关闭；
+- Material 3 界面主题、窗口材质、背景图、开机启动、静默启动和关闭时最小化到托盘；后台运行提示可在设置中单独控制，默认关闭；
 - 推荐使用可选择安装路径的自包含 EXE 安装器，也提供便携 ZIP。
 
 ## 当前明确不包含的能力
@@ -136,7 +136,7 @@ Copy-Item android/android/key.properties.example android/android/key.properties
 
 ### Windows
 
-要求 Windows 10/11 x64、.NET 8 SDK、Windows SDK、Visual Studio C++ 桌面开发工具和 Windows App SDK / WinUI 3 构建环境。
+要求 Windows 10/11 x64、.NET 8 SDK、Windows SDK、Visual Studio C++ 桌面开发工具，以及项目当前使用的 Windows App SDK（WinUI 3）构建环境。
 
 ```powershell
 dotnet build windows/Hinge.sln --configuration Release
@@ -150,7 +150,7 @@ dotnet test windows/Hinge.sln --configuration Release
 
 ```text
 android/                 Flutter Android 客户端与 Android 原生桥
-windows/                 WinUI 3 客户端、核心层、平台层和测试
+windows/                 Windows 桌面客户端、核心层、平台层和测试
 protocol/                跨端协议和专题说明
 installer/               EXE 安装器源码
 scripts/                 构建、防火墙和卸载脚本
@@ -190,7 +190,7 @@ Windows 11 第一层资源管理器菜单的 COM 激活框架改编自 Microsoft
 | [`material_symbols_icons`](https://pub.dev/packages/material_symbols_icons) | Android / Dart `4.2960.0` | Apache-2.0 | Material Symbols 图标 |
 | [`flutter_svg`](https://pub.dev/packages/flutter_svg) | Android / Dart `2.3.0` | MIT | 读取本地品牌 SVG 资源 |
 | [`cupertino_icons`](https://pub.dev/packages/cupertino_icons) | Android / Dart `1.0.9` | MIT | 少量兼容性图标资源 |
-| [Microsoft.WindowsAppSDK](https://github.com/microsoft/WindowsAppSDK) | Windows / NuGet `2.4.0` | MIT | WinUI 3、窗口和 Windows App SDK 能力 |
+| [Microsoft.WindowsAppSDK](https://github.com/microsoft/WindowsAppSDK) | Windows / NuGet `2.4.0` | MIT | Windows 桌面客户端界面、窗口和系统集成基础能力 |
 | [.NET Runtime / BCL](https://github.com/dotnet/runtime) | Windows / .NET `8` | MIT | Socket、压缩、加密、文件和系统集成基础能力 |
 
 ### 仅用于开发和测试的组件

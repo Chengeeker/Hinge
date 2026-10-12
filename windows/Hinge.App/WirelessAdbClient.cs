@@ -10,6 +10,7 @@ namespace Hinge.App;
 
 internal static class WirelessAdbClient
 {
+    private const string HingeAdbServerPort = "5038";
     private const string DiagnosticsUri = "content://com.hinge.office.diagnostics/connection";
     private const string PairedSetting = "WirelessAdbPairingCompleted";
     private const string VerifiedIdentitySetting = "WirelessAdbVerifiedIdentity";
@@ -675,7 +676,7 @@ internal static class WirelessAdbClient
         return new AdbResult(process.ExitCode, await stdout, await stderr);
     }
 
-    private static ProcessStartInfo CreateStartInfo(params string[] arguments)
+    internal static ProcessStartInfo CreateStartInfo(params string[] arguments)
     {
         var startInfo = new ProcessStartInfo(FindAdb())
         {
@@ -694,6 +695,8 @@ internal static class WirelessAdbClient
         }
         Directory.CreateDirectory(androidUserHome);
         startInfo.Environment["ANDROID_USER_HOME"] = androidUserHome;
+        startInfo.ArgumentList.Add("-P");
+        startInfo.ArgumentList.Add(HingeAdbServerPort);
         foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
         return startInfo;
     }

@@ -6,6 +6,18 @@ namespace Hinge.Tests;
 public class WirelessAdbDiscoveryTests
 {
     [Fact]
+    public void EveryAdbCommandUsesHingesIsolatedServerAndOriginalUserKeyDirectory()
+    {
+        var startInfo = WirelessAdbClient.CreateStartInfo("devices", "-l");
+
+        Assert.Equal(new[] { "-P", "5038", "devices", "-l" }, startInfo.ArgumentList);
+        var expectedUserHome = Environment.GetEnvironmentVariable("ANDROID_USER_HOME");
+        if (string.IsNullOrWhiteSpace(expectedUserHome))
+            expectedUserHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".android");
+        Assert.Equal(expectedUserHome, startInfo.Environment["ANDROID_USER_HOME"]);
+    }
+
+    [Fact]
     public void ConnectedTransportsExcludeOfflineAndUnauthorizedPhones()
     {
         var output = "List of devices attached\r\n192.168.1.4:40000\tdevice\r\n" +

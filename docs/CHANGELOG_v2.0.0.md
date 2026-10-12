@@ -2,6 +2,12 @@
 
 本说明以 Windows 旧版界面 v1.4.14 为对照基线，汇总随后完成的 Material 3 界面升级、跨端能力改进和 v2.0.0 修复。Windows 桌面客户端继续使用现有应用与业务实现；这次没有重写传输协议。
 
+## v2.0.0 发布后修复（2026-10-12）
+
+- Windows 无线 ADB 改用独立的本地 ADB Server 端口 `5038`，避免与电脑上其它工具共用默认 `5037` Server；继续使用原 Windows 用户的 ADB 主机密钥和既有配对授权，无需重新配对。
+- Windows 自动化测试 `199/199` 通过。独立 Server 实测 mDNS 正常；本次没有连接真实手机或验证电脑重启后的实际恢复。
+- 已更新本次 Release 的 Windows 安装器与便携 ZIP；Android APK 未变。
+
 ## Windows 界面与交互
 
 - 将 Material 3 视觉规范应用到设置、首页、文件管理、笔记、待办、日历、相册、通知、个性化、Cloud Relay 和 WebDAV 页面，统一分组层级、文字、表面颜色、控件状态和布局间距。
@@ -32,7 +38,7 @@
 - Android Flutter 测试 77/77 通过；设备页面定向测试 12/12 通过。新回归测试覆盖应用启动后创建的出站会话。
 - Windows Release 安装器与便携包构建完成；ZIP 的 810 个条目均可读取，包内 Hinge.dll 与 Release 输出一致。
 - Android APK 包名、版本、架构和 v2/v3 签名已核验；签名证书与 v1.4.15 回退 APK 相同。
-- Windows 最近一次完整自动化测试为 v1.4.15 基线的 198/198 通过；v2.0.0 的 Windows 代码没有功能逻辑变更，仅更新版本信息，因此本次未单独重跑 Windows 测试。
+- Windows 本次自动化测试 `199/199` 通过；独立 ADB Server 的本机 mDNS 检查通过，但没有连接真实手机或实际重启电脑验证。
 - 没有在真实 Android 手机与 Windows 电脑之间现场验证本次连接状态修复。自动化回归测试不等于真机验收。
 - Windows 安装器外层 Authenticode 未签名，首次运行时 Windows 可能显示来源提示。
 
@@ -41,5 +47,5 @@
 | 平台 | 文件 | 大小 | SHA-256 |
 | --- | --- | ---: | --- |
 | Android | Hinge.apk | 21,163,270 bytes | CE99D9E66DA9B1F5106E5B7845CA0FF43CC57284C4C934989DBBF2EC037018EF |
-| Windows | Hinge-Setup.exe | 203,924,318 bytes | D832697EC1A22D292E88DC97AFE472187DAD43BAF4B14C45742F5067FC788155 |
-| Windows | Hinge-Windows.zip | 135,540,519 bytes | 29F4E220D051AC851D873E7C33BB6D263AD6D3AAEB49F51CA8EF6AA86C626525 |
+| Windows | Hinge-Setup.exe | 203,924,380 bytes | A16800EED068676177236497F99F8AFC96CCFF441A73F765BFA97E5A8481CE25 |
+| Windows | Hinge-Windows.zip | 135,540,581 bytes | 4514F6AF289EE99E04B2CFAFBDA49A2CD24EC7ED4CB37F5F8200738340314EF2 |

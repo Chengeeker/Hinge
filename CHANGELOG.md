@@ -4,6 +4,11 @@
 
 本次以 Windows 旧版界面 v1.4.14 为对照基线，纳入之后完成的 Material 3 页面升级、窗口与导航调整、日历交互、字体系列/字重管理、品牌 Logo、离线发送保护、无线 ADB 剪贴板桥接、连接恢复和安装器路径修正；并修复 Android 设备页未及时显示 Windows 主动连接状态的问题。跨端传输协议保持 `0.1`；Android `versionCode` 递增以支持覆盖更新。完整列表见 [v2.0.0 更新日志](docs/CHANGELOG_v2.0.0.md)。
 
+### 发布后修复（2026-10-12）
+
+- Windows 无线 ADB 使用独立 Server 端口 `5038`，减少与其它 ADB 工具共享默认 `5037` Server 引发的版本和 mDNS 冲突；沿用原主机密钥与配对授权。
+- Windows 测试 `199/199` 通过，独立 Server 的 mDNS 检查通过；真实手机连接和电脑重启恢复尚未验收。GitHub v2.0.0 的 Windows 安装器与便携 ZIP 已更新，APK 保持不变。
+
 - Android：`2.0.0+121`，包名仍为 `com.hinge.office`，仅 ARM64。
 - Windows：`2.0.0.0`。
 

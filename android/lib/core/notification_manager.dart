@@ -32,6 +32,11 @@ class NotificationManager {
   }
 
   Future<bool> dispatchNotification(NotificationEventMessage notif) async {
+    final connections = _connections
+        .where((connection) => connection.isReady)
+        .toList(growable: false);
+    if (connections.isEmpty) return false;
+
     if (!filter.shouldAllow(notif)) {
       return false; // Filtered or debounced
     }
@@ -39,10 +44,8 @@ class NotificationManager {
     final jsonStr = notif.serialize();
     final bytes = utf8.encode(jsonStr);
 
-    for (final conn in List<SessionConnection>.of(_connections)) {
-      if (await conn.waitUntilReady()) {
-        conn.sendFrame(MessageType.notificationEvent, bytes);
-      }
+    for (final connection in connections) {
+      connection.sendFrame(MessageType.notificationEvent, bytes);
     }
 
     _notifController.add(notif);

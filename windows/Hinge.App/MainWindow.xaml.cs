@@ -1236,11 +1236,14 @@ public sealed partial class MainWindow : Window
         SetWirelessAdbBusy(page, true);
         try
         {
+            SetWirelessAdbConnectionStatus("正在连接或重新建立无线 ADB 连接…");
             await WirelessAdbClient.ConnectAsync(host, port, CancellationToken.None,
-                GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId());
-            SaveWirelessAdbEndpoint(host, port);
+                GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId(), reconnectExisting: true);
+            page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? host;
+            page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? port;
             SetWirelessAdbConnectionStatus("无线 ADB 已连接；主机密钥由 Android Platform-Tools 保存。");
             StartWirelessAdbConnectionManager();
+            _wirelessAdbConnectionManager?.NotifyNetworkChanged();
             if (page.WirelessAdbClipboardSync.IsOn)
             {
                 await ConfigureWirelessAdbClipboardSyncAsync(true, host, port);

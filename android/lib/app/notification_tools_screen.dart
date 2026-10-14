@@ -106,8 +106,9 @@ class _NotificationToolsScreenState extends State<NotificationToolsScreen>
         context,
       ).showSnackBar(const SnackBar(content: Text('通知已成功推送到远程 Windows 桌面！')));
     } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('通知已被防骚扰规则或 2 秒防抖拦截抑制')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('通知未发送：连接未就绪或被防骚扰规则/防抖拦截')));
     }
   }
 

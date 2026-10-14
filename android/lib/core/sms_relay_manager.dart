@@ -41,7 +41,10 @@ class SmsRelayManager {
   }
 
   void _flushPendingNotifications() {
-    if (_connections.isEmpty || _pendingNotifications.isEmpty) return;
+    if (!_connections.any((connection) => connection.isReady) ||
+        _pendingNotifications.isEmpty) {
+      return;
+    }
     final pending = List<NotificationEventMessage>.of(_pendingNotifications);
     _pendingNotifications.clear();
     for (final notification in pending) {
@@ -57,16 +60,17 @@ class SmsRelayManager {
   }
 
   Future<void> _dispatch(NotificationEventMessage notification) async {
-    if (_connections.isEmpty) {
+    if (!_connections.any((connection) => connection.isReady)) {
       _queue(notification);
       return;
     }
     final delivered = await notificationManager.dispatchNotification(
       notification,
     );
-    // A connection can disappear while waitUntilReady() is waiting. Keep the
-    // event briefly so a just-completed reconnect can still deliver it.
-    if (!delivered && _connections.isEmpty) _queue(notification);
+    // Keep events that lose their ready connection so reconnect can flush them.
+    if (!delivered && !_connections.any((connection) => connection.isReady)) {
+      _queue(notification);
+    }
   }
 
   void _handleNativeEvent(dynamic value) {

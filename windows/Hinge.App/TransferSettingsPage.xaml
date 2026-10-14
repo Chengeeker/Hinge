@@ -201,7 +201,7 @@
                                         <local:HandCursorButton
                                             x:Name="WirelessAdbConnectButton"
                                             AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbConnectButton"
-                                            Content="立即连接"
+                                            Content="连接 / 重连"
                                             Style="{StaticResource HingeM3TonalButtonStyle}" />
                                         <local:HandCursorButton
                                             x:Name="WirelessAdbPullLogsButton"

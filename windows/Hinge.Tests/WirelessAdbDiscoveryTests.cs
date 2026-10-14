@@ -5,6 +5,77 @@ namespace Hinge.Tests;
 
 public class WirelessAdbDiscoveryTests
 {
+    [Theory]
+    [InlineData("192.168.1.4:42200")]
+    [InlineData("[fe80::1]:42200")]
+    [InlineData("adb-phone-random._adb-tls-connect._tcp")]
+    public async Task ManualReconnectTargetsOnlyTheVerifiedWirelessTransport(string transport)
+    {
+        var commands = new List<string[]>();
+        await WirelessAdbClient.ReconnectTransportAsync(transport, CancellationToken.None, (_, args) =>
+        {
+            commands.Add(args);
+            return Task.FromResult(new WirelessAdbClient.AdbResult(0, "ok", string.Empty));
+        });
+        Assert.Equal(2, commands.Count);
+        Assert.Equal(new[] { "disconnect", transport }, commands[0]);
+        Assert.Equal(new[] { "connect", transport }, commands[1]);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("USB123456")]
+    [InlineData("192.168.1.4")]
+    public async Task ReconnectRejectsTargetsThatCouldDisconnectEveryPhoneOrTouchUsb(string transport)
+    {
+        var called = false;
+        await Assert.ThrowsAsync<ArgumentException>(() => WirelessAdbClient.ReconnectTransportAsync(
+            transport, CancellationToken.None, (_, _) =>
+            {
+                called = true;
+                return Task.FromResult(new WirelessAdbClient.AdbResult(0, string.Empty, string.Empty));
+            }));
+        Assert.False(called);
+    }
+
+    [Fact]
+    public async Task FailedDisconnectDoesNotStartAnotherConnection()
+    {
+        var calls = 0;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => WirelessAdbClient.ReconnectTransportAsync(
+            "192.168.1.4:42200", CancellationToken.None, (_, _) =>
+            {
+                calls++;
+                return Task.FromResult(new WirelessAdbClient.AdbResult(1, string.Empty, "server unavailable"));
+            }));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task ReconnectReportsAuthenticationFailureEvenWhenAdbExitsZero()
+    {
+        var error = await Assert.ThrowsAsync<WirelessAdbException>(() => WirelessAdbClient.ReconnectTransportAsync(
+            "192.168.1.4:42200", CancellationToken.None, (_, args) => Task.FromResult(
+                new WirelessAdbClient.AdbResult(0, args[0] == "connect" ? "failed to authenticate" : "disconnected", string.Empty))));
+        Assert.Equal(WirelessAdbConnectionState.AuthorizationInvalid, error.State);
+    }
+
+    [Fact]
+    public async Task CancellationAfterDisconnectDoesNotReconnect()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var calls = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => WirelessAdbClient.ReconnectTransportAsync(
+            "192.168.1.4:42200", cancellation.Token, (_, _) =>
+            {
+                calls++;
+                cancellation.Cancel();
+                return Task.FromResult(new WirelessAdbClient.AdbResult(0, "disconnected", string.Empty));
+            }));
+        Assert.Equal(1, calls);
+    }
+
     [Fact]
     public void EveryAdbCommandUsesHingesIsolatedServerAndOriginalUserKeyDirectory()
     {

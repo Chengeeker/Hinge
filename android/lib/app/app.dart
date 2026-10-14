@@ -2289,7 +2289,6 @@ class _DevicesScreenState extends State<DevicesScreen>
 
   void _watchConnectionData(SessionConnection connection) {
     if (!_watchedConnections.add(connection)) return;
-    _smsRelayManager.registerConnection(connection);
     _incomingPeerSubscriptions.add(
       connection.frames.listen((frame) {
         unawaited(
@@ -2299,12 +2298,16 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
     _incomingPeerSubscriptions.add(
       connection.stateStream.listen((state) {
+        if (state.isUsable) {
+          _smsRelayManager.registerConnection(connection);
+        }
         if (state == SessionState.disconnected) {
           _watchedConnections.remove(connection);
           _smsRelayManager.unregisterConnection(connection);
         }
       }),
     );
+    _smsRelayManager.registerConnection(connection);
   }
 
   Future<void> _handleReverseConnectionRequest(

@@ -46,11 +46,34 @@ internal static class WirelessAdbClient
         => await ConnectAsync(host, connectPort, CancellationToken.None);
 
     public static async Task<string> ConnectAsync(string host, string connectPort, CancellationToken cancellationToken,
-        IEnumerable<string>? currentHosts = null, string? hingeDeviceId = null)
+        IEnumerable<string>? currentHosts = null, string? hingeDeviceId = null, bool reconnectExisting = false)
     {
         await ConnectionGate.WaitAsync(cancellationToken);
-        try { return await ConnectCoreAsync(host, connectPort, cancellationToken, currentHosts, hingeDeviceId); }
+        try { return await ConnectCoreAsync(host, connectPort, cancellationToken, currentHosts, hingeDeviceId, reconnectExisting); }
         finally { ConnectionGate.Release(); }
+    }
+
+    internal static bool IsWirelessTransport(string transport) =>
+        TryParseEndpoint(transport, out _, out _) ||
+        Regex.IsMatch(transport, @"^[A-Za-z0-9_-]+\._adb-tls-connect\._tcp\.?$", RegexOptions.CultureInvariant);
+
+    internal static async Task ReconnectTransportAsync(string transport, CancellationToken cancellationToken,
+        Func<CancellationToken, string[], Task<AdbResult>>? run = null)
+    {
+        // An empty adb disconnect target disconnects every phone on this server.
+        if (!IsWirelessTransport(transport)) throw new ArgumentException("只能重新连接已验证的无线 ADB 设备。", nameof(transport));
+        cancellationToken.ThrowIfCancellationRequested();
+        run ??= RunAsync;
+        EnsureSuccess(await run(cancellationToken, ["disconnect", transport]));
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = await run(cancellationToken, ["connect", transport]);
+        if (result.ExitCode != 0 || IsAdbConnectionFailure(result.Output, result.Error))
+        {
+            var failure = ClassifyConnectionFailure(false, false,
+                IsAdbAuthorizationFailure(result.Output, result.Error), IsAdbOfflineResult(result.Output, result.Error),
+                string.Empty, JoinDetails(result.Output, result.Error));
+            throw new WirelessAdbException(failure.State, failure.Message);
+        }
     }
 
     public static Task<WirelessAdbRuntimeInfo> GetRuntimeInfoAsync(CancellationToken cancellationToken)
@@ -107,7 +130,7 @@ internal static class WirelessAdbClient
     }
 
     private static async Task<string> ConnectCoreAsync(string host, string connectPort, CancellationToken cancellationToken,
-        IEnumerable<string>? currentHosts, string? hingeDeviceId)
+        IEnumerable<string>? currentHosts, string? hingeDeviceId, bool reconnectExisting = false)
     {
         var endpoint = TryEndpoint(host, connectPort);
         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Hinge");
@@ -135,12 +158,19 @@ internal static class WirelessAdbClient
         foreach (var device in deviceStates.Where(device => device.State == "device"))
         {
             var transport = device.Transport;
+            if (reconnectExisting && !IsWirelessTransport(transport)) continue;
             if (identity == null && !MatchesServiceIdentity(transport, pairingGuid) && transport != endpoint) continue;
             var actualIdentity = await ReadIdentityAsync(transport, cancellationToken);
             if (identity != null && actualIdentity != identity) continue;
             if (actualIdentity.Length == 0) continue;
             RememberIdentity(endpoint ?? transport, actualIdentity);
             await RememberAdvertisedEndpointAsync(transport, actualIdentity, pairingGuid, cancellationToken);
+            if (reconnectExisting && IsWirelessTransport(transport))
+            {
+                await ReconnectTransportAsync(transport, cancellationToken);
+                // Recheck device state and identity after the new connection, without refreshing twice.
+                return await ConnectCoreAsync(host, connectPort, cancellationToken, currentHosts, hingeDeviceId);
+            }
             return transport;
         }
 
@@ -753,7 +783,7 @@ internal static class WirelessAdbClient
         throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail) ? "ADB 操作失败。" : detail);
     }
 
-    private sealed record AdbResult(int ExitCode, string Output, string Error);
+    internal sealed record AdbResult(int ExitCode, string Output, string Error);
 }
 
 internal sealed record WirelessAdbRuntimeInfo(

@@ -4595,7 +4595,12 @@ public sealed partial class MainWindow : Window
                             }
                             else
                             {
-                                direct.Dispose();
+                                // Preserve the winner, including a replacement kept by deduplication.
+                                if (!ReferenceEquals(direct, tcs.Task.Result) &&
+                                    !ReferenceEquals(direct, _sessionManager.ConnectionForDevice(device.DeviceId)))
+                                {
+                                    direct.Dispose();
+                                }
                                 return;
                             }
                         }

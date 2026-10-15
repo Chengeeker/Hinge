@@ -51,8 +51,10 @@ object HingeNativeConnectionEvents {
         queued.forEach { post(nextSink, it) }
     }
 
-    fun detach() {
-        synchronized(lock) { sink = null }
+    fun detach(expectedSink: EventChannel.EventSink?) {
+        synchronized(lock) {
+            if (sink === expectedSink) sink = null
+        }
     }
 
     fun isAttached(): Boolean = synchronized(lock) { sink != null }
@@ -102,6 +104,7 @@ private object HingeProtocol {
     const val fileReject = 0x0032
     const val fileChunk = 0x0033
     const val fileComplete = 0x0034
+    const val toolCommand = 0x0080
     const val compressedControl = 0x0082
     const val compressionCapability = "control-compression-zlib-v1"
     const val streamingFileHashCapability = "streaming-file-hash-v1"
@@ -607,7 +610,17 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
     }
 
-    fun readDiagnostics(): String = diagnostics.read()
+    fun readDiagnostics(): String {
+        diagnostics.log(
+            "feature_bridge_snapshot",
+            mapOf(
+                "sessionAttached" to HingeNativeConnectionEvents.isAttached(),
+                "smsAttached" to SmsRelayBridge.isAttached(),
+                "readySessions" to connections.values.count { it.isReady },
+            ),
+        )
+        return diagnostics.read()
+    }
 
     fun clearDiagnostics() = diagnostics.clear()
 
@@ -957,6 +970,17 @@ class HingeNativeConnectionBroker(private val context: Context) {
     }
 
     private fun onFrame(connection: NativeConnection, frame: NativeProtocolFrame) {
+        if (frame.type == HingeProtocol.toolCommand && frame.payload.size <= 4096) {
+            val command = runCatching {
+                JSONObject(String(frame.payload, Charsets.UTF_8)).optString("command")
+            }.getOrNull()
+            when (command) {
+                "browseFilesPage", "photoAlbums", "photosPage", "deviceInfo" -> diagnostics.log(
+                    "workspace_query_received",
+                    mapOf("command" to command, "bridgeAttached" to HingeNativeConnectionEvents.isAttached()),
+                )
+            }
+        }
         if (frame.type == HingeProtocol.fileAccept || frame.type == HingeProtocol.fileReject) {
             val transferId = jsonTransferId(frame.payload)
             if (transferId != null) {

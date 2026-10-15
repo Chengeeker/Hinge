@@ -23,7 +23,8 @@ class HingeDiagnosticsProvider : ContentProvider() {
         val (reader, writer) = ParcelFileDescriptor.createPipe()
         thread(name = "hinge-diagnostics-export", isDaemon = true) {
             ParcelFileDescriptor.AutoCloseOutputStream(writer).use { output: OutputStream ->
-                val log = HingeDiagnostics.from(appContext).read()
+                val log = HingeForegroundService.current?.connectionBroker()?.readDiagnostics()
+                    ?: HingeDiagnostics.from(appContext).read()
                 output.write(log.toByteArray(StandardCharsets.UTF_8))
             }
         }

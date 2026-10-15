@@ -24,9 +24,9 @@ object NotificationHistoryBridge {
         queued.forEach { event -> post(nextSink, event) }
     }
 
-    fun detach() {
+    fun detach(expectedSink: EventChannel.EventSink?) {
         synchronized(lock) {
-            sink = null
+            if (sink === expectedSink) sink = null
         }
     }
 

@@ -61,11 +61,13 @@ object SmsRelayBridge {
         queued.forEach { event -> post(nextSink, event) }
     }
 
-    fun detach() {
+    fun detach(expectedSink: EventChannel.EventSink?) {
         synchronized(lock) {
-            sink = null
+            if (sink === expectedSink) sink = null
         }
     }
+
+    fun isAttached(): Boolean = synchronized(lock) { sink != null }
 
     fun emit(event: Map<String, Any?>) {
         val forwardedEvent = event - "origin"

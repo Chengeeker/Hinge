@@ -1822,7 +1822,6 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
     _automaticConnectAttempts[candidate.deviceId] = now;
 
-    _showMessage('正在自动连接历史设备：${candidate.name}…');
     await _connect(candidate, automatic: true);
 
     if (_activeConnection?.isReady == true) {
@@ -2373,6 +2372,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     SessionConnection connection,
     SessionPeerInfo peer,
   ) {
+    if (!connection.isReady) return;
     // Direct TCP can arrive before (or without) the UDP reverse-request
     // marker. Apply the same manual-disconnect gate after identity validation
     // so an automatic reconnect cannot bypass the request-level check.
@@ -2558,18 +2558,20 @@ class _DevicesScreenState extends State<DevicesScreen>
       _manualDisconnectSuppressedDeviceIds.remove(device.deviceId);
     }
     if (device.networkAddresses.isEmpty) {
-      _showMessage('还没有收到 ${device.name} 的局域网地址，请先刷新发现或检查同一 Wi-Fi');
+      if (!automatic) {
+        _showMessage('还没有收到 ${device.name} 的局域网地址，请先刷新发现或检查同一 Wi-Fi');
+      }
       return;
     }
     if (_connectingDeviceId != null) {
-      _showMessage('正在尝试连接另一台设备，请稍候');
+      if (!automatic) _showMessage('正在尝试连接另一台设备，请稍候');
       return;
     }
     final attemptGeneration = ++_connectionAttemptGeneration;
     _lastConnectedDevice = device;
     if (_activeDevice?.deviceId == device.deviceId &&
-        _activeConnection != null) {
-      _showMessage('${device.name} 已连接');
+        _activeConnection?.isReady == true) {
+      if (!automatic) _showMessage('${device.name} 已连接');
       return;
     }
     final existing = widget.sessionManager.connectionForDevice(device.deviceId);
@@ -2581,7 +2583,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       });
       await _refreshStorage();
       unawaited(_dispatchPendingSharedFiles());
-      _showMessage('已恢复 ${device.name} 的设备会话');
+      if (!automatic) _showMessage('已恢复 ${device.name} 的设备会话');
       return;
     }
 
@@ -2590,7 +2592,6 @@ class _DevicesScreenState extends State<DevicesScreen>
       remotePairingCode = _remotePairingCodes[device.deviceId];
       if (remotePairingCode == null || remotePairingCode.isEmpty) {
         if (automatic) {
-          _showMessage('设备 ${device.name} 需要配对码，请手动连接并输入后再恢复历史连接');
           return;
         }
         remotePairingCode = await _promptRemotePairingCode(device.name);
@@ -2600,9 +2601,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     }
 
     setState(() => _connectingDeviceId = device.deviceId);
-    _showMessage(
-      automatic ? '正在自动连接历史设备 ${device.name}…' : '正在尝试连接 ${device.name}…',
-    );
+    if (!automatic) _showMessage('正在尝试连接 ${device.name}…');
     Object? lastError;
     final previousConnection = _activeConnection;
     SessionConnection? connection;
@@ -2610,7 +2609,6 @@ class _DevicesScreenState extends State<DevicesScreen>
       final addresses = await _orderedConnectionAddresses(
         device.networkAddresses,
       );
-      var reverseConnection = false;
       // Start both directions in parallel. Duplicate sockets are collapsed by
       // SessionManager after the identity handshake, while the first usable
       // path wins immediately without waiting for an inbound TCP timeout.
@@ -2626,6 +2624,7 @@ class _DevicesScreenState extends State<DevicesScreen>
 
       final completer = Completer<SessionConnection>();
       var resolved = false;
+      SessionConnection? selectedConnection;
 
       // Parallel Branch 1: High-sensitivity polling for incoming reverse connection
       if (!device.pairingRequired) {
@@ -2638,7 +2637,7 @@ class _DevicesScreenState extends State<DevicesScreen>
             if (rev != null && rev.isReady) {
               if (!resolved) {
                 resolved = true;
-                reverseConnection = true;
+                selectedConnection = rev;
                 completer.complete(rev);
               }
               return;
@@ -2665,8 +2664,14 @@ class _DevicesScreenState extends State<DevicesScreen>
               );
               if (!resolved) {
                 resolved = true;
+                selectedConnection = direct;
                 completer.complete(direct);
-              } else {
+              } else if (!identical(direct, selectedConnection) &&
+                  !identical(
+                    direct,
+                    widget.sessionManager.connectionForDevice(device.deviceId),
+                  )) {
+                // Preserve the winner, including a replacement kept by deduplication.
                 direct.dispose(manual: false);
               }
               return;
@@ -2681,16 +2686,12 @@ class _DevicesScreenState extends State<DevicesScreen>
         connection = await completer.future.timeout(const Duration(seconds: 6));
       } catch (_) {
         connection = widget.sessionManager.connectionForDevice(device.deviceId);
-        reverseConnection = connection != null;
       }
 
-      if (connection == null) {
-        connection = await _waitForReverseConnection(
-          device.deviceId,
-          timeout: const Duration(seconds: 1),
-        );
-        reverseConnection = connection != null;
-      }
+      connection ??= await _waitForReverseConnection(
+        device.deviceId,
+        timeout: const Duration(seconds: 1),
+      );
       if (connection == null) {
         throw StateError(lastError == null ? '没有可用的地址' : '$lastError');
       }
@@ -2699,7 +2700,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         connection.dispose(manual: false);
         return;
       }
-      if (!reverseConnection) _watchConnectionData(connection);
+      _watchConnectionData(connection);
       final peer =
           connection.peerInfo ??
           await connection.peerStream.first.timeout(
@@ -2724,6 +2725,9 @@ class _DevicesScreenState extends State<DevicesScreen>
         connection.dispose(manual: false);
         return;
       }
+      if (!connection.isReady) {
+        throw StateError('设备会话在握手后已断开');
+      }
       _connectionSubscription?.cancel();
       final observedConnection = connection;
       _connectionSubscription = observedConnection.stateStream.listen((state) {
@@ -2731,7 +2735,7 @@ class _DevicesScreenState extends State<DevicesScreen>
           observedConnection,
           state,
         );
-        if (disconnected && mounted) {
+        if (disconnected && mounted && !automatic) {
           _showMessage('${device.name} 已断开');
         }
       });
@@ -2741,7 +2745,7 @@ class _DevicesScreenState extends State<DevicesScreen>
       }
       _registerIncomingPeer(connection, peer);
       await _refreshStorage();
-      _showMessage('已连接 ${device.name}');
+      if (!automatic) _showMessage('已连接 ${device.name}');
     } catch (error) {
       // A direct-address attempt can fail after a simultaneous reverse
       // connection has already completed. The authenticated live session is
@@ -2762,7 +2766,7 @@ class _DevicesScreenState extends State<DevicesScreen>
         if (connection?.pairingError?.isNotEmpty == true) {
           _remotePairingCodes.remove(device.deviceId);
         }
-        _showMessage('连接 ${device.name} 失败：$error');
+        if (!automatic) _showMessage('连接 ${device.name} 失败：$error');
       }
     } finally {
       if (mounted && _connectingDeviceId == device.deviceId) {

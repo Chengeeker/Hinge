@@ -215,6 +215,11 @@ void main() {
           content: 'Code review ready',
         );
 
+        // A handshake must not consume the notification's deduplication entry.
+        expect(await senderManager.dispatchNotification(testNotif), isFalse);
+        expect(await senderConn.waitUntilReady(), isTrue);
+        expect(await receiverConn.waitUntilReady(), isTrue);
+
         final dispatched = await senderManager.dispatchNotification(testNotif);
         expect(dispatched, isTrue);
 

@@ -72,6 +72,9 @@ import kotlin.math.min
 
 class MainActivity : FlutterActivity() {
     private val channelName = "hinge/platform"
+    private var nativeConnectionEventSink: EventChannel.EventSink? = null
+    private var smsEventSink: EventChannel.EventSink? = null
+    private var notificationHistoryEventSink: EventChannel.EventSink? = null
     private val calendarPermissionRequest = 4101
     private val photosPermissionRequest = 4102
     private val screenCapturePermissionRequest = 4201
@@ -215,11 +218,13 @@ class MainActivity : FlutterActivity() {
             "hinge/sms/events",
         ).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                smsEventSink = events
                 SmsRelayBridge.attach(events)
             }
 
             override fun onCancel(arguments: Any?) {
-                SmsRelayBridge.detach()
+                SmsRelayBridge.detach(smsEventSink)
+                smsEventSink = null
             }
         })
         EventChannel(
@@ -227,11 +232,13 @@ class MainActivity : FlutterActivity() {
             "hinge/notification_history/events",
         ).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                notificationHistoryEventSink = events
                 NotificationHistoryBridge.attach(events)
             }
 
             override fun onCancel(arguments: Any?) {
-                NotificationHistoryBridge.detach()
+                NotificationHistoryBridge.detach(notificationHistoryEventSink)
+                notificationHistoryEventSink = null
             }
         })
         EventChannel(
@@ -254,6 +261,7 @@ class MainActivity : FlutterActivity() {
             "hinge/native_connection/events",
         ).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                nativeConnectionEventSink = events
                 HingeNativeConnectionEvents.attach(events)
                 HingeForegroundService.current?.connectionBroker()?.let {
                     it.emitCurrentSnapshotForFlutter()
@@ -261,13 +269,21 @@ class MainActivity : FlutterActivity() {
             }
 
             override fun onCancel(arguments: Any?) {
-                HingeNativeConnectionEvents.detach()
+                HingeNativeConnectionEvents.detach(nativeConnectionEventSink)
+                nativeConnectionEventSink = null
             }
         })
     }
 
     override fun onResume() {
         super.onResume()
+        // A share Activity can replace these process-wide sinks while this engine stays alive.
+        smsEventSink?.let { SmsRelayBridge.attach(it) }
+        notificationHistoryEventSink?.let { NotificationHistoryBridge.attach(it) }
+        nativeConnectionEventSink?.let {
+            HingeNativeConnectionEvents.attach(it)
+            HingeForegroundService.current?.connectionBroker()?.emitCurrentSnapshotForFlutter()
+        }
         HingeForegroundService.current?.setActivityForeground(true)
     }
 
@@ -282,9 +298,12 @@ class MainActivity : FlutterActivity() {
         synchronized(shareLock) {
             shareEventSink = null
         }
-        HingeNativeConnectionEvents.detach()
-        SmsRelayBridge.detach()
-        NotificationHistoryBridge.detach()
+        HingeNativeConnectionEvents.detach(nativeConnectionEventSink)
+        SmsRelayBridge.detach(smsEventSink)
+        NotificationHistoryBridge.detach(notificationHistoryEventSink)
+        nativeConnectionEventSink = null
+        smsEventSink = null
+        notificationHistoryEventSink = null
         contentExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -1924,6 +1943,10 @@ class MainActivity : FlutterActivity() {
 
     private fun sendSmsRelayTestEvent(): Boolean {
         if (!smsRelayEnabled()) return false
+        HingeDiagnostics.from(this).log(
+            "sms_test_requested",
+            mapOf("bridgeAttached" to SmsRelayBridge.isAttached()),
+        )
         SmsRelayBridge.emit(
             mapOf(
                 "messageId" to "sms-test-${System.currentTimeMillis()}",

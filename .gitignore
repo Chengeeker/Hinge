@@ -29,6 +29,7 @@ Generated\ Files/
 *.sdf
 publish/
 tmp/
+/windows/Hinge.App/tools/scrcpy/
 
 # Legacy nested checkout only; the canonical Hinge Relay project is maintained at D:\App\Hinge Relay.
 Hinge-Relay/

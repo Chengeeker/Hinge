@@ -628,6 +628,13 @@ class MainActivity : FlutterActivity() {
             "clearNotificationHistory" -> clearNotificationHistory(result)
             "keepAliveStatus" -> result.success(keepAliveStatus())
             "openNotificationSettings" -> result.success(openNotificationSettings())
+            "screenControlStatus" -> result.success(mapOf(
+                "supported" to (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R),
+                "developerOptionsEnabled" to runCatching {
+                    Settings.Global.getInt(contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) != 0
+                }.getOrNull(),
+            ))
+            "openWirelessDebuggingSettings" -> result.success(openWirelessDebuggingSettings())
             "openBatteryOptimizationSettings" -> result.success(openBatteryOptimizationSettings())
             "openBackgroundProtectionSettings" -> result.success(openBackgroundProtectionSettings())
             "moveTaskToBack" -> result.success(moveTaskToBack(true))
@@ -962,6 +969,13 @@ class MainActivity : FlutterActivity() {
             appDetailsIntent()
         }
         return startSettingsIntent(intent, appDetailsIntent())
+    }
+
+    private fun openWirelessDebuggingSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return startSettingsIntent(Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"), null) ||
+            startSettingsIntent(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
+                Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
     }
 
     private fun openBatteryOptimizationSettings(): Boolean {

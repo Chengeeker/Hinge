@@ -93,6 +93,10 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _fileThumbnailGate = new(GetFileThumbnailConcurrency());
     private readonly SemaphoreSlim _wirelessAdbClipboardSyncGate = new(1, 1);
     private WirelessAdbConnectionManager? _wirelessAdbConnectionManager;
+    private CancellationTokenSource? _screenCancellation;
+    private bool _wirelessAdbBusy;
+    private string _screenStatus = "投屏尚未启动。";
+    private string _screenFrameRate = "实时渲染帧率：未运行";
     private readonly HashSet<SessionConnection> _observedConnections = new();
     private readonly Dictionary<string, DateTime> _automaticConnectAttempts = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _manualDisconnectSuppressedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
@@ -145,6 +149,7 @@ public sealed partial class MainWindow : Window
     private FileManagementPage? _filePage;
     private WindowsSettingsPage? _windowsSettingsPage;
     private TransferSettingsPage? _transferSettingsPage;
+    private ScreenControlPage? _screenControlPage;
     private CloudRelaySettingsPage? _cloudRelaySettingsPage;
     private NotesPage? _notesPage;
     private TodoPage? _todoPage;
@@ -591,6 +596,14 @@ public sealed partial class MainWindow : Window
             case TransferSettingsPage transferSettings:
                 _transferSettingsPage = transferSettings;
                 ConfigureTransferSettingsPage(transferSettings);
+                break;
+            case ScreenControlPage screenControl:
+                if (!ReferenceEquals(_screenControlPage, screenControl))
+                {
+                    _screenControlPage = screenControl;
+                    ConfigureScreenControlPage(screenControl);
+                }
+                UpdateScreenStatus(_screenStatus);
                 break;
             case CloudRelaySettingsPage cloudRelaySettings:
                 _cloudRelaySettingsPage = cloudRelaySettings;
@@ -1138,6 +1151,8 @@ public sealed partial class MainWindow : Window
 
     private void ConfigureSettingsPage(SettingsPage page)
     {
+        page.ScreenControl.Click -= OpenScreenControl_Click;
+        page.ScreenControl.Click += OpenScreenControl_Click;
         if (!_configuredPages.Add(page)) return;
         page.Personalization.Click += BtnPersonalization_Click;
         page.WindowsSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WindowsSettingsPage));
@@ -1187,6 +1202,112 @@ public sealed partial class MainWindow : Window
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
         page.WirelessAdbPullLogs.Click += WirelessAdbPullLogs_Click;
+        UpdateScreenStatus(_screenStatus);
+    }
+
+    private void OpenScreenControl_Click(object sender, RoutedEventArgs e) => ContentFrame.Navigate(typeof(ScreenControlPage));
+
+    private void ConfigureScreenControlPage(ScreenControlPage page)
+    {
+        var options = new ScreenControlOptions();
+        try
+        {
+            options = System.Text.Json.JsonSerializer.Deserialize<ScreenControlOptions>(
+                ReadUserSetting("ScreenControlOptions") as string ?? "{}") ?? options;
+            options.Validate();
+        }
+        catch { options = new ScreenControlOptions(); }
+        page.SetOptions(options);
+        page.Back.Click += (_, _) => ContentFrame.Navigate(typeof(SettingsPage));
+        page.Pairing.Click += (_, _) => ContentFrame.Navigate(typeof(TransferSettingsPage));
+        page.Mirror.Click += async (_, _) => await StartScreenAsync(false);
+        page.Control.Click += async (_, _) => await StartScreenAsync(true);
+        page.Stop.Click += (_, _) => _screenCancellation?.Cancel();
+        page.Codec.SelectionChanged += (_, _) => SaveScreenOptions();
+        page.MaxFps.ValueChanged += (_, _) => SaveScreenOptions();
+        page.BitRate.ValueChanged += (_, _) => SaveScreenOptions();
+        page.MaxSize.ValueChanged += (_, _) => SaveScreenOptions();
+        page.HardwareDecoding.Toggled += (_, _) => SaveScreenOptions();
+    }
+
+    private void SaveScreenOptions()
+    {
+        if (_screenControlPage is not { } page || _screenCancellation != null) return;
+        try
+        {
+            WriteUserSetting("ScreenControlOptions", System.Text.Json.JsonSerializer.Serialize(page.Options));
+            UpdateScreenStatus("画面设置已保存，下次启动投屏时生效。");
+        }
+        catch (ArgumentException exception) { UpdateScreenStatus(exception.Message); }
+    }
+
+    private async Task StartScreenAsync(bool control)
+    {
+        if (_screenControlPage is not { } page || _screenCancellation != null || _wirelessAdbBusy) return;
+        using var cancellation = new CancellationTokenSource();
+        _screenCancellation = cancellation;
+        _screenFrameRate = "实时渲染帧率：等待统计…";
+        UpdateScreenStatus("正在验证已配对的无线 ADB 手机…");
+        try
+        {
+            var executable = ScrcpyLauncher.FindExecutable();
+            var options = page.Options;
+            var host = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
+            var port = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
+            if (!WirelessAdbClient.IsPaired(host, port))
+                throw new InvalidOperationException("请先打开本页的无线调试配对设置，完成手机配对和连接。");
+            string transport;
+            using (var connectionTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token))
+            {
+                connectionTimeout.CancelAfter(TimeSpan.FromSeconds(30));
+                transport = await WirelessAdbClient.ConnectAsync(host, port, connectionTimeout.Token,
+                    GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId());
+                await WirelessAdbClient.ValidateScreenTransportAsync(transport, connectionTimeout.Token);
+            }
+            await ScrcpyLauncher.RunAsync(ScrcpyLauncher.CreateStartInfo(executable, transport, control, options),
+                () => UpdateScreenStatus($"已启动{(control ? "投屏并控制" : "仅投屏")}：{options.VideoCodec.ToUpperInvariant()}，上限 {options.MaxFps} FPS，{options.BitRateMbps} Mbps。关闭窗口或点击停止即可结束。"),
+                cancellation.Token, sample => DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!ReferenceEquals(_screenCancellation, cancellation) || cancellation.IsCancellationRequested) return;
+                    _screenFrameRate = $"实时渲染帧率：{sample.RenderedFps} FPS；本秒跳过 {sample.SkippedFrames} 帧";
+                    if (_screenControlPage != null) _screenControlPage.FrameRate.Text = _screenFrameRate;
+                }));
+            UpdateScreenStatus("投屏已结束。");
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateScreenStatus(cancellation.IsCancellationRequested ? "投屏已停止。" : "无线 ADB 连接超时，请检查手机无线调试和网络后重试。");
+        }
+        catch (Exception exception) { UpdateScreenStatus($"投屏启动或运行失败：{exception.Message}"); }
+        finally
+        {
+            _screenCancellation = null;
+            _screenFrameRate = "实时渲染帧率：未运行";
+            UpdateScreenStatus(_screenStatus);
+        }
+    }
+
+    private void UpdateScreenStatus(string message)
+    {
+        _screenStatus = message;
+        var running = _screenCancellation != null;
+        if (_transferSettingsPage is { } diagnostics)
+        {
+            diagnostics.WirelessAdbPair.IsEnabled = !running && !_wirelessAdbBusy;
+            diagnostics.WirelessAdbConnect.IsEnabled = !running && !_wirelessAdbBusy;
+        }
+        if (_screenControlPage is not { } page) return;
+        page.Status.Text = message;
+        page.FrameRate.Text = _screenFrameRate;
+        page.Mirror.IsEnabled = !running && !_wirelessAdbBusy;
+        page.Control.IsEnabled = !running && !_wirelessAdbBusy;
+        page.Stop.IsEnabled = running;
+        page.Codec.IsEnabled = !running;
+        page.MaxFps.IsEnabled = !running;
+        page.BitRate.IsEnabled = !running;
+        page.MaxSize.IsEnabled = !running;
+        page.HardwareDecoding.IsEnabled = !running;
+        page.Pairing.IsEnabled = !running && !_wirelessAdbBusy;
     }
 
     private async void WirelessAdbPair_Click(object sender, RoutedEventArgs e)
@@ -1552,11 +1673,11 @@ public sealed partial class MainWindow : Window
         WriteUserSetting(WirelessAdbClipboardSyncSettingName, enabled ? 1 : 0);
     }
 
-    private static void SetWirelessAdbBusy(TransferSettingsPage page, bool busy)
+    private void SetWirelessAdbBusy(TransferSettingsPage page, bool busy)
     {
-        page.WirelessAdbPair.IsEnabled = !busy;
-        page.WirelessAdbConnect.IsEnabled = !busy;
+        _wirelessAdbBusy = busy;
         page.WirelessAdbPullLogs.IsEnabled = !busy;
+        UpdateScreenStatus(_screenStatus);
     }
 
     private IEnumerable<string> ProtectedHistoryDeviceIds() =>
@@ -8225,6 +8346,7 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _screenCancellation?.Cancel();
         ThemeBrushes.PaletteChanged -= IntegratedTitleBar_PaletteChanged;
         AppNavigation.UnregisterPropertyChangedCallback(NavigationView.IsPaneOpenProperty, _paneOpenChangedToken);
         if (_windowXamlRoot != null) _windowXamlRoot.Changed -= IntegratedTitleBar_RootChanged;

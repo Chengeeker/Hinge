@@ -7,7 +7,7 @@
 2. **许可证优先等级**：
    - 第一梯队：MIT（优先采纳）
    - 第二梯队：BSD-2-Clause / BSD-3-Clause / ISC / Apache-2.0（需审查 NOTICE 文件）
-   - 禁用名单：GPL-2.0 / GPL-3.0 / AGPL / LGPL（有静态链接风险）/ MPL（默认不引入）
+   - 默认不引入 GPL / AGPL / MPL 源码；LGPL 不静态链接进 Hinge。用户要求集成的 scrcpy 独立进程及其未修改的 LGPL 动态库，按下方专项记录保留许可、对应源码及替换能力。
 
 ## 当前完整依赖登记表 (Phase 10 Release Audit)
 
@@ -84,9 +84,16 @@ Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
+## 随包投屏组件 scrcpy（2.1.1 起）
+
+按用户“把需要的内容集成到 Hinge”要求，Windows 安装器和便携 ZIP 随包携带官方 [scrcpy 5.0.1](https://github.com/Genymobile/scrcpy/releases/tag/v5.0.1)（Apache-2.0）的未修改运行文件，放在 `tools/scrcpy/`。Hinge 以独立进程启动；不复制 UU 的 GPL 代码，不接入网易云端服务。原始 ZIP SHA-256 固定为 `b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5`。
+
+随包组件包括 ADB 37.0.1、SDL 3.4.18（zlib）、FFmpeg 9.0.2（LGPL-2.1-or-later）与 libusb 1.0.30（LGPL-2.1-or-later）。FFmpeg 还包含 dav1d 1.5.4（BSD-2-Clause）与 zlib。已通过官方 DLL 的 `avutil_license()` 确认实际构建报告 LGPL，未启用 GPL。FFmpeg/libusb 以未修改共享 DLL 形式保留，允许以兼容版本替换；不对为调试这些库的修改而进行的逆向工程施加限制。
+
+`tools/scrcpy/LICENSE.txt` 保留 scrcpy 原始许可；`licenses/` 包含 SDL/dav1d/zlib/LGPL、Google Platform-Tools NOTICE、上游构建脚本和来源说明；`sources/` 随包提供与上游版本和 SHA-256 对应的 FFmpeg、libusb、dav1d 源码压缩包。构建准备脚本 `scripts/prepare_screen_tools.ps1` 对各下载档案验证固定 SHA-256，准备完成后可离线复用缓存；应用运行不下载组件。旧版“用户另外安装 scrcpy、不捆绑任何相关库”说明已由本节替代。
+
 ## 审计结论 (License Audit Verdict)
 - **直接运行时三方库数量**：
-  - Windows 端运行时：`Microsoft.WindowsAppSDK` 1 个外部 NuGet 依赖，其他核心逻辑使用 BCL 与操作系统原生能力。
+  - Windows：`Microsoft.WindowsAppSDK` 1 个外部 NuGet 依赖，另有上节登记的随包原生投屏组件。
   - Android Flutter 端运行时：引入 `crypto`、`dynamic_color`、`cupertino_icons`、`material_symbols_icons` 和 `flutter_svg`。
-- **开源许可证传染性排查**：无任何 GPL / AGPL / LGPL 等具有传染性或商业限制的许可证代码。
-- **协议合规性**：项目整体采用宽松的 **MIT 许可证**，与所有直接及间接上游许可证（MIT / BSD-3-Clause / Apache-2.0）完全兼容。
+- **许可边界**：Hinge 自有代码保持 MIT；未引入 UU 的 GPL 源码。随包的 LGPL 共享库按独立许可保留源码、声明与替换能力，不应再描述成“无任何 LGPL 依赖”。

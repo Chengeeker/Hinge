@@ -168,7 +168,7 @@
                         </StackPanel>
                         <Border Grid.Row="1" Background="{ThemeResource HingeM3OutlineVariantBrush}" Opacity="0.65" />
                         <StackPanel Grid.Row="2" Spacing="12" HorizontalAlignment="Stretch">
-                                <TextBlock Text="手机需开启无线调试，电脑需安装 Android SDK Platform-Tools。ADB 主机密钥会复用；连接端口可能在手机重启后变化。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                <TextBlock Text="手机需开启无线调试；电脑端已内置连接与投屏组件，无需单独下载安装。ADB 主机密钥会复用；连接端口可能在手机重启后变化。" Style="{StaticResource HingeM3BodyVariantStyle}" />
                                 <ToggleSwitch
                                     x:Name="WirelessAdbClipboardSyncToggle"
                                     AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbClipboardSyncToggle"

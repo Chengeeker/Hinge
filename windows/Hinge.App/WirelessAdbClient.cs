@@ -57,6 +57,21 @@ internal static class WirelessAdbClient
         TryParseEndpoint(transport, out _, out _) ||
         Regex.IsMatch(transport, @"^[A-Za-z0-9_-]+\._adb-tls-connect\._tcp\.?$", RegexOptions.CultureInvariant);
 
+    internal static async Task ValidateScreenTransportAsync(string transport, CancellationToken cancellationToken)
+    {
+        // ADB's TLS service transport is authoritative even when OEMs hide the port property.
+        if (IsTlsScreenTransport(transport, string.Empty)) return;
+        var result = await RunAsync(cancellationToken, "-s", transport, "shell", "getprop", "service.adb.tls.port");
+        EnsureSuccess(result);
+        if (!IsTlsScreenTransport(transport, result.Output.Trim()))
+            throw new InvalidOperationException("无法确认此 ADB 连接为安全无线调试。请保持手机无线调试及局域网 mDNS 可用后重试；不使用传统明文 adb tcpip 端口。");
+    }
+
+    internal static bool IsTlsScreenTransport(string transport, string tlsPort) =>
+        Regex.IsMatch(transport, @"^[A-Za-z0-9_-]+\._adb-tls-connect\._tcp\.?$", RegexOptions.CultureInvariant) ||
+        (int.TryParse(tlsPort, out var port) && port is > 0 and <= 65535 &&
+         TryParseEndpoint(transport, out _, out var endpointPort) && endpointPort == port);
+
     internal static async Task ReconnectTransportAsync(string transport, CancellationToken cancellationToken,
         Func<CancellationToken, string[], Task<AdbResult>>? run = null)
     {
@@ -155,7 +170,8 @@ internal static class WirelessAdbClient
             throw new WirelessAdbException(WirelessAdbConnectionState.AuthorizationInvalid,
                 "ADB 授权已失效；请在手机无线调试页面撤销旧授权后重新配对。");
 
-        foreach (var device in deviceStates.Where(device => device.State == "device"))
+        foreach (var device in deviceStates.Where(device => device.State == "device")
+                     .OrderByDescending(device => IsTlsScreenTransport(device.Transport, string.Empty)))
         {
             var transport = device.Transport;
             if (reconnectExisting && !IsWirelessTransport(transport)) continue;
@@ -734,6 +750,8 @@ internal static class WirelessAdbClient
     private static string FindAdb()
     {
         var executable = OperatingSystem.IsWindows() ? "adb.exe" : "adb";
+        var bundled = Path.Combine(AppContext.BaseDirectory, "tools", "scrcpy", executable);
+        if (File.Exists(bundled)) return bundled;
         foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator))
         {
             if (string.IsNullOrWhiteSpace(directory)) continue;

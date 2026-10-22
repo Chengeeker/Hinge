@@ -640,6 +640,16 @@ class WorkspaceDataService {
     return await _invoke('openNotificationSettings') == true;
   }
 
+  Future<Map<String, dynamic>> screenControlStatus() async {
+    final raw = await _invoke('screenControlStatus');
+    if (raw is! Map) return const {};
+    return raw.map((key, value) => MapEntry('$key', value));
+  }
+
+  Future<bool> openWirelessDebuggingSettings() async {
+    return await _invoke('openWirelessDebuggingSettings') == true;
+  }
+
   Future<bool> openBatteryOptimizationSettings() async {
     return await _invoke('openBatteryOptimizationSettings') == true;
   }

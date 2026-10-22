@@ -21,6 +21,7 @@
     <Compile Include="..\Hinge.App\WebDavSettingsStore.cs" Link="WebDavSettingsStore.cs" />
     <Compile Include="..\Hinge.App\RecentFileFilterRules.cs" Link="RecentFileFilterRules.cs" />
     <Compile Include="..\Hinge.App\WirelessAdbClient.cs" Link="WirelessAdbClient.cs" />
+    <Compile Include="..\Hinge.App\ScrcpyLauncher.cs" Link="ScrcpyLauncher.cs" />
     <Compile Include="..\Hinge.App\WirelessAdbConnectionManager.cs" Link="WirelessAdbConnectionManager.cs" />
     <EmbeddedResource Include="..\Hinge.App\WebDavBrowserView.cs" LogicalName="WebDavBrowserView.Source.cs" />
     <Compile Include="..\..\installer\InstallerFileChecks.cs" Link="InstallerFileChecks.cs" />

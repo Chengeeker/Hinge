@@ -8,6 +8,7 @@ public sealed partial class SettingsPage : Page
     public Button Personalization => PersonalizationButton;
     public Button WindowsSettings => WindowsSettingsButton;
     public Button TransferSettings => TransferSettingsButton;
+    public Button ScreenControl => ScreenControlSettingsButton;
     public Button CloudRelaySettings => CloudRelaySettingsButton;
     public Button WebDavSettings => WebDavSettingsButton;
 

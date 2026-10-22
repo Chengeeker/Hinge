@@ -13,6 +13,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'personalization_screen.dart';
 import 'keep_alive_settings_screen.dart';
+import 'screen_control_screen.dart';
 import 'default_apps_screen.dart';
 import 'sms_relay_settings_screen.dart';
 import 'cloud_relay_settings_screen.dart';
@@ -5001,6 +5002,18 @@ class _DevicesScreenState extends State<DevicesScreen>
             ]),
             if (!_isDesktop) ...[
               settingsSection('手机服务', [
+                settingTile(
+                  icon: Symbols.cast_rounded,
+                  title: '投屏与远控',
+                  subtitle: '在电脑上显示并操作手机',
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ScreenControlScreen(
+                        dataService: widget.dataService,
+                      ),
+                    ),
+                  ),
+                ),
                 settingTile(
                   icon: Symbols.cloud_rounded,
                   title: 'Cloud Relay',

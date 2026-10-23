@@ -1100,6 +1100,15 @@ class HingeNativeConnectionBroker(private val context: Context) {
                     "totalBytes" to size,
                 ),
             )
+            runCatching {
+                HingeFileTransferNotifier.showProgress(
+                    appContext,
+                    finalFile.absolutePath.hashCode(),
+                    fileName,
+                    existing,
+                    size,
+                )
+            }
             true
         } catch (error: Exception) {
             connection.sendJson(
@@ -1144,6 +1153,15 @@ class HingeNativeConnectionBroker(private val context: Context) {
             val now = SystemClock.elapsedRealtime()
             if (now - transfer.lastProgressAtMs >= 100L || transfer.bytesReceived >= transfer.fileSize) {
                 transfer.lastProgressAtMs = now
+                runCatching {
+                    HingeFileTransferNotifier.showProgress(
+                        appContext,
+                        transfer.finalFile.absolutePath.hashCode(),
+                        transfer.fileName,
+                        transfer.bytesReceived,
+                        transfer.fileSize,
+                    )
+                }
                 HingeNativeConnectionEvents.emit(
                     mapOf(
                         "event" to "file_transfer_progress",
@@ -1216,7 +1234,10 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 )
             emitTransferReceipt(receivedEvent)
             runCatching {
-                HingeFileTransferNotifier.show(appContext, transfer.finalFile.absolutePath)
+                HingeFileTransferNotifier.show(
+                    appContext,
+                    transfer.finalFile.absolutePath,
+                )
             }
             true
         } catch (error: Exception) {
@@ -1233,6 +1254,9 @@ class HingeNativeConnectionBroker(private val context: Context) {
         transfer: NativeIncomingTransfer,
         reason: String,
     ) {
+        runCatching {
+            HingeFileTransferNotifier.cancelProgress(appContext, transfer.finalFile.absolutePath.hashCode())
+        }
         emitTransferReceipt(
             mapOf(
                 "event" to "file_transfer_failed",

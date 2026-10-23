@@ -39,6 +39,8 @@ dependencies:
   crypto: ^3.0.7
   cryptography: ^2.7.0
   dynamic_color: ^1.9.0
+  liquid_glass_widgets:
+    path: packages/liquid_glass_widgets
   material_symbols_icons: ^4.2960.0
   flutter_svg: ^2.0.17
 

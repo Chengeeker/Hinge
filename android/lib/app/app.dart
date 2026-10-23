@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -10,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'personalization_screen.dart';
 import 'keep_alive_settings_screen.dart';
@@ -3573,113 +3575,186 @@ class _DevicesScreenState extends State<DevicesScreen>
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final destinations = _navigationBarDestinations;
-    final viewPadding = MediaQuery.viewPaddingOf(context);
-    final bottomMargin = viewPadding.bottom > 0
-        ? viewPadding.bottom + 8.0
-        : 16.0;
+    final width =
+        math.min(440.0, MediaQuery.sizeOf(context).width - 40.0).toDouble() *
+        2 /
+        3;
+    final hasBottomInset = MediaQuery.paddingOf(context).bottom > 0;
+    final bottomMargin = hasBottomInset ? 6.0 : 14.0;
     return Align(
       alignment: Alignment.bottomCenter,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: bottomMargin),
-        child: Container(
-          width: 280,
-          height: 64,
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(32),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
-                blurRadius: 16,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            children: List.generate(destinations.length, (index) {
-              final destination = destinations[index];
-              final selected = index == _selectedNavigationIndex;
-              final foreground = selected
-                  ? scheme.onPrimaryContainer
-                  : scheme.onSurfaceVariant;
-              return Expanded(
-                child: Semantics(
-                  button: true,
-                  selected: selected,
-                  label: destination.label,
-                  child: Tooltip(
-                    message: destination.label,
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => _selectNavigationDestination(index),
-                        borderRadius: BorderRadius.circular(28),
-                        splashFactory: NoSplash.splashFactory,
-                        overlayColor: const WidgetStatePropertyAll(
-                          Colors.transparent,
-                        ),
-                        splashColor: Colors.transparent,
-                        highlightColor: Colors.transparent,
-                        hoverColor: Colors.transparent,
-                        focusColor: Colors.transparent,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          alignment: Alignment.center,
-                          children: [
-                            if (selected)
-                              Positioned.fill(
-                                child: TweenAnimationBuilder<double>(
-                                  key: ValueKey('capsule_indicator_$index'),
-                                  tween: Tween<double>(begin: 0.0, end: 1.0),
-                                  duration: const Duration(milliseconds: 160),
-                                  curve: Curves.easeOutCubic,
-                                  builder: (context, opacity, child) =>
-                                      Opacity(opacity: opacity, child: child),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: scheme.primaryContainer,
-                                      borderRadius: BorderRadius.circular(28),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: bottomMargin),
+          child: RepaintBoundary(
+            child: SizedBox(
+              width: width,
+              height: 56,
+              child: _workspaceState.useLiquidGlass
+                  ? GlassTabBar.bottom(
+                      tabs: [
+                        for (final destination in destinations)
+                          GlassTab(
+                            icon: destination.icon,
+                            activeIcon: destination.selectedIcon,
+                            label: destination.label,
+                          ),
+                      ],
+                      selectedIndex: _selectedNavigationIndex,
+                      onTabSelected: _selectNavigationDestination,
+                      barHeight: 56,
+                      horizontalPadding: 0,
+                      verticalPadding: 0,
+                      barBorderRadius: 9999,
+                      indicatorBorderRadius: 9999,
+                      settings: const LiquidGlassSettings(
+                        glassColor: Color(0x66000000),
+                        bodyMode: GlassBodyMode.clear,
+                        thickness: 10,
+                        blur: 2,
+                        lightIntensity: 0.25,
+                        ambientStrength: 0,
+                        refractiveIndex: 1.19,
+                        chromaticAberration: 0.008,
+                        shadowElevation: 0,
+                      ),
+                      indicatorSettings: const LiquidGlassSettings(
+                        refractiveIndex: 1.18,
+                        chromaticAberration: 0.025,
+                      ),
+                      quality: GlassQuality.premium,
+                      backgroundQuality: GlassQuality.premium,
+                      maskingQuality: MaskingQuality.high,
+                      enableBlend: true,
+                      indicatorColor: const Color(0x66000000),
+                      interactionGlowColor: const Color(0x20FFFFFF),
+                      innerBlur: 6,
+                      pressScale: 1.06,
+                      selectedIconColor: Colors.white,
+                      selectedLabelColor: Colors.white,
+                      unselectedIconColor: Colors.white,
+                      unselectedLabelColor: Colors.white,
+                    )
+                  : Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(32),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.35 : 0.12,
+                            ),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: List.generate(destinations.length, (index) {
+                          final destination = destinations[index];
+                          final selected = index == _selectedNavigationIndex;
+                          final foreground = selected
+                              ? scheme.onPrimaryContainer
+                              : scheme.onSurfaceVariant;
+                          return Expanded(
+                            child: Semantics(
+                              button: true,
+                              selected: selected,
+                              label: destination.label,
+                              child: Tooltip(
+                                message: destination.label,
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    onTap: () =>
+                                        _selectNavigationDestination(index),
+                                    borderRadius: BorderRadius.circular(28),
+                                    splashFactory: NoSplash.splashFactory,
+                                    overlayColor: const WidgetStatePropertyAll(
+                                      Colors.transparent,
+                                    ),
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      alignment: Alignment.center,
+                                      children: [
+                                        if (selected)
+                                          Positioned.fill(
+                                            child:
+                                                TweenAnimationBuilder<double>(
+                                                  key: ValueKey(
+                                                    'capsule_indicator_$index',
+                                                  ),
+                                                  tween: Tween(
+                                                    begin: 0.0,
+                                                    end: 1.0,
+                                                  ),
+                                                  duration: const Duration(
+                                                    milliseconds: 160,
+                                                  ),
+                                                  curve: Curves.easeOutCubic,
+                                                  builder:
+                                                      (
+                                                        context,
+                                                        opacity,
+                                                        child,
+                                                      ) => Opacity(
+                                                        opacity: opacity,
+                                                        child: child,
+                                                      ),
+                                                  child: DecoratedBox(
+                                                    decoration: BoxDecoration(
+                                                      color: scheme
+                                                          .primaryContainer,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            28,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                ),
+                                          ),
+                                        Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            IconTheme(
+                                              data: IconThemeData(
+                                                color: foreground,
+                                                size: 22,
+                                              ),
+                                              child: selected
+                                                  ? (destination.selectedIcon ??
+                                                        destination.icon)
+                                                  : destination.icon,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              destination.label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                fontWeight: selected
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w500,
+                                                color: foreground,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
                               ),
-                            Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                IconTheme(
-                                  data: IconThemeData(
-                                    color: foreground,
-                                    size: 22,
-                                  ),
-                                  child: selected
-                                      ? (destination.selectedIcon ??
-                                            destination.icon)
-                                      : destination.icon,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  destination.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: selected
-                                        ? FontWeight.w600
-                                        : FontWeight.w500,
-                                    color: foreground,
-                                  ),
-                                ),
-                              ],
                             ),
-                          ],
-                        ),
+                          );
+                        }),
                       ),
                     ),
-                  ),
-                ),
-              );
-            }),
+            ),
           ),
         ),
       ),
@@ -5008,9 +5083,8 @@ class _DevicesScreenState extends State<DevicesScreen>
                   subtitle: '在电脑上显示并操作手机',
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
-                      builder: (_) => ScreenControlScreen(
-                        dataService: widget.dataService,
-                      ),
+                      builder: (_) =>
+                          ScreenControlScreen(dataService: widget.dataService),
                     ),
                   ),
                 ),

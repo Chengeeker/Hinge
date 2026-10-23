@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'app/app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);
   String? initialDeviceName;
   String? initialDeviceManufacturer;
   String? initialDeviceModel;
@@ -26,11 +28,14 @@ Future<void> main() async {
     }
   }
   runApp(
-    HingeApp(
-      initialDeviceName: initialDeviceName,
-      initialDeviceManufacturer: initialDeviceManufacturer,
-      initialDeviceModel: initialDeviceModel,
-      persistentDataDirectory: persistentDataDirectory,
+    LiquidGlassWidgets.wrap(
+      brightnessResolver: Theme.maybeBrightnessOf,
+      child: HingeApp(
+        initialDeviceName: initialDeviceName,
+        initialDeviceManufacturer: initialDeviceManufacturer,
+        initialDeviceModel: initialDeviceModel,
+        persistentDataDirectory: persistentDataDirectory,
+      ),
     ),
   );
 }

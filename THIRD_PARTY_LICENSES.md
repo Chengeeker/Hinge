@@ -56,6 +56,8 @@ Windows 首页的设备品牌标识采用 Wikimedia Commons 中对应品牌的 S
 
 本次 Cloud Relay 接入新增的第三方运行时依赖为 **1 个**：Android `cryptography`（Apache-2.0）。独立的 `Hinge-Relay` Worker 依赖在其自己的 `package-lock.json` 和许可证文件中维护，不随 Hinge 客户端打包。若未来改为直接使用上述任一项目，必须在引入同一提交中补充精确版本、许可证文本和对应 NOTICE，并同步修改 README。
 
+Android 的可选液态玻璃悬浮底栏使用 `liquid_glass_widgets` 1.13.0（MIT），源码随仓库保存在 `android/packages/liquid_glass_widgets`；版权及完整许可见该目录的 `LICENSE` 和 `THIRD_PARTY_NOTICES`。
+
 ## Electron 托盘兼容参考
 
 Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron) 的 `NotifyIconHost`/`NotifyIcon` Windows 实现（MIT License）。Hinge 仅使用 Windows 消息和系统 API 与已安装的第三方客户端交互，没有复制、链接、修改或随包分发 Electron 源码及运行时；因此 Electron 登记为实现参考，不计入 Hinge 的直接或间接发布依赖。

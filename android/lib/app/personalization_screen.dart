@@ -59,6 +59,8 @@ class PersonalizationScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 _buildNavigationCard(context, scheme),
                 const SizedBox(height: 16),
+                _buildLiquidGlassCard(context, scheme),
+                const SizedBox(height: 16),
                 _buildInteractionCard(context, scheme),
               ],
             ),
@@ -283,6 +285,22 @@ class PersonalizationScreen extends StatelessWidget {
                 onHapticFeedbackChanged(value);
               },
             ),
+    );
+  }
+
+  Widget _buildLiquidGlassCard(BuildContext context, ColorScheme scheme) {
+    return _sectionCard(
+      context: context,
+      scheme: scheme,
+      title: '显示效果',
+      child: SwitchListTile.adaptive(
+        contentPadding: EdgeInsets.zero,
+        secondary: Icon(Symbols.blur_on_rounded, color: scheme.primary),
+        title: const Text('使用液态玻璃效果'),
+        subtitle: const Text('控制液态玻璃控件；当前应用于悬浮底栏'),
+        value: state.useLiquidGlass,
+        onChanged: state.setUseLiquidGlass,
+      ),
     );
   }
 

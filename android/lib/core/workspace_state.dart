@@ -30,6 +30,7 @@ class WorkspaceState extends ChangeNotifier {
   int _seedColor = defaultSeedColor;
   AppNavigationStyle _navigationStyle = AppNavigationStyle.adaptive;
   bool _floatingCapsuleNavigation = true;
+  bool _useLiquidGlass = false;
   String _imageStoragePath = '';
   String _videoStoragePath = '';
   String _fileStoragePath = '';
@@ -50,6 +51,7 @@ class WorkspaceState extends ChangeNotifier {
   int get seedColor => _seedColor;
   AppNavigationStyle get navigationStyle => _navigationStyle;
   bool get floatingCapsuleNavigation => _floatingCapsuleNavigation;
+  bool get useLiquidGlass => _useLiquidGlass;
   String get imageStoragePath => _imageStoragePath;
   String get videoStoragePath => _videoStoragePath;
   String get fileStoragePath => _fileStoragePath;
@@ -146,6 +148,13 @@ class WorkspaceState extends ChangeNotifier {
     }
   }
 
+  void setUseLiquidGlass(bool enabled) {
+    if (_useLiquidGlass != enabled) {
+      _useLiquidGlass = enabled;
+      _changed();
+    }
+  }
+
   void setStoragePaths({
     required String image,
     required String video,
@@ -208,6 +217,7 @@ class WorkspaceState extends ChangeNotifier {
     'seedColor': _seedColor,
     'navigationStyle': _navigationStyle.name,
     'floatingCapsuleNavigation': _floatingCapsuleNavigation,
+    'useLiquidGlass': _useLiquidGlass,
     'imageStoragePath': _imageStoragePath,
     'videoStoragePath': _videoStoragePath,
     'fileStoragePath': _fileStoragePath,
@@ -237,6 +247,7 @@ class WorkspaceState extends ChangeNotifier {
     _floatingCapsuleNavigation = values.containsKey('floatingCapsuleNavigation')
         ? values['floatingCapsuleNavigation'] == true
         : true;
+    _useLiquidGlass = values['useLiquidGlass'] == true;
     _imageStoragePath = '${values['imageStoragePath'] ?? ''}'.trim();
     _videoStoragePath = '${values['videoStoragePath'] ?? ''}'.trim();
     _fileStoragePath = '${values['fileStoragePath'] ?? ''}'.trim();

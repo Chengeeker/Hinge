@@ -15,6 +15,7 @@ public class ScrcpyLauncherTests
         var options = new ScreenControlOptions(PreferHardwareDecoding: false);
         var info = ScrcpyLauncher.CreateStartInfo("scrcpy.exe", "192.168.1.20:43210", true, options);
         Assert.Contains("--hwdec=disabled", info.ArgumentList);
+        Assert.Contains("--video-buffer=0", info.ArgumentList);
         Assert.DoesNotContain("--hwdec=auto", info.ArgumentList);
         Assert.Equal(options, System.Text.Json.JsonSerializer.Deserialize<ScreenControlOptions>(
             System.Text.Json.JsonSerializer.Serialize(options)));
@@ -26,13 +27,14 @@ public class ScrcpyLauncherTests
     [InlineData("av1")]
     public void CustomQualityParametersReachEncoderWithoutChangingTransport(string codec)
     {
-        var options = new ScreenControlOptions(codec, 120, 16, 2560);
+        var options = new ScreenControlOptions(codec, 120, 16, 2560, true, 50);
         var info = ScrcpyLauncher.CreateStartInfo("scrcpy.exe", "192.168.1.20:43210", false, options);
         Assert.Contains("--video-codec=" + codec, info.ArgumentList);
         Assert.Contains("--max-fps=120", info.ArgumentList);
         Assert.Contains("--video-bit-rate=16M", info.ArgumentList);
         Assert.Contains("--max-size=2560", info.ArgumentList);
         Assert.Contains("--hwdec=auto", info.ArgumentList);
+        Assert.Contains("--video-buffer=50", info.ArgumentList);
         Assert.Contains("--print-fps", info.ArgumentList);
         Assert.Contains("--no-control", info.ArgumentList);
         Assert.Equal("tcp:127.0.0.1:5038", info.Environment["ADB_SERVER_SOCKET"]);
@@ -52,6 +54,18 @@ public class ScrcpyLauncherTests
     public void InvalidQualityDoesNotLaunch(string codec, int fps, int bitRate, int size) =>
         Assert.Throws<ArgumentException>(() => ScrcpyLauncher.CreateStartInfo("scrcpy.exe",
             "192.168.1.20:43210", true, new ScreenControlOptions(codec, fps, bitRate, size)));
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(201)]
+    public void InvalidVideoBufferDoesNotLaunch(int videoBufferMs) =>
+        Assert.Throws<ArgumentException>(() => ScrcpyLauncher.CreateStartInfo("scrcpy.exe",
+            "192.168.1.20:43210", true, new ScreenControlOptions(VideoBufferMs: videoBufferMs)));
+
+    [Fact]
+    public void ExistingSavedSettingsDefaultVideoBufferToZero() =>
+        Assert.Equal(0, System.Text.Json.JsonSerializer.Deserialize<ScreenControlOptions>(
+            "{\"VideoCodec\":\"h265\",\"MaxFps\":60,\"BitRateMbps\":8,\"MaxSize\":1920,\"PreferHardwareDecoding\":true}")!.VideoBufferMs);
 
     [Fact]
     public void OriginalResolutionIsExplicitlySupported() =>

@@ -11,18 +11,12 @@
         x:Name="PageRoot"
         SizeChanged="PageRoot_SizeChanged"
         ActualThemeChanged="PageRoot_ActualThemeChanged"
-        Background="{ThemeResource HingeM3SurfaceBrush}"
+        Background="{ThemeResource HingeM3SurfaceContainerBrush}"
         AllowDrop="True"
         DragEnter="PageRoot_DragOver"
         DragOver="PageRoot_DragOver"
         DragLeave="PageRoot_DragLeave"
         Drop="PageRoot_Drop">
-        <Image
-            x:Name="WindowBackgroundImage"
-            Stretch="UniformToFill"
-            Opacity="0.10"
-            IsHitTestVisible="False"
-            Visibility="Collapsed" />
 
         <Grid
             Background="Transparent"
@@ -89,39 +83,51 @@
             </NavigationView.FooterMenuItems>
 
             <NavigationView.Content>
-                <Grid x:Name="WorkspaceContent"
-                    Background="Transparent"
-                    AllowDrop="True"
-                    DragEnter="PageRoot_DragOver"
-                    DragOver="PageRoot_DragOver"
-                    DragLeave="PageRoot_DragLeave"
-                    Drop="PageRoot_Drop">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <InfoBar
-                        x:Name="DiscoveryInfoBar"
-                        Grid.Row="0"
-                        Margin="24,0,24,10"
-                        IsOpen="False"
-                        Visibility="Collapsed"
-                        IsClosable="False"
-                        Severity="Informational"
-                        Title="正在搜索附近设备"
-                        Message="请确认两台设备位于同一局域网。" />
-                    <Frame
-                        x:Name="ContentFrame"
-                        AllowDrop="True"
-                        DragEnter="ContentFrame_DragOver"
-                        DragOver="ContentFrame_DragOver"
-                        DragLeave="ContentFrame_DragLeave"
-                        Drop="ContentFrame_Drop"
+                <Border x:Name="WorkspaceSurface"
+                    Margin="0,32,8,8"
+                    CornerRadius="{StaticResource HingeM3ShapeExtraLarge}"
+                    Background="{ThemeResource HingeM3SurfaceBrush}">
+                    <Grid x:Name="WorkspaceContent"
                         Background="Transparent"
-                        Grid.Row="1"
-                        HorizontalContentAlignment="Stretch"
-                        VerticalContentAlignment="Stretch" />
-                </Grid>
+                        AllowDrop="True"
+                        DragEnter="PageRoot_DragOver"
+                        DragOver="PageRoot_DragOver"
+                        DragLeave="PageRoot_DragLeave"
+                        Drop="PageRoot_Drop">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Image
+                            x:Name="WindowBackgroundImage"
+                            Grid.RowSpan="2"
+                            Stretch="UniformToFill"
+                            Opacity="0.10"
+                            IsHitTestVisible="False"
+                            Visibility="Collapsed" />
+                        <InfoBar
+                            x:Name="DiscoveryInfoBar"
+                            Grid.Row="0"
+                            Margin="24,0,24,10"
+                            IsOpen="False"
+                            Visibility="Collapsed"
+                            IsClosable="False"
+                            Severity="Informational"
+                            Title="正在搜索附近设备"
+                            Message="请确认两台设备位于同一局域网。" />
+                        <Frame
+                            x:Name="ContentFrame"
+                            AllowDrop="True"
+                            DragEnter="ContentFrame_DragOver"
+                            DragOver="ContentFrame_DragOver"
+                            DragLeave="ContentFrame_DragLeave"
+                            Drop="ContentFrame_Drop"
+                            Background="Transparent"
+                            Grid.Row="1"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch" />
+                    </Grid>
+                </Border>
             </NavigationView.Content>
             </NavigationView>
             <!--
@@ -157,7 +163,7 @@
                     Width="12" MinWidth="0"
                     Background="Transparent"
                     BorderBrush="{ThemeResource HingeM3OutlineVariantBrush}"
-                    BorderThickness="1,0,0,0"
+                    BorderThickness="0"
                     ToolTipService.ToolTip="拖动或使用左右方向键调整侧边栏宽度"
                     PointerPressed="PaneResizeHandle_PointerPressed"
                     PointerMoved="PaneResizeHandle_PointerMoved"

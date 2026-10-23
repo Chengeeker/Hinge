@@ -78,8 +78,8 @@
             <StaticResource x:Key="ProgressRingForegroundThemeBrush" ResourceKey="HingeM3PrimaryBrush" />
             <StaticResource x:Key="ProgressBarForeground" ResourceKey="HingeM3PrimaryBrush" />
 
-            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFF7F2FA" />
-            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FFF7F2FA" />
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFF3EDF7" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FFF3EDF7" />
             <SolidColorBrush x:Key="NavigationViewItemBackground" Color="Transparent" />
             <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FF1D1B20" />
             <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#141D1B20" />
@@ -90,7 +90,7 @@
             <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FF21005D" />
             <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="#FFEADDFF" />
             <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="#FF21005D" />
-            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="#FF6750A4" />
+            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="Transparent" />
 
             <StaticResource x:Key="ListViewItemBackground" ResourceKey="HingeM3SurfaceBrush" />
             <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
@@ -196,8 +196,8 @@
             <StaticResource x:Key="ProgressRingForegroundThemeBrush" ResourceKey="HingeM3PrimaryBrush" />
             <StaticResource x:Key="ProgressBarForeground" ResourceKey="HingeM3PrimaryBrush" />
 
-            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF1D1B20" />
-            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FF1D1B20" />
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF211F24" />
+            <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FF211F24" />
             <SolidColorBrush x:Key="NavigationViewItemBackground" Color="Transparent" />
             <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FFE6E0E9" />
             <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#14E6E0E9" />
@@ -208,7 +208,7 @@
             <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FFE9DDFF" />
             <SolidColorBrush x:Key="NavigationViewItemBackgroundSelectedPointerOver" Color="#FF4D3D75" />
             <SolidColorBrush x:Key="NavigationViewItemForegroundSelectedPointerOver" Color="#FFE9DDFF" />
-            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="#FFCFBDFE" />
+            <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="Transparent" />
 
             <StaticResource x:Key="ListViewItemBackground" ResourceKey="HingeM3SurfaceBrush" />
             <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="HingeM3StateHoverBrush" />
@@ -335,14 +335,14 @@
 
     <Style x:Key="HingeM3HeadlineSmallStyle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextBlockStyle}">
         <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
-        <Setter Property="FontSize" Value="29" />
+        <Setter Property="FontSize" Value="26" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style x:Key="HingeM3TitleMediumStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
         <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
-        <Setter Property="FontSize" Value="17" />
+        <Setter Property="FontSize" Value="16" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
@@ -363,8 +363,8 @@
     <Style x:Key="HingeM3SupportingStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3BodyVariantStyle}" />
     <Style x:Key="HingeM3SectionHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
         <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
-        <Setter Property="FontSize" Value="19" />
-        <Setter Property="Foreground" Value="{ThemeResource HingeM3PrimaryBrush}" />
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style x:Key="HingeM3CaptionStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3BodyVariantStyle}">

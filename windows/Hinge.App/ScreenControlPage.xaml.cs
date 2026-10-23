@@ -13,6 +13,7 @@ public sealed partial class ScreenControlPage : Page
     public TextBlock FrameRate => FrameRateText;
     public ComboBox Codec => CodecOptions;
     public NumberBox MaxFps => MaxFpsBox;
+    public NumberBox VideoBufferMs => VideoBufferMsBox;
     public NumberBox BitRate => BitRateBox;
     public NumberBox MaxSize => MaxSizeBox;
     public ToggleSwitch HardwareDecoding => HardwareDecodingToggle;
@@ -28,7 +29,8 @@ public sealed partial class ScreenControlPage : Page
         get
         {
             var options = new ScreenControlOptions((Codec.SelectedItem as ComboBoxItem)?.Tag as string ?? "h264",
-                ReadInteger(MaxFps.Value), ReadInteger(BitRate.Value), ReadInteger(MaxSize.Value), HardwareDecoding.IsOn);
+                ReadInteger(MaxFps.Value), ReadInteger(BitRate.Value), ReadInteger(MaxSize.Value), HardwareDecoding.IsOn,
+                ReadInteger(VideoBufferMs.Value));
             options.Validate();
             return options;
         }
@@ -45,6 +47,7 @@ public sealed partial class ScreenControlPage : Page
     {
         Codec.SelectedItem = Codec.Items.OfType<ComboBoxItem>().First(item => (string)item.Tag == options.VideoCodec);
         MaxFps.Value = options.MaxFps;
+        VideoBufferMs.Value = options.VideoBufferMs;
         BitRate.Value = options.BitRateMbps;
         MaxSize.Value = options.MaxSize;
         HardwareDecoding.IsOn = options.PreferHardwareDecoding;

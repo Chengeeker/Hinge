@@ -113,14 +113,13 @@ internal static class ThemeBrushes
             SetBrushColor(dictionary, $"HingeM3{role}Brush", color);
 
         var onSurface = roles["OnSurface"];
-        var primary = roles["Primary"];
         var primaryContainer = roles["PrimaryContainer"];
         var onPrimaryContainer = roles["OnPrimaryContainer"];
         SetBrushColor(dictionary, "HingeM3StateHoverBrush", onSurface);
         SetBrushColor(dictionary, "HingeM3StatePressedBrush", onSurface);
         SetBrushColor(dictionary, "HingeM3DisabledContentBrush", onSurface);
-        SetBrushColor(dictionary, "NavigationViewDefaultPaneBackground", roles["SurfaceContainerLow"]);
-        SetBrushColor(dictionary, "NavigationViewExpandedPaneBackground", roles["SurfaceContainerLow"]);
+        SetBrushColor(dictionary, "NavigationViewDefaultPaneBackground", roles["SurfaceContainer"]);
+        SetBrushColor(dictionary, "NavigationViewExpandedPaneBackground", roles["SurfaceContainer"]);
         SetBrushColor(dictionary, "NavigationViewItemForeground", onSurface);
         SetBrushColor(dictionary, "NavigationViewItemBackgroundPointerOver", WithAlpha(onSurface, 20));
         SetBrushColor(dictionary, "NavigationViewItemForegroundPointerOver", onSurface);
@@ -130,7 +129,7 @@ internal static class ThemeBrushes
         SetBrushColor(dictionary, "NavigationViewItemForegroundSelected", onPrimaryContainer);
         SetBrushColor(dictionary, "NavigationViewItemBackgroundSelectedPointerOver", primaryContainer);
         SetBrushColor(dictionary, "NavigationViewItemForegroundSelectedPointerOver", onPrimaryContainer);
-        SetBrushColor(dictionary, "NavigationViewSelectionIndicatorForeground", primary);
+        SetBrushColor(dictionary, "NavigationViewSelectionIndicatorForeground", Microsoft.UI.Colors.Transparent);
     }
 
     private static void SetBrushColor(ResourceDictionary dictionary, string key, Windows.UI.Color color)

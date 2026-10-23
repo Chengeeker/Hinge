@@ -43,6 +43,8 @@
                         <TextBlock Text="如出现显卡驱动或原生解码进程异常，可关闭硬件解码后重试；软件解码会增加电脑 CPU 负担。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                         <NumberBox x:Name="MaxFpsBox" Header="帧率上限（1–240 FPS）" Value="60" Minimum="1" Maximum="240" SmallChange="1" LargeChange="30" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.MaxFpsBox" />
                         <TextBlock Text="可填 30、60、90、120 或其他整数。这是上限，不保证锁定帧率；静止画面或低帧率视频会减少输出。上方显示实际渲染帧率与跳过帧数。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <NumberBox x:Name="VideoBufferMsBox" Header="画面平滑缓冲（0–200 毫秒）" Value="0" Minimum="0" Maximum="200" SmallChange="10" LargeChange="50" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.VideoBufferMsBox" />
+                        <TextBlock Text="默认 0 毫秒以降低远控延迟；画面断续时可试 50 毫秒补偿传输抖动，缓冲越大，画面与操作反馈越慢。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                         <NumberBox x:Name="BitRateBox" Header="视频码率（1–200 Mbps）" Value="8" Minimum="1" Maximum="200" SmallChange="1" LargeChange="4" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.BitRateBox" />
                         <NumberBox x:Name="MaxSizeBox" Header="画面最长边（16–7680；0 为原始分辨率）" Value="1920" Minimum="0" Maximum="7680" SmallChange="16" LargeChange="240" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.MaxSizeBox" />
                         <TextBlock Text="帧率不足时可先将最长边改为 1280 或降低码率，减轻编码、网络和解码压力。设置自动保存，下次启动投屏时生效；投屏期间暂停修改。默认关闭音频和自动剪贴板同步。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />

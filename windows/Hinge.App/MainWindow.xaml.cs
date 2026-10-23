@@ -1225,6 +1225,7 @@ public sealed partial class MainWindow : Window
         page.Stop.Click += (_, _) => _screenCancellation?.Cancel();
         page.Codec.SelectionChanged += (_, _) => SaveScreenOptions();
         page.MaxFps.ValueChanged += (_, _) => SaveScreenOptions();
+        page.VideoBufferMs.ValueChanged += (_, _) => SaveScreenOptions();
         page.BitRate.ValueChanged += (_, _) => SaveScreenOptions();
         page.MaxSize.ValueChanged += (_, _) => SaveScreenOptions();
         page.HardwareDecoding.Toggled += (_, _) => SaveScreenOptions();
@@ -2838,7 +2839,7 @@ public sealed partial class MainWindow : Window
         var leftInset = titleBar.LeftInset / scale;
         var rightInset = titleBar.RightInset / scale;
         AppNavigation.Margin = new Thickness(leftInset, 0, 0, 0);
-        WorkspaceContent.Margin = new Thickness(0, height, 0, 0);
+        WorkspaceSurface.Margin = new Thickness(0, height + 4, 8, 8);
         Canvas.SetLeft(PaneResizeHandle, leftInset + Math.Max(0, AppNavigation.OpenPaneLength - 4));
 
         // Only empty top space is caption input; the menu and resize handle stay client input.
@@ -3692,7 +3693,7 @@ public sealed partial class MainWindow : Window
 
         var foreground = ThemeBrushes.Color(PageRoot, "HingeM3OnSurfaceBrush");
         var inactiveForeground = ThemeBrushes.Color(PageRoot, "HingeM3OnSurfaceVariantBrush");
-        var surface = ThemeBrushes.Color(PageRoot, "HingeM3SurfaceBrush");
+        var surface = ThemeBrushes.Color(PageRoot, "HingeM3SurfaceContainerBrush");
         var hoverBackground = CompositeState("HingeM3StateHoverBrush");
         var pressedBackground = CompositeState("HingeM3StatePressedBrush");
 

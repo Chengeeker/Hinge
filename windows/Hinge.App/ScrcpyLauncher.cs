@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace Hinge.App;
 
 internal sealed record ScreenControlOptions(string VideoCodec = "h264", int MaxFps = 60,
-    int BitRateMbps = 8, int MaxSize = 1920, bool PreferHardwareDecoding = true)
+    int BitRateMbps = 8, int MaxSize = 1920, bool PreferHardwareDecoding = true, int VideoBufferMs = 0)
 {
     public void Validate()
     {
@@ -13,6 +13,7 @@ internal sealed record ScreenControlOptions(string VideoCodec = "h264", int MaxF
         if (MaxFps is < 1 or > 240) throw new ArgumentException("帧率上限需为 1–240 的整数。");
         if (BitRateMbps is < 1 or > 200) throw new ArgumentException("视频码率需为 1–200 Mbps 的整数。");
         if (MaxSize != 0 && (MaxSize is < 16 or > 7680)) throw new ArgumentException("最长边需为 16–7680 的整数，或填 0 使用原始分辨率。");
+        if (VideoBufferMs is < 0 or > 200) throw new ArgumentException("画面平滑缓冲需为 0–200 毫秒。");
     }
 }
 
@@ -60,7 +61,8 @@ internal static class ScrcpyLauncher
         foreach (var argument in new[] { "--serial=" + transport, "--window-title=Hinge · " + (control ? "远控" : "投屏"),
                      "--video-codec=" + options.VideoCodec, "--max-size=" + options.MaxSize,
                      "--max-fps=" + options.MaxFps, "--video-bit-rate=" + options.BitRateMbps + "M",
-                     options.PreferHardwareDecoding ? "--hwdec=auto" : "--hwdec=disabled", "--print-fps", "--no-audio",
+                     options.PreferHardwareDecoding ? "--hwdec=auto" : "--hwdec=disabled",
+                     "--video-buffer=" + options.VideoBufferMs, "--print-fps", "--no-audio",
                      "--no-clipboard-autosync" })
             start.ArgumentList.Add(argument);
         if (!control) start.ArgumentList.Add("--no-control");

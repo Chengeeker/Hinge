@@ -2,7 +2,8 @@
 
 ## [2.2.0] - 2026-10-23
 
-对照 GitHub 上一正式发行版 [`v2.0.2`](https://github.com/Chengeeker/Hinge/releases/tag/v2.0.2)，本版新增投屏远控、传输进度通知和 Android 底栏显示选项，并更新桌面界面。完整发行说明见 [v2.2.0 更新日志](docs/CHANGELOG_v2.2.0.md)。
+对照 GitHub 上一正式发行版 [`v2.0.2`](https://github.com/Chengeeker/Hinge/releases/tag/v2.0.2)，本版新增 Windows 发起的 Android 手机投屏与远程控制、Android 传输进度通知和液态玻璃底栏选项，并更新桌面界面。完整发行说明见 [v2.2.0 更新日志](docs/CHANGELOG_v2.2.0.md)。
+
 ## [2.0.2] - 2026-10-15
 
 - 修复 Android 与 Windows 并行连接时可能误关闭最终保留会话的问题；自动重连只清理真正多余的连接，并在重新登记会话前确认仍已就绪。

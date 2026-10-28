@@ -19,12 +19,14 @@ enum MessageType {
   syncManifestResponse(0x0036),
   syncPullRequest(0x0037),
   remoteInput(0x0050),
+  secureRemoteInput(0x0051),
   screenStream(0x0060),
   notificationEvent(0x0070),
   notificationAction(0x0071),
   toolCommand(0x0080),
   toolResult(0x0081),
   compressedControl(0x0082),
+  gameProfileSync(0x0083),
   unknown(0x0000);
 
   final int value;

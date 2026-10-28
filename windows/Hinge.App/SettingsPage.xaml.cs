@@ -9,6 +9,8 @@ public sealed partial class SettingsPage : Page
     public Button WindowsSettings => WindowsSettingsButton;
     public Button TransferSettings => TransferSettingsButton;
     public Button ScreenControl => ScreenControlSettingsButton;
+    public Button RemoteInputSettings => RemoteInputSettingsButton;
+    public TextBlock RemoteInputSettingsSummary => RemoteInputSettingsSummaryText;
     public Button CloudRelaySettings => CloudRelaySettingsButton;
     public Button WebDavSettings => WebDavSettingsButton;
 

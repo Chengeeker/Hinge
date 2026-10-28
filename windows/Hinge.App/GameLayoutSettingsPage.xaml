@@ -1,0 +1,66 @@
+<Page x:Class="Hinge.App.GameLayoutSettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer x:Name="LayoutScrollViewer" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <Grid x:Name="LayoutPageRoot" HorizontalAlignment="Stretch">
+            <StackPanel Style="{StaticResource HingeSettingsPageStackStyle}" Spacing="20">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Button x:Name="BackButton" AutomationProperties.Name="返回手机远控设置" ToolTipService.ToolTip="返回手机远控设置" Style="{StaticResource HingeIconButtonStyle}"><SymbolIcon Symbol="Back" /></Button>
+                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="游戏模式布局" Style="{StaticResource HingePageTitleStyle}" />
+                        <TextBlock Text="在电脑上编辑手机按键位置、显示和键位；保存后同步到手机。" Style="{StaticResource HingePageDescriptionStyle}" />
+                    </StackPanel>
+                </Grid>
+                <Border Style="{StaticResource HingeCardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <ComboBox x:Name="PhoneSelector" Header="连接的手机" PlaceholderText="先连接已信任的 Android 手机" HorizontalAlignment="Stretch" />
+                            <Button Grid.Column="1" x:Name="RefreshPhonesButton" Content="刷新设备" VerticalAlignment="Bottom" />
+                            <Button Grid.Column="2" x:Name="ReadFromPhoneButton" Content="从手机读取" VerticalAlignment="Bottom" />
+                        </Grid>
+                        <TextBlock x:Name="SyncStatusText" Text="连接手机后读取布局。布局内容只发送给当前已信任并连接的手机。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <Grid x:Name="EditorLayout" ColumnSpacing="16" RowSpacing="16" SizeChanged="EditorLayout_SizeChanged">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="1.5*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Border x:Name="EditorCanvasCard" Style="{StaticResource HingeCardStyle}" Padding="12" VerticalAlignment="Top">
+                        <Viewbox Stretch="Uniform" MaxHeight="520">
+                            <Canvas x:Name="LayoutCanvas" Width="1280" Height="576" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}" />
+                        </Viewbox>
+                    </Border>
+                    <Border x:Name="EditorPropertiesCard" Grid.Column="1" Style="{StaticResource HingeCardStyle}" Padding="16" VerticalAlignment="Top">
+                        <StackPanel Spacing="10">
+                            <ComboBox x:Name="ProfileSelector" Header="预设" PlaceholderText="从手机读取后选择" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddProfileButton" Content="复制预设" />
+                                <Button x:Name="DeleteProfileButton" Content="删除预设" />
+                            </StackPanel>
+                            <TextBox x:Name="ProfileNameBox" Header="预设名称" MaxLength="40" />
+                            <ListView x:Name="ControlList" Header="按键控件" Height="140" SelectionMode="Single" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddControlButton" Content="添加按键" />
+                                <Button x:Name="DeleteControlButton" Content="删除按键" />
+                            </StackPanel>
+                            <TextBox x:Name="ControlLabelBox" Header="按钮文字" MaxLength="64" />
+                            <ComboBox x:Name="ControlBindingCombo" Header="映射电脑按键" PlaceholderText="选择按键或鼠标键" />
+                            <TextBlock Text="水平位置" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            <Slider x:Name="PositionXSlider" Minimum="0" Maximum="1" StepFrequency="0.01" />
+                            <TextBlock Text="垂直位置" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            <Slider x:Name="PositionYSlider" Minimum="0" Maximum="1" StepFrequency="0.01" />
+                            <TextBlock Text="大小" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            <Slider x:Name="SizeSlider" Minimum="0.1" Maximum="0.48" StepFrequency="0.01" />
+                            <TextBlock Text="宽高比（宽 ÷ 高）" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            <Slider x:Name="AspectSlider" Minimum="0.5" Maximum="3" StepFrequency="0.05" />
+                            <TextBox x:Name="DirectionKeysBox" Header="摇杆方向 VK 码（上,左,下,右）" PlaceholderText="87,65,83,68" />
+                            <Button x:Name="SaveAndSyncButton" Content="保存并同步到手机" HorizontalAlignment="Stretch" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</Page>

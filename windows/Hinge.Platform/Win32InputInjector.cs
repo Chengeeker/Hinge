@@ -19,6 +19,28 @@ public class Win32InputInjector : IInputInjector
 
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_UNICODE = 0x0004;
+    private const uint KEYEVENTF_SCANCODE = 0x0008;
+    private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint code, uint mapType);
+
+    public void KeyDown(byte virtualKey) => SendKey(virtualKey, false);
+    public void KeyUp(byte virtualKey) => SendKey(virtualKey, true);
+
+    private static void SendKey(byte key, bool up)
+    {
+        if (key < 8 || key == 255) return;
+        uint scan = MapVirtualKey(key, 4);
+        bool useScan = scan != 0 && (scan >> 8) != 0xE1;
+        var input = new INPUT { type = INPUT_KEYBOARD, u = new InputUnion { ki = new KEYBDINPUT {
+            wVk = useScan ? (ushort)0 : key,
+            wScan = useScan ? (ushort)(scan & 0xFF) : (ushort)0,
+            dwFlags = (up ? KEYEVENTF_KEYUP : 0) | (useScan ? KEYEVENTF_SCANCODE : 0) |
+                (useScan && (scan >> 8) == 0xE0 ? KEYEVENTF_EXTENDEDKEY : 0)
+        } } };
+        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT

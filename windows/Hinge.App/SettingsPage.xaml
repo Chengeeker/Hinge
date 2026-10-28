@@ -34,6 +34,18 @@
                             </Grid>
                         </local:HandCursorButton>
                         <Border Height="1" Margin="60,0,20,0" Background="{ThemeResource HingeM3OutlineVariantBrush}" />
+                        <local:HandCursorButton x:Name="RemoteInputSettingsButton" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="SettingsPage.RemoteInputSettingsButton" AutomationProperties.Name="手机远控电脑" Style="{StaticResource HingeM3SettingsRowButtonStyle}">
+                            <Grid Padding="20,16" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Viewbox Width="24" Height="24" VerticalAlignment="Center"><SymbolIcon Symbol="TouchPointer" Foreground="{ThemeResource HingeM3PrimaryBrush}" /></Viewbox>
+                                <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                    <TextBlock Text="手机远控电脑" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                                    <TextBlock x:Name="RemoteInputSettingsSummaryText" Text="已关闭" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                </StackPanel>
+                                <SymbolIcon Grid.Column="2" Symbol="Forward" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" VerticalAlignment="Center" />
+                            </Grid>
+                        </local:HandCursorButton>
+                        <Border Height="1" Margin="60,0,20,0" Background="{ThemeResource HingeM3OutlineVariantBrush}" />
                         <local:HandCursorButton
                             x:Name="WindowsSettingsButton"
                             HorizontalAlignment="Stretch"

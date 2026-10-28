@@ -9,4 +9,6 @@ public interface IInputInjector : IDisposable
     void MouseDoubleClick();
     void MouseScroll(int delta);
     void SendText(string text);
+    void KeyDown(byte virtualKey);
+    void KeyUp(byte virtualKey);
 }

@@ -31,6 +31,7 @@ class WorkspaceState extends ChangeNotifier {
   AppNavigationStyle _navigationStyle = AppNavigationStyle.adaptive;
   bool _floatingCapsuleNavigation = true;
   bool _useLiquidGlass = false;
+  bool _phoneRemoteControlEnabled = false;
   String _imageStoragePath = '';
   String _videoStoragePath = '';
   String _fileStoragePath = '';
@@ -52,6 +53,7 @@ class WorkspaceState extends ChangeNotifier {
   AppNavigationStyle get navigationStyle => _navigationStyle;
   bool get floatingCapsuleNavigation => _floatingCapsuleNavigation;
   bool get useLiquidGlass => _useLiquidGlass;
+  bool get phoneRemoteControlEnabled => _phoneRemoteControlEnabled;
   String get imageStoragePath => _imageStoragePath;
   String get videoStoragePath => _videoStoragePath;
   String get fileStoragePath => _fileStoragePath;
@@ -155,6 +157,13 @@ class WorkspaceState extends ChangeNotifier {
     }
   }
 
+  void setPhoneRemoteControlEnabled(bool enabled) {
+    if (_phoneRemoteControlEnabled != enabled) {
+      _phoneRemoteControlEnabled = enabled;
+      _changed();
+    }
+  }
+
   void setStoragePaths({
     required String image,
     required String video,
@@ -218,6 +227,7 @@ class WorkspaceState extends ChangeNotifier {
     'navigationStyle': _navigationStyle.name,
     'floatingCapsuleNavigation': _floatingCapsuleNavigation,
     'useLiquidGlass': _useLiquidGlass,
+    'phoneRemoteControlEnabled': _phoneRemoteControlEnabled,
     'imageStoragePath': _imageStoragePath,
     'videoStoragePath': _videoStoragePath,
     'fileStoragePath': _fileStoragePath,
@@ -248,6 +258,7 @@ class WorkspaceState extends ChangeNotifier {
         ? values['floatingCapsuleNavigation'] == true
         : true;
     _useLiquidGlass = values['useLiquidGlass'] == true;
+    _phoneRemoteControlEnabled = values['phoneRemoteControlEnabled'] == true;
     _imageStoragePath = '${values['imageStoragePath'] ?? ''}'.trim();
     _videoStoragePath = '${values['videoStoragePath'] ?? ''}'.trim();
     _fileStoragePath = '${values['fileStoragePath'] ?? ''}'.trim();

@@ -11,6 +11,13 @@ enum RemoteActionType {
   keyDown(0x10),
   keyUp(0x11),
   textInput(0x12),
+  controlStart(0x20),
+  controlStop(0x21),
+  controlAccepted(0x22),
+  controlDenied(0x23),
+  controlEnded(0x24),
+  controlKeepAlive(0x25),
+  controlProbe(0x30),
   unknown(0x00);
 
   final int value;

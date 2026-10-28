@@ -197,8 +197,10 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private var gameProfileBridge: GameProfileBridge? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        gameProfileBridge = GameProfileBridge(this, flutterEngine.dartExecutor.binaryMessenger)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result -> handleMethod(call, result) }
         EventChannel(
@@ -293,6 +295,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        gameProfileBridge?.close()
         stopScreenCapture()
         releaseDiscoveryMulticastLock()
         synchronized(shareLock) {
@@ -310,6 +313,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (gameProfileBridge?.onResult(requestCode, resultCode, data) == true) return
         if (requestCode == companionAssociationRequest) {
             handleCompanionAssociationResult(resultCode, data)
             return
@@ -1617,6 +1621,8 @@ class MainActivity : FlutterActivity() {
             "seedColor" to preferences.getInt("seed_color", 0xFF6750A4.toInt()),
             "navigationStyle" to preferences.getString("navigation_style", "adaptive").orEmpty(),
             "floatingCapsuleNavigation" to preferences.getBoolean("floating_capsule_navigation", false),
+            "useLiquidGlass" to preferences.getBoolean("use_liquid_glass", false),
+            "phoneRemoteControlEnabled" to preferences.getBoolean("phone_remote_control_enabled", false),
             "imageStoragePath" to preferences.getString("image_storage_path", "").orEmpty(),
             "videoStoragePath" to preferences.getString("video_storage_path", "").orEmpty(),
             "fileStoragePath" to preferences.getString("file_storage_path", "").orEmpty(),
@@ -1645,6 +1651,8 @@ class MainActivity : FlutterActivity() {
             .putInt("seed_color", (values["seedColor"] as? Number)?.toInt() ?: 0xFF6750A4.toInt())
             .putString("navigation_style", values["navigationStyle"]?.toString() ?: "adaptive")
             .putBoolean("floating_capsule_navigation", values["floatingCapsuleNavigation"] as? Boolean ?: false)
+            .putBoolean("use_liquid_glass", values["useLiquidGlass"] as? Boolean ?: false)
+            .putBoolean("phone_remote_control_enabled", values["phoneRemoteControlEnabled"] as? Boolean ?: false)
             .putString("image_storage_path", values["imageStoragePath"]?.toString() ?: "")
             .putString("video_storage_path", values["videoStoragePath"]?.toString() ?: "")
             .putString("file_storage_path", values["fileStoragePath"]?.toString() ?: "")

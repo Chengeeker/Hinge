@@ -13,7 +13,14 @@ public enum RemoteActionType : byte
     MouseScroll      = 0x06,
     KeyDown          = 0x10,
     KeyUp            = 0x11,
-    TextInput        = 0x12
+    TextInput         = 0x12,
+    ControlStart      = 0x20,
+    ControlStop       = 0x21,
+    ControlAccepted   = 0x22,
+    ControlDenied     = 0x23,
+    ControlEnded      = 0x24,
+    ControlKeepAlive  = 0x25,
+    ControlProbe      = 0x30
 }
 
 public enum RemoteMouseButton : byte

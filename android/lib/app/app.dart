@@ -24,6 +24,7 @@ import 'navigation_components.dart';
 import 'page_components.dart';
 import 'app_message_snackbar.dart';
 import 'transfer_history_screen.dart';
+import 'phone_remote_control_settings_screen.dart';
 
 import '../core/cloud_relay.dart';
 import '../core/constants.dart';
@@ -31,8 +32,10 @@ import '../core/device_identity_manager.dart';
 import '../core/device_model.dart';
 import '../core/device_registry.dart';
 import '../core/discovery_service.dart';
+import '../core/game_controls.dart';
 import '../core/pairing_manager.dart';
 import '../core/notification_manager.dart';
+import '../core/protocol_frame.dart';
 import '../core/session_manager.dart';
 import '../core/sms_relay_manager.dart';
 import '../core/transfer_manager.dart';
@@ -949,6 +952,7 @@ class _DevicesScreenState extends State<DevicesScreen>
   late final NotificationManager _notificationManager;
   late final SmsRelayManager _smsRelayManager;
   SessionConnection? _activeConnection;
+  SessionConnection? _activePhoneRemoteControlConnection;
   Device? _activeDevice;
   Device? _lastConnectedDevice;
   String? _connectingDeviceId;
@@ -2293,6 +2297,9 @@ class _DevicesScreenState extends State<DevicesScreen>
     if (!_watchedConnections.add(connection)) return;
     _incomingPeerSubscriptions.add(
       connection.frames.listen((frame) {
+        if (frame.type == MessageType.gameProfileSync) {
+          unawaited(_handleGameProfileSync(connection, frame));
+        }
         unawaited(
           widget.transferManager.handleIncomingFrame(connection, frame),
         );
@@ -2310,6 +2317,57 @@ class _DevicesScreenState extends State<DevicesScreen>
       }),
     );
     _smsRelayManager.registerConnection(connection);
+  }
+
+  Future<void> _handleGameProfileSync(
+    SessionConnection connection,
+    ProtocolFrame frame,
+  ) async {
+    final peer = connection.peerInfo;
+    final deviceId = peer?.deviceId;
+    if (!Platform.isAndroid ||
+        connection.state != SessionState.connected ||
+        !(peer?.platform.toLowerCase().contains('windows') ?? false) ||
+        deviceId == null ||
+        !widget.trustStore.isTrusted(deviceId) ||
+        frame.payload.isEmpty ||
+        frame.payload.length > 1024 * 1024) {
+      return;
+    }
+    try {
+      final message = jsonDecode(utf8.decode(frame.payload));
+      if (message is! Map<String, dynamic> || message['version'] != 1) return;
+      final store = GamePresetStore();
+      switch (message['action']) {
+        case 'get':
+          await store.load();
+          await store.save();
+          connection.sendJson(MessageType.gameProfileSync, {
+            'version': 1,
+            'action': 'data',
+            'document': jsonDecode(store.toJsonString()),
+          });
+        case 'set':
+          final document = message['document'];
+          if (document is! Map<String, dynamic>) return;
+          await store.replaceWithJson(jsonEncode(document));
+          connection.sendJson(MessageType.gameProfileSync, {
+            'version': 1,
+            'action': 'ack',
+          });
+      }
+    } on Object {
+      if (connection.state == SessionState.connected) {
+        try {
+          connection.sendJson(MessageType.gameProfileSync, {
+            'version': 1,
+            'action': 'error',
+          });
+        } on Object {
+          // The socket may close while reporting the failed sync.
+        }
+      }
+    }
   }
 
   Future<void> _handleReverseConnectionRequest(
@@ -3592,49 +3650,90 @@ class _DevicesScreenState extends State<DevicesScreen>
               width: width,
               height: 56,
               child: _workspaceState.useLiquidGlass
-                  ? GlassTabBar.bottom(
-                      tabs: [
-                        for (final destination in destinations)
-                          GlassTab(
-                            icon: destination.icon,
-                            activeIcon: destination.selectedIcon,
-                            label: destination.label,
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        GlassTabBar.bottom(
+                          tabs: [
+                            for (final destination in destinations)
+                              GlassTab(
+                                icon: destination.icon,
+                                activeIcon: destination.selectedIcon,
+                                label: destination.label,
+                              ),
+                          ],
+                          selectedIndex: _selectedNavigationIndex,
+                          onTabSelected: _selectNavigationDestination,
+                          barHeight: 56,
+                          horizontalPadding: 0,
+                          verticalPadding: 0,
+                          barBorderRadius: 9999,
+                          indicatorBorderRadius: 9999,
+                          settings: LiquidGlassSettings(
+                            glassColor: isDark
+                                ? const Color(0x66000000)
+                                : const Color(0xF0FFFFFF),
+                            bodyMode: GlassBodyMode.clear,
+                            thickness: 10,
+                            blur: 2,
+                            lightIntensity: 0.25,
+                            ambientStrength: 0,
+                            refractiveIndex: 1.19,
+                            chromaticAberration: 0.008,
+                            rimLight: isDark ? 0 : 1,
+                            shadowElevation: 0,
+                          ),
+                          indicatorSettings: LiquidGlassSettings(
+                            glassColor: isDark
+                                ? Colors.transparent
+                                : const Color(0x18000000),
+                            bodyMode: isDark
+                                ? GlassBodyMode.adaptive
+                                : GlassBodyMode.clear,
+                            refractiveIndex: 1.18,
+                            chromaticAberration: 0.025,
+                            rimShade: isDark ? 0 : 0.12,
+                            rimLight: isDark ? 0 : 0.35,
+                          ),
+                          quality: GlassQuality.premium,
+                          backgroundQuality: GlassQuality.premium,
+                          maskingQuality: MaskingQuality.high,
+                          enableBlend: true,
+                          indicatorColor: isDark
+                              ? const Color(0x66000000)
+                              : const Color(0x26000000),
+                          interactionGlowColor: const Color(0x20FFFFFF),
+                          innerBlur: 6,
+                          pressScale: 1.06,
+                          selectedIconColor: isDark
+                              ? Colors.white
+                              : scheme.primary,
+                          selectedLabelColor: isDark
+                              ? Colors.white
+                              : scheme.primary,
+                          unselectedIconColor: isDark
+                              ? Colors.white
+                              : scheme.onSurfaceVariant,
+                          unselectedLabelColor: isDark
+                              ? Colors.white
+                              : scheme.onSurfaceVariant,
+                        ),
+                        if (!isDark)
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: DecoratedBox(
+                                key: const ValueKey('liquid-glass-light-rim'),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(9999),
+                                  border: Border.all(
+                                    color: const Color(0xF5FFFFFF),
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                       ],
-                      selectedIndex: _selectedNavigationIndex,
-                      onTabSelected: _selectNavigationDestination,
-                      barHeight: 56,
-                      horizontalPadding: 0,
-                      verticalPadding: 0,
-                      barBorderRadius: 9999,
-                      indicatorBorderRadius: 9999,
-                      settings: const LiquidGlassSettings(
-                        glassColor: Color(0x66000000),
-                        bodyMode: GlassBodyMode.clear,
-                        thickness: 10,
-                        blur: 2,
-                        lightIntensity: 0.25,
-                        ambientStrength: 0,
-                        refractiveIndex: 1.19,
-                        chromaticAberration: 0.008,
-                        shadowElevation: 0,
-                      ),
-                      indicatorSettings: const LiquidGlassSettings(
-                        refractiveIndex: 1.18,
-                        chromaticAberration: 0.025,
-                      ),
-                      quality: GlassQuality.premium,
-                      backgroundQuality: GlassQuality.premium,
-                      maskingQuality: MaskingQuality.high,
-                      enableBlend: true,
-                      indicatorColor: const Color(0x66000000),
-                      interactionGlowColor: const Color(0x20FFFFFF),
-                      innerBlur: 6,
-                      pressScale: 1.06,
-                      selectedIconColor: Colors.white,
-                      selectedLabelColor: Colors.white,
-                      unselectedIconColor: Colors.white,
-                      unselectedLabelColor: Colors.white,
                     )
                   : Container(
                       padding: const EdgeInsets.all(4),
@@ -5089,6 +5188,12 @@ class _DevicesScreenState extends State<DevicesScreen>
                   ),
                 ),
                 settingTile(
+                  icon: Symbols.touch_app_rounded,
+                  title: '手机远控电脑',
+                  subtitle: _phoneRemoteControlSummary,
+                  onTap: _openPhoneRemoteControlSettings,
+                ),
+                settingTile(
                   icon: Symbols.cloud_rounded,
                   title: 'Cloud Relay',
                   subtitle: _workspaceState.cloudRelaySettings.isConfigured
@@ -5147,6 +5252,35 @@ class _DevicesScreenState extends State<DevicesScreen>
               ),
             ]),
           ],
+        ),
+      ),
+    );
+  }
+
+  String get _phoneRemoteControlSummary {
+    if (!_workspaceState.phoneRemoteControlEnabled) return '已关闭';
+    final active = _activePhoneRemoteControlConnection;
+    if (active?.state == SessionState.connected) {
+      return '正在控制 ${active?.peerInfo?.name ?? 'Windows 电脑'}';
+    }
+    final count = widget.sessionManager.activeConnections.where((connection) {
+      return connection.state == SessionState.connected &&
+          (connection.peerInfo?.platform.toLowerCase().contains('windows') ??
+              false);
+    }).length;
+    return count == 0 ? '已开启 · 等待电脑连接' : '已开启 · $count 台电脑在线';
+  }
+
+  Future<void> _openPhoneRemoteControlSettings() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PhoneRemoteControlSettingsScreen(
+          workspaceState: _workspaceState,
+          sessionManager: widget.sessionManager,
+          onActiveControlChanged: (connection) {
+            if (!mounted) return;
+            setState(() => _activePhoneRemoteControlConnection = connection);
+          },
         ),
       ),
     );

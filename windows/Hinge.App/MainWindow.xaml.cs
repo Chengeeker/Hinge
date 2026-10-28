@@ -60,6 +60,8 @@ public sealed partial class MainWindow : Window
     private const string UserSettingsRegistryPath = @"Software\Hinge";
     private const string ReceiveDirectorySettingName = "ReceiveDirectory";
     private const string PairingCodeSettingName = "PairingCode";
+    private const string RemoteInputEnabledSettingName = "RemoteInputEnabled";
+    private const string RemoteInputEncryptionRequiredSettingName = "RemoteInputEncryptionRequired";
     private const string WirelessAdbHostSettingName = "WirelessAdbHost";
     private const string WirelessAdbConnectPortSettingName = "WirelessAdbConnectPort";
     private const string WirelessAdbClipboardSyncSettingName = "WirelessAdbClipboardSync";
@@ -157,6 +159,8 @@ public sealed partial class MainWindow : Window
     private PhotosPage? _photosPage;
     private NotificationHistoryPage? _notificationHistoryPage;
     private PersonalizationPage? _personalizationPage;
+    private SettingsPage? _settingsPage;
+    private RemoteInputSettingsPage? _remoteInputSettingsPage;
     private readonly HashSet<Page> _configuredPages = new();
     private bool _resizingPane;
     private uint _resizePointerId;
@@ -455,7 +459,8 @@ public sealed partial class MainWindow : Window
         _transferManager = new TransferManager(_receiveDirectory);
         _clipboardAdapter = new Win32ClipboardAdapter();
         _inputInjector = new Win32InputInjector();
-        _remoteInputManager = new RemoteInputManager(_inputInjector, _trustStore);
+        _remoteInputManager = new RemoteInputManager(_inputInjector, _trustStore, LoadRemoteInputEnabled(), LoadRemoteInputEncryptionRequired());
+        _remoteInputManager.StatusChanged += RemoteInputManager_StatusChanged;
         _notificationPresenter = new Win32NotificationPresenter(
             text => _ = _clipboardAdapter.SetTextAsync(text));
         _notificationManager = new NotificationManager(_notificationPresenter, _trustStore);
@@ -587,6 +592,7 @@ public sealed partial class MainWindow : Window
                 ConfigureFileManagementPage(files);
                 break;
             case SettingsPage settings:
+                _settingsPage = settings;
                 ConfigureSettingsPage(settings);
                 break;
             case WindowsSettingsPage windowsSettings:
@@ -604,6 +610,13 @@ public sealed partial class MainWindow : Window
                     ConfigureScreenControlPage(screenControl);
                 }
                 UpdateScreenStatus(_screenStatus);
+                break;
+            case RemoteInputSettingsPage remoteInputSettings:
+                _remoteInputSettingsPage = remoteInputSettings;
+                ConfigureRemoteInputSettingsPage(remoteInputSettings);
+                break;
+            case GameLayoutSettingsPage gameLayoutSettings:
+                ConfigureGameLayoutSettingsPage(gameLayoutSettings);
                 break;
             case CloudRelaySettingsPage cloudRelaySettings:
                 _cloudRelaySettingsPage = cloudRelaySettings;
@@ -1151,15 +1164,135 @@ public sealed partial class MainWindow : Window
 
     private void ConfigureSettingsPage(SettingsPage page)
     {
+        _settingsPage = page;
+        page.RemoteInputSettingsSummary.Text = GetRemoteInputSettingsSummary();
         page.ScreenControl.Click -= OpenScreenControl_Click;
         page.ScreenControl.Click += OpenScreenControl_Click;
         if (!_configuredPages.Add(page)) return;
         page.Personalization.Click += BtnPersonalization_Click;
         page.WindowsSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WindowsSettingsPage));
+        page.RemoteInputSettings.Click += (_, _) => ContentFrame.Navigate(typeof(RemoteInputSettingsPage));
         page.TransferSettings.Click += (_, _) => ContentFrame.Navigate(typeof(TransferSettingsPage));
         page.CloudRelaySettings.Click += (_, _) => ContentFrame.Navigate(typeof(CloudRelaySettingsPage));
         page.WebDavSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WebDavSettingsPage));
     }
+
+    private void ConfigureGameLayoutSettingsPage(GameLayoutSettingsPage page)
+    {
+        page.Configure(_sessionManager, _trustStore);
+        if (!_configuredPages.Add(page)) return;
+        page.BackToSettings.Click += (_, _) => ContentFrame.Navigate(typeof(RemoteInputSettingsPage));
+    }
+
+    private Task? _remoteControlKeyLoad;
+    private string? _remoteControlToken;
+    private async Task InitializeRemoteControlKeyAsync(bool rotate = false)
+    {
+        var key = await RemoteControlKeyStore.LoadOrCreateAsync(rotate);
+        _remoteInputManager.SetControlKey(key);
+        _remoteControlToken = "HRC1-" + Convert.ToBase64String(key);
+        System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
+    }
+
+    private async void ConfigureRemoteInputSettingsPage(RemoteInputSettingsPage page)
+    {
+        page.AllowRemoteInput.IsOn = _remoteInputManager.Enabled;
+        page.RequireEncryption.IsOn = _remoteInputManager.EncryptionRequired;
+        UpdateRemoteInputSettingsUi();
+        if (!_configuredPages.Add(page)) return;
+        page.BackToSettings.Click += HeaderBackButton_Click;
+        page.GameLayoutSettings.Click += (_, _) => ContentFrame.Navigate(typeof(GameLayoutSettingsPage));
+        page.AllowRemoteInput.Toggled += RemoteInputEnabled_Toggled;
+        page.RequireEncryption.Toggled += RemoteInputEncryption_Toggled;
+        async Task LoadControlKey(bool rotate)
+        {
+            page.RotateToken.IsEnabled = false;
+            try
+            {
+                if (rotate) await _remoteInputManager.SetEnabledAsync(false);
+                if (rotate || _remoteControlKeyLoad == null || _remoteControlKeyLoad.IsFaulted)
+                    _remoteControlKeyLoad = InitializeRemoteControlKeyAsync(rotate);
+                await _remoteControlKeyLoad;
+                page.ControlToken.Text = _remoteControlToken ?? string.Empty;
+            }
+            catch (Exception) { page.ControlToken.Text = "无法读取远控密钥，请检查本机用户数据权限。"; }
+            finally { page.RotateToken.IsEnabled = true; UpdateRemoteInputSettingsUi(); }
+        }
+        page.RotateToken.Click += async (_, _) => await LoadControlKey(true);
+        if (_remoteInputManager.EncryptionRequired)
+            await LoadControlKey(false);
+    }
+
+    private async void RemoteInputEnabled_Toggled(object sender, RoutedEventArgs e)
+    {
+        bool enabled = _remoteInputSettingsPage?.AllowRemoteInput.IsOn == true;
+        WriteUserSetting(RemoteInputEnabledSettingName, enabled ? 1 : 0);
+        await _remoteInputManager.SetEnabledAsync(enabled);
+        UpdateRemoteInputSettingsUi();
+    }
+
+    private async void RemoteInputEncryption_Toggled(object sender, RoutedEventArgs e)
+    {
+        var toggle = _remoteInputSettingsPage?.RequireEncryption;
+        if (toggle == null) return;
+        bool required = toggle.IsOn;
+        toggle.IsEnabled = false;
+        WriteUserSetting(RemoteInputEncryptionRequiredSettingName, required ? 1 : 0);
+        try
+        {
+            if (required)
+            {
+                _remoteControlKeyLoad ??= InitializeRemoteControlKeyAsync();
+                await _remoteControlKeyLoad;
+                if (_remoteInputSettingsPage is { } page)
+                    page.ControlToken.Text = _remoteControlToken ?? string.Empty;
+            }
+            await _remoteInputManager.SetEncryptionRequiredAsync(required);
+        }
+        catch
+        {
+            WriteUserSetting(RemoteInputEncryptionRequiredSettingName, required ? 0 : 1);
+            toggle.IsOn = !required;
+        }
+        finally
+        {
+            toggle.IsEnabled = true;
+            UpdateRemoteInputSettingsUi();
+        }
+    }
+
+    private void RemoteInputManager_StatusChanged(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(UpdateRemoteInputSettingsUi);
+
+    private void UpdateRemoteInputSettingsUi()
+    {
+        var deviceName = _remoteInputManager.ActiveDeviceName;
+        string summary = GetRemoteInputSettingsSummary();
+        if (_settingsPage is { } settingsPage)
+            settingsPage.RemoteInputSettingsSummary.Text = summary;
+        if (_remoteInputSettingsPage is not { } page) return;
+
+        page.AllowRemoteInput.IsOn = _remoteInputManager.Enabled;
+        page.RequireEncryption.IsOn = _remoteInputManager.EncryptionRequired;
+        page.TokenPanel.Visibility = _remoteInputManager.EncryptionRequired
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        page.Status.Text = summary;
+        page.StatusDetails.Text = !_remoteInputManager.Enabled
+            ? "当前已拒绝所有手机远控请求。打开上方开关后，已连接的 Android 手机可请求开始控制。"
+            : !_remoteInputManager.EncryptionRequired
+                ? "远控已开启，但指令未加密。仅在你信任的局域网使用；切换加密模式会结束当前控制并要求手机重新连接。"
+            : deviceName == null
+                ? "远控已允许，正在等待已连接的 Android 手机打开触控板。"
+                : $"当前由“{deviceName}”控制。手机退出触控板或连接断开后，会自动结束控制。";
+    }
+
+    private string GetRemoteInputSettingsSummary() =>
+        !_remoteInputManager.Enabled
+            ? "已关闭"
+            : _remoteInputManager.ActiveDeviceName is { } deviceName
+                ? $"正在由 {deviceName} 控制{(_remoteInputManager.EncryptionRequired ? string.Empty : "（局域网未加密）")}"
+                : $"已开启，等待手机控制{(_remoteInputManager.EncryptionRequired ? string.Empty : "（局域网未加密）")}";
 
     private void ConfigureWindowsSettingsPage(WindowsSettingsPage page)
     {
@@ -1922,7 +2055,11 @@ public sealed partial class MainWindow : Window
 
     private void HeaderBackButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ContentFrame.Content is PersonalizationPage or WindowsSettingsPage or TransferSettingsPage or CloudRelaySettingsPage)
+        if (ContentFrame.Content is GameLayoutSettingsPage)
+        {
+            ContentFrame.Navigate(typeof(RemoteInputSettingsPage));
+        }
+        else if (ContentFrame.Content is PersonalizationPage or WindowsSettingsPage or TransferSettingsPage or CloudRelaySettingsPage or RemoteInputSettingsPage)
         {
             NavigateTo("设置", 0);
         }
@@ -3611,6 +3748,12 @@ public sealed partial class MainWindow : Window
         };
     }
 
+    private static bool LoadRemoteInputEnabled() =>
+        ReadUserSetting(RemoteInputEnabledSettingName) is int enabled && enabled != 0;
+
+    private static bool LoadRemoteInputEncryptionRequired() =>
+        ReadUserSetting(RemoteInputEncryptionRequiredSettingName) is int required && required != 0;
+
     private static void SaveCloudRelaySettings(CloudRelaySettings settings)
     {
         WriteUserSetting(CloudRelayEnabledSettingName, settings.Enabled ? 1 : 0);
@@ -4173,7 +4316,13 @@ public sealed partial class MainWindow : Window
         try
         {
             await _transferManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
-            _remoteInputManager.HandleIncomingFrame(args.Connection, args.Frame);
+            if (_remoteInputManager.EncryptionRequired &&
+                args.Frame.Type is (MessageType.RemoteInput or MessageType.SecureRemoteInput))
+            {
+                _remoteControlKeyLoad ??= InitializeRemoteControlKeyAsync();
+                await _remoteControlKeyLoad;
+            }
+            await _remoteInputManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
             await _notificationManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
         }
         catch (Exception exception)

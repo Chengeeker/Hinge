@@ -19,6 +19,8 @@ public class MockInputInjector : IInputInjector
     }
 
     public void MouseDown(RemoteMouseButton button) { }
+    public void KeyDown(byte virtualKey) { }
+    public void KeyUp(byte virtualKey) { }
     public void MouseUp(RemoteMouseButton button) { }
 
     public void MouseClick(RemoteMouseButton button)
@@ -106,13 +108,12 @@ public class RemoteInputTests
     }
 
     [Fact]
-    public void RemoteInputManager_DispatchesToInjector()
+    public async Task RemoteInputManager_RejectsRemoteInputWithoutTrustedSession()
     {
         var injector = new MockInputInjector();
         var trustStore = new TrustStore();
-        using var manager = new RemoteInputManager(injector, trustStore);
+        using var manager = new RemoteInputManager(injector, trustStore, enabled: true);
 
-        // Move
         var moveEvent = new RemoteInputEvent
         {
             ActionType = RemoteActionType.MouseMove,
@@ -120,29 +121,8 @@ public class RemoteInputTests
             DeltaY = 30
         };
         var moveFrame = new ProtocolFrame { Type = MessageType.RemoteInput, Payload = moveEvent.Serialize() };
-        bool handled = manager.HandleIncomingFrame(null!, moveFrame);
-        Assert.True(handled);
-        Assert.Equal(15, injector.LastMoveX);
-        Assert.Equal(30, injector.LastMoveY);
-
-        // Click Right
-        var clickEvent = new RemoteInputEvent
-        {
-            ActionType = RemoteActionType.MouseClick,
-            ButtonOrKey = (byte)RemoteMouseButton.Right
-        };
-        var clickFrame = new ProtocolFrame { Type = MessageType.RemoteInput, Payload = clickEvent.Serialize() };
-        manager.HandleIncomingFrame(null!, clickFrame);
-        Assert.Equal(RemoteMouseButton.Right, injector.LastClickedButton);
-
-        // Text input
-        var textEvent = new RemoteInputEvent
-        {
-            ActionType = RemoteActionType.TextInput,
-            TextPayload = "Testing Text Input"
-        };
-        var textFrame = new ProtocolFrame { Type = MessageType.RemoteInput, Payload = textEvent.Serialize() };
-        manager.HandleIncomingFrame(null!, textFrame);
-        Assert.Equal("Testing Text Input", injector.LastText);
+        Assert.False(await manager.HandleIncomingFrameAsync(null, moveFrame));
+        Assert.Equal(0, injector.LastMoveX);
+        Assert.Equal(0, injector.LastMoveY);
     }
 }

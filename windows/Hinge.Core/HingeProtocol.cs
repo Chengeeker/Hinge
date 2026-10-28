@@ -22,12 +22,14 @@ public enum MessageType : ushort
     SyncPullRequest      = 0x0037,
     // 0x0040 was the removed clipboard-sync frame; kept reserved for v1 compatibility.
     RemoteInput     = 0x0050,
+    SecureRemoteInput = 0x0051,
     ScreenStream    = 0x0060,
     NotificationEvent  = 0x0070,
     NotificationAction = 0x0071,
     ToolCommand     = 0x0080,
     ToolResult      = 0x0081,
     CompressedControl = 0x0082,
+    GameProfileSync = 0x0083,
 }
 
 public class ProtocolFrame

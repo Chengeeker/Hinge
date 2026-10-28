@@ -95,15 +95,17 @@ Hinge Protocol 采用分层解耦架构：
 | `0x0036` | `SYNC_MANIFEST_RESP`| JSON | Sync | 应答目录同步清单 |
 | `0x0037` | `SYNC_PULL_REQ` | JSON | Sync | 差量文件拉取请求 |
 | `0x0040` | 已废弃（保留编号） | — | — | 旧剪贴板同步帧；不得用于新功能 |
-| `0x0050` | `REMOTE_INPUT` | Binary | Remote | 16B 定长遥控键鼠事件 |
+| `0x0050` | `REMOTE_INPUT` | Binary | Remote | 16B 遥控键鼠事件或公开挑战 |
+| `0x0051` | `SECURE_REMOTE_INPUT` | Binary | Remote | AES-256-GCM 加密遥控事件 |
 | `0x0060` | `SCREEN_STREAM` | Binary | Mirror | 20B 流子头 + 裸 NALU / 信令 |
 | `0x0070` | `NOTIFICATION_EVENT` | JSON | Tools | 移动端通知事件广播 |
 | `0x0071` | `NOTIFICATION_ACTION`| JSON | Tools | 桌面端通知操作回传闭环 |
 | `0x0080` | `TOOL_COMMAND` | JSON | Tools | 原生工具任务调度 |
 | `0x0081` | `TOOL_RESULT` | JSON | Tools | 原生工具任务执行结果 |
 | `0x0082` | `COMPRESSED_CONTROL` | 二进制封装 | Session/Tools | 双方协商后压缩大控制载荷，内部保留原消息类型 |
+| `0x0083` | `GAME_PROFILE_SYNC` | JSON | Remote | 受信任 Windows 与 Android 之间读取、保存游戏按键预设 |
 
-`DEVICE_DISCOVERY` 的 JSON 报文中，`automaticReconnect` 是可选布尔字段：设备主动恢复一个已经信任的历史会话时置为 `true`；手动连接请求或旧客户端省略该字段时按 `false` 处理。接收端只有在本地信任库中找到相同 `deviceId` 时才接受带标记的自动连接请求，因此更新后仍可复用历史身份，同时不会让新设备跳过用户授权。
+`DEVICE_DISCOVERY` 的 JSON 报文中，`automaticReconnect` 是可选布尔字段：设备主动恢复历史会话时置为 `true`；手动连接请求或旧客户端省略该字段时按 `false` 处理。接收端对自动请求查询本地信任库中的 `deviceId`；该 ID 由对端自报，不能单独证明密码学身份。直接 TCP 会话另有自己的连接及可选配对码逻辑，不能据此断言所有新连接都经过用户授权。
 
 ### 3.3 BLE 唤醒不是 OSP1 消息
 
@@ -189,6 +191,11 @@ EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
   ActionType (1B) + Button/Key (1B) + Flags (2B uint16) + DeltaX (4B int32) + DeltaY (4B int32) + Wheel/Timestamp (4B int32)
   ```
 - 若 `ActionType == 0x12` (TextInput)，则在 16 字节定长头后直接追加 UTF-8 变长文本流。
+- **ActionType**：`0x01` 鼠标相对移动，`0x02/0x03` 鼠标按下/抬起，`0x04/0x05` 单击/双击，`0x06` 滚轮，`0x10/0x11` 键按下/抬起，`0x12` 文本输入；`0x20/0x21` 请求开始/停止控制，`0x22/0x23/0x24` 允许/拒绝/结束控制，`0x25` 保活，`0x30` 控制探测。
+- 手机先发送 `0x30` 探测。Windows 检查远控开关、连接状态为 `Connected`、对端声明为 Android 且设备 ID 在本机信任库中。Windows 同时只接受一个活动手机控制会话；停止、断线、关闭远控或切换加密模式都会结束控制并释放按键。
+- Windows 默认要求加密。用户可在 Windows“手机远控电脑”设置中关闭“加密远控指令”；此时探测会直接收到 `0x22`，后续 `REMOTE_INPUT` 指令以明文传输。仅在用户明确关闭加密且可信局域网使用时接受。此模式下 `0x22/0x23/0x24` 的 `Flags` bit0=支持键盘按键、bit1=当前未加密；启用加密时 bit0=支持键盘按键，bit1=0。加密状态改变会终止现有会话，手机需重新连接。
+- 设备 ID 和平台由对端自报，信任库和 `Connected` 状态不能证明密码学身份。明文模式不提供机密性或消息认证，请勿在不可信网络中使用或输入密码、敏感文本。`0x10/0x11` 使用 Windows 虚拟键码（8–254）；具体应用、权限和游戏反作弊策略仍可能拒绝合成输入。
+- `TextInput` 最多允许 4096 个 Unicode 字符（Windows UTF-16 最多 8192 个代码单元）；超限或超过 16 KiB UTF-8 文本载荷的输入必须拒绝。
 
 ### 4.3 视频流数据包 (`SCREEN_STREAM`, `0x0060`)
 - **20 字节流式子帧头**：
@@ -196,3 +203,17 @@ EnvelopeVersion (1B) + Flags (1B, must be 0) + InnerMessageType (2B, big-endian)
   Subtype (1B) + Flags (1B) + StreamId (2B uint16) + SequenceNumber (4B uint32) + PayloadLength (4B uint32) + TimestampUs (8B uint64 PTS)
   ```
 - 视频数据载荷为标准 H.264 Annex-B 裸 NALU（附带 `0x00000001` 或 `0x000001` 起始码）。
+
+### 4.2.1 认证加密远控输入（游戏控制扩展，双端需同时更新）
+
+当 Windows 加密开关开启时，`REMOTE_INPUT` (0x0050) 仅用于公开挑战交换，不接受明文控制事件。手机发送16字节、首字节0x30的探测；Windows每次请求生成新的32字节随机挑战，回复48字节、首字节0x31、挑战位于偏移16。重新请求将结束该连接原控制上下文。该挑战不含主密钥。加密开关关闭时跳过挑战，仅对已信任且连接中的 Android 设备接受明文远控。
+
+Windows设置页生成32字节随机控制密钥（HRC1-加Base64），使用当前系统用户的数据保护API加密保存。手机仅在检测到 Windows 要求加密时请求输入密钥；用户可选择将其保存到 Android Keystore 加密保护，或不保存。不得将主密钥通过未加密业务通道自动交换。原设备自报ID/信任列表仅为额外授权条件，不能替代密钥认证。
+
+SECURE_REMOTE_INPUT (0x0051) 载荷为：版本1:uint8、序号:uint64BE、密文、GCM标签16字节。双方使用 HKDF-SHA256（输出32字节、salt为挑战、info为UTF8 `HingeRemoteInput/v1/client` 或 `HingeRemoteInput/v1/server`）派生方向密钥。AES-256-GCM nonce是4字节0加8字节序号，AAD是载荷前9字节加32字节挑战。序号从1开始单调递增；标签错误、重放、错误方向、旧会话均拒绝，失败帧不得推进接收序号。
+
+解密后的内容仍为16字节RemoteInputEvent及可选文本。加密会话中的 ControlStart/Accepted/Denied/Ended 等状态必须通过 `0x0051` 传输，Accepted flags bit0=支持键盘按键。明文模式用 `0x0050` 返回这些状态，并设置 flags bit1 表示未加密。`0x25` 每500ms保活；Windows超过3秒无有效输入/保活（每1秒检查）结束控制并释放所有持有的键鼠状态。停止、断线、关闭远控、模式切换或密钥轮换也释放。加密模式失败时客户端不得回退明文；其他文件/业务通道不属于此加密范围。
+
+### 4.2.2 游戏布局同步 (`GAME_PROFILE_SYNC`, `0x0083`)
+
+仅允许已连接且位于双方信任库中的 Windows/Android 对端使用。Windows 发送 `{"version":1,"action":"get"}` 读取 Android 本机 `game-controls/presets.json`；Android 以 `action=data` 返回完整布局文档。Windows 编辑后发送 `action=set` 与 `document`，Android 必须先完整验证版本、预设/控件数量、坐标、比例、键位及 1MiB 上限，再用现有原子文件保存，成功后回 `action=ack`；校验或保存失败不得替换旧文件。Android 收到远端更新时通知已打开的游戏模式重载布局。该配置帧走现有 Hinge 会话，默认局域网通道没有载荷加密；只同步受信任手机上的游戏布局，不用于传递密钥或敏感数据。

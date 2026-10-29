@@ -38,14 +38,14 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.textContaining('开发者选项尚未开启'), findsOneWidget);
+    expect(find.textContaining('请先开启开发者选项'), findsOneWidget);
     await tester.tap(find.text('打开系统调试设置'));
     await tester.pumpAndSettle();
     expect(opened, 1);
     developerEnabled = true;
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
-    expect(find.textContaining('此处不代表电脑已连接或正在投屏'), findsOneWidget);
+    expect(find.textContaining('开发者选项已开启'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -67,7 +67,35 @@ void main() {
       tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
       isNull,
     );
-    expect(find.textContaining('当前系统低于 Android 11'), findsOneWidget);
+    expect(find.textContaining('需要 Android 11'), findsOneWidget);
+  });
+
+  testWidgets('Unified settings opens computer controls and refreshes status', (
+    tester,
+  ) async {
+    var status = '已关闭';
+    var opened = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async => {'supported': true});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScreenControlScreen(
+          dataService: WorkspaceDataService(),
+          computerStatus: () => status,
+          onOpenComputer: () async {
+            opened++;
+            status = '已开启';
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('电脑控制手机'), findsOneWidget);
+    expect(find.text('已关闭'), findsOneWidget);
+    await tester.tap(find.text('手机控制电脑'));
+    await tester.pumpAndSettle();
+    expect(opened, 1);
+    expect(find.text('已开启'), findsOneWidget);
   });
 
   testWidgets(

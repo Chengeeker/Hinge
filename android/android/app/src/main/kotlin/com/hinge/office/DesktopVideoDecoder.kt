@@ -16,6 +16,7 @@ internal class DesktopVideoDecoder(
     private val surface: Surface,
     private val onFormat: (Int, Int) -> Unit,
     private val onFailure: (Exception) -> Unit = {},
+    private val onPresented: () -> Unit = {},
 ) : Closeable {
     @Volatile private var codec: MediaCodec? = null
     private var formatKey: Triple<Int, Int, Int>? = null
@@ -124,6 +125,7 @@ internal class DesktopVideoDecoder(
                 if (codec === source) {
                     presentedFrames.incrementAndGet()
                     progress.presented(nanoTime)
+                    onPresented()
                 }
             }, Handler(renderThread.looper))
             decoder.start()

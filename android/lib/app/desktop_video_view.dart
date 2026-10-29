@@ -163,7 +163,7 @@ class _DesktopVideoViewState extends State<DesktopVideoView>
       final description =
           jsonDecode(utf8.decode(frame.payload)) as Map<String, dynamic>;
       if (description['enabled'] != true) {
-        throw StateError('请在电脑的“设置 → 手机远控电脑”开启桌面共享');
+        throw StateError('请在电脑的“设置 → 投屏与远控 → 手机远控电脑”开启桌面共享');
       }
       final port = description['port'];
       if (port is! int ||

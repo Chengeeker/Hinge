@@ -35,7 +35,10 @@ void main() {
               onClick: clicks.add,
               onDrag: drags.add,
               onScroll: wheels.add,
-              child: const ColoredBox(color: Colors.black),
+              child: const ColoredBox(
+                key: ValueKey('video'),
+                color: Colors.black,
+              ),
             ),
           ),
         ),
@@ -95,6 +98,27 @@ void main() {
     // The tap is inverse-mapped through the enlarged viewport.
     expect(absolute.single.dx, greaterThan(.30));
     expect(absolute.single.dx, lessThan(.50));
+  });
+  testWidgets('continuous pinch keeps display geometry stable across frames', (
+    tester,
+  ) async {
+    await mount(tester);
+    Rect bounds() => tester.getRect(find.byKey(const ValueKey('video')));
+    expect(bounds(), const Rect.fromLTWH(0, 0, 400, 300));
+    final a = await tester.startGesture(const Offset(120, 150), pointer: 1);
+    final b = await tester.startGesture(const Offset(280, 150), pointer: 2);
+    for (final distance in [20.0, 40.0, 60.0, 40.0, 20.0, 0.0]) {
+      await a.moveTo(Offset(120 - distance, 150));
+      await tester.pump();
+      await b.moveTo(Offset(280 + distance, 150));
+      await tester.pump();
+      final scale = (160 + distance * 2) / 160;
+      expect(bounds().width, closeTo(400 * scale, .001));
+      expect(bounds().center, const Offset(200, 150));
+    }
+    expect(bounds(), const Rect.fromLTWH(0, 0, 400, 300));
+    await a.up();
+    await b.up();
   });
   testWidgets('parallel fingers scroll, two finger tap right clicks', (
     tester,

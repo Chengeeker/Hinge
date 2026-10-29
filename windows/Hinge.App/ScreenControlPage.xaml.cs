@@ -12,16 +12,27 @@ public sealed partial class ScreenControlPage : Page
     public TextBlock Status => StatusText;
     public TextBlock FrameRate => FrameRateText;
     public ComboBox Codec => CodecOptions;
-    public NumberBox MaxFps => MaxFpsBox;
-    public NumberBox VideoBufferMs => VideoBufferMsBox;
-    public NumberBox BitRate => BitRateBox;
-    public NumberBox MaxSize => MaxSizeBox;
+    public Slider MaxFps => MaxFpsBox;
+    public Slider VideoBufferMs => VideoBufferMsBox;
+    public Slider BitRate => BitRateBox;
+    public Slider MaxSize => MaxSizeBox;
     public ToggleSwitch HardwareDecoding => HardwareDecodingToggle;
 
     public ScreenControlPage()
     {
         InitializeComponent();
+        foreach (var slider in new[] { MaxFps, VideoBufferMs, BitRate, MaxSize })
+            slider.ValueChanged += (_, _) => UpdateParameterLabels();
+        UpdateParameterLabels();
         SettingsPageLayout.MatchViewportWidth(ScreenScrollViewer, ScreenPageRoot);
+    }
+
+    private void UpdateParameterLabels()
+    {
+        MaxFpsBoxLabel.Text = $"帧率上限 · {MaxFps.Value:0} FPS";
+        VideoBufferMsBoxLabel.Text = $"平滑缓冲 · {VideoBufferMs.Value:0} 毫秒";
+        BitRateBoxLabel.Text = $"视频码率 · {BitRate.Value:0} Mbps";
+        MaxSizeBoxLabel.Text = MaxSize.Value == 0 ? "画面最长边 · 原始分辨率" : $"画面最长边 · {MaxSize.Value:0} 像素";
     }
 
     internal ScreenControlOptions Options
@@ -39,7 +50,7 @@ public sealed partial class ScreenControlPage : Page
     private static int ReadInteger(double value)
     {
         if (!double.IsFinite(value) || value < 0 || value > int.MaxValue || value != Math.Truncate(value))
-            throw new ArgumentException("请为画面参数填写有效整数。");
+            throw new ArgumentException("请选择有效的画面参数。");
         return (int)value;
     }
 

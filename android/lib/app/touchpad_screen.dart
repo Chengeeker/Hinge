@@ -716,20 +716,25 @@ class _TouchpadScreenState extends State<TouchpadScreen>
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          child: SizedBox.expand(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: color, size: 24),
-                const SizedBox(height: 3),
-                Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: color, fontSize: 11, height: 1.1),
-                ),
-              ],
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 64),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, color: color, size: 22),
+                  const SizedBox(height: 3),
+                  Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: color, fontSize: 11, height: 1.1),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -737,77 +742,131 @@ class _TouchpadScreenState extends State<TouchpadScreen>
     );
   }
 
-  Widget _buildDesktopFullscreen(BuildContext context) => PopScope<Object?>(
-    canPop: false,
-    onPopInvokedWithResult: (didPop, result) {
-      if (!didPop) unawaited(_toggleDesktopFullscreen());
-    },
-    child: Scaffold(
-      backgroundColor: Colors.black,
-      body: Row(
-        children: [
-          Expanded(
-            child: _touchSurface(context, landscape: true, fullscreen: true),
+  Widget _desktopControlRail({
+    required double width,
+    required double contentWidth,
+    required bool left,
+    required Key key,
+    required List<Widget> actions,
+  }) => SizedBox(
+    key: key,
+    width: width,
+    child: ColoredBox(
+      color: const Color(0xFF050505),
+      child: SafeArea(
+        left: left,
+        right: !left,
+        child: Align(
+          alignment: left ? Alignment.centerLeft : Alignment.centerRight,
+          child: SizedBox(
+            width: contentWidth,
+            child: ListView(padding: EdgeInsets.zero, children: actions),
           ),
-          SizedBox(
-            width: (MediaQuery.sizeOf(context).width * 0.1)
-                .clamp(72.0, 88.0)
-                .toDouble(),
-            child: ColoredBox(
-              color: const Color(0xFF050505),
-              child: SafeArea(
-                left: false,
-                right: false,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: _desktopRailButton(
-                        icon: Icons.tune,
-                        label: '操作',
-                        onTap: _canSend ? _showDesktopActions : null,
-                      ),
-                    ),
-                    Expanded(
-                      child: _desktopRailButton(
-                        icon: Icons.keyboard,
-                        label: '键盘',
-                        onTap: _canSend ? _showTextInputDialog : null,
-                      ),
-                    ),
-                    Expanded(
-                      child: _desktopRailButton(
-                        icon: Icons.desktop_windows_outlined,
-                        label: '显示桌面',
-                        onTap: _canSend
-                            ? () => _sendDesktopShortcut(0x44)
-                            : null,
-                      ),
-                    ),
-                    Expanded(
-                      child: _desktopRailButton(
-                        icon: Icons.grid_view,
-                        label: '所有窗口',
-                        onTap: _canSend
-                            ? () => _sendDesktopShortcut(0x09)
-                            : null,
-                      ),
-                    ),
-                    Expanded(
-                      child: _desktopRailButton(
-                        icon: Icons.fullscreen_exit,
-                        label: '退出全屏',
-                        onTap: _toggleDesktopFullscreen,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     ),
   );
+
+  Widget _buildDesktopFullscreen(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final safe = MediaQuery.viewPaddingOf(context);
+    final railWidth = (size.width * 0.07).clamp(64.0, 72.0).toDouble();
+    final railExtent =
+        railWidth + (safe.left > safe.right ? safe.left : safe.right);
+    final canSendMouse = _canSend && !_desktopViewOnly;
+    return PopScope<Object?>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) unawaited(_toggleDesktopFullscreen());
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Row(
+          children: [
+            _desktopControlRail(
+              key: const ValueKey('desktop-control-rail-left'),
+              width: railExtent,
+              contentWidth: railWidth,
+              left: true,
+              actions: [
+                _desktopRailButton(
+                  icon: Icons.mouse,
+                  label: '左键',
+                  onTap: canSendMouse
+                      ? () => _send(
+                          () => _sender.sendMouseClick(RemoteMouseButton.left),
+                        )
+                      : null,
+                ),
+                _desktopRailButton(
+                  icon: Icons.mouse_outlined,
+                  label: '右键',
+                  onTap: canSendMouse
+                      ? () => _send(
+                          () => _sender.sendMouseClick(RemoteMouseButton.right),
+                        )
+                      : null,
+                ),
+                _desktopRailButton(
+                  icon: _dragPressed ? Icons.pan_tool : Icons.open_with,
+                  label: _dragPressed ? '松开左键' : '按住拖拽',
+                  onTap: canSendMouse
+                      ? () => _setDesktopDrag(!_dragPressed)
+                      : null,
+                ),
+                _desktopRailButton(
+                  icon: _desktopZoom ? Icons.mouse : Icons.zoom_in,
+                  label: _desktopZoom ? '鼠标操作' : '缩放画面',
+                  onTap: _canSend
+                      ? () {
+                          _cancelGesture();
+                          setState(() => _desktopZoom = !_desktopZoom);
+                        }
+                      : null,
+                ),
+              ],
+            ),
+            Expanded(
+              child: _touchSurface(context, landscape: true, fullscreen: true),
+            ),
+            _desktopControlRail(
+              key: const ValueKey('desktop-control-rail-right'),
+              width: railExtent,
+              contentWidth: railWidth,
+              left: false,
+              actions: [
+                _desktopRailButton(
+                  icon: Icons.tune,
+                  label: '操作',
+                  onTap: _canSend ? _showDesktopActions : null,
+                ),
+                _desktopRailButton(
+                  icon: Icons.keyboard,
+                  label: '键盘',
+                  onTap: canSendMouse ? _showTextInputDialog : null,
+                ),
+                _desktopRailButton(
+                  icon: Icons.desktop_windows_outlined,
+                  label: '显示桌面',
+                  onTap: canSendMouse ? () => _sendDesktopShortcut(0x44) : null,
+                ),
+                _desktopRailButton(
+                  icon: Icons.grid_view,
+                  label: '所有窗口',
+                  onTap: canSendMouse ? () => _sendDesktopShortcut(0x09) : null,
+                ),
+                _desktopRailButton(
+                  icon: Icons.fullscreen_exit,
+                  label: '退出全屏',
+                  onTap: _toggleDesktopFullscreen,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildLandscape(BuildContext context) {
     if (widget.showDesktop) return _buildDesktopFullscreen(context);

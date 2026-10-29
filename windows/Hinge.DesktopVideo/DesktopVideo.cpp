@@ -253,9 +253,9 @@ class Desktop {
         CloseDesktop(desktop);
         if(!available || _wcsicmp(name,L"Default")!=0) throw std::runtime_error("Desktop is locked or secure");
     }
-    void DrawCursor(std::vector<BYTE>& nv12) {
+    void DrawCursor(std::vector<BYTE>& nv12, bool forceFallback = false) {
         CURSORINFO cursor{}; cursor.cbSize = sizeof(cursor);
-        bool systemCursorVisible = GetCursorInfo(&cursor) && (cursor.flags & CURSOR_SHOWING);
+        bool systemCursorVisible = !forceFallback && GetCursorInfo(&cursor) && (cursor.flags & CURSOR_SHOWING);
         POINT position{};
         if (systemCursorVisible) position = cursor.ptScreenPos;
         else if (!GetCursorPos(&position)) return;
@@ -358,13 +358,20 @@ public:
         ConvertCpu((BYTE*)mapped.pData,mapped.RowPitch,nv12);
         context->Unmap(staging.Get(), 0);
         }
-        if(separatePointer)DrawCursor(nv12);
+        CURSORINFO cursor{}; cursor.cbSize = sizeof(cursor);
+        bool systemCursorVisible = GetCursorInfo(&cursor) && (cursor.flags & CURSOR_SHOWING);
+        // DXGI's embedded-pointer state does not distinguish a hidden system cursor.
+        if(ShouldCompositeDesktopCursor(separatePointer,systemCursorVisible))
+            DrawCursor(nv12,!separatePointer && !systemCursorVisible);
         hasFrame=true;return true;
     }
 };
 
 static uint32_t Get32(const unsigned char* p) { return ((uint32_t)p[0]<<24) | ((uint32_t)p[1]<<16) | ((uint32_t)p[2]<<8) | p[3]; }
 static void VerifyPointer() {
+    if(!ShouldCompositeDesktopCursor(true,true) || ShouldCompositeDesktopCursor(false,true) ||
+        !ShouldCompositeDesktopCursor(false,false) || !ShouldCompositeDesktopCursor(true,false))
+        throw std::runtime_error("Desktop cursor visibility selection failed");
     for(UINT size:{2u,12u,128u}) {
         for(POINT p:{POINT{0,0},POINT{(LONG)size-1,(LONG)size-1},POINT{-100,-100},POINT{INT_MAX,INT_MAX}}) {
             std::vector<BYTE> canvas((size_t)size*size*3/2,64);

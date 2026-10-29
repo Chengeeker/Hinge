@@ -274,13 +274,19 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
         onPointerMove: _move,
         onPointerUp: _up,
         onPointerCancel: (_) => _reset(),
-        child: ClipRect(
-          child: Transform(
-            transform: Matrix4.identity()
-              ..translateByDouble(_pan.dx, _pan.dy, 0, 1)
-              ..scaleByDouble(_scale, _scale, 1, 1),
-            child: widget.child,
-          ),
+        child: Stack(
+          fit: StackFit.expand,
+          clipBehavior: Clip.hardEdge,
+          children: [
+            // Resize the display bounds instead of transforming the live texture.
+            Positioned(
+              left: _pan.dx,
+              top: _pan.dy,
+              width: size.width * _scale,
+              height: size.height * _scale,
+              child: widget.child,
+            ),
+          ],
         ),
       );
     },

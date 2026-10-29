@@ -153,7 +153,7 @@ class _PhoneRemoteControlSettingsScreenState
                   autocorrect: false,
                   enableSuggestions: false,
                   decoration: const InputDecoration(
-                    labelText: 'Windows 设置 → 手机远控电脑 → 密钥',
+                    labelText: 'Windows 投屏与远控 → 手机远控电脑 → 密钥',
                     hintText: 'HRC1-…',
                   ),
                 ),
@@ -262,7 +262,7 @@ class _PhoneRemoteControlSettingsScreenState
     final theme = Theme.of(context);
     final computers = _connectedWindows;
     return Scaffold(
-      appBar: AppBar(title: const Text('手机远控电脑')),
+      appBar: AppBar(title: const Text('手机控制电脑')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -366,7 +366,7 @@ class _PhoneRemoteControlSettingsScreenState
                 ),
             const SizedBox(height: 12),
             Text(
-              '电脑桌面的画面与操作自动通过 TLS 加密，无需复制密钥。独立触控板和游戏模式需电脑开启“允许手机控制此电脑”：电脑关闭加密时，手机无需输入密钥；开启加密时，首次输入后可选择由 Android Keystore 安全保存。游戏模式可从竖屏或横屏触控板直接进入。',
+              '电脑端需开启桌面共享与远控。首次连接核对身份码；独立触控板仅在电脑开启可选加密时需要密钥。',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),

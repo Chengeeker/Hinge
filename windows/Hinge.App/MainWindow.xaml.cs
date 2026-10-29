@@ -151,6 +151,7 @@ public sealed partial class MainWindow : Window
     private FileManagementPage? _filePage;
     private WindowsSettingsPage? _windowsSettingsPage;
     private TransferSettingsPage? _transferSettingsPage;
+    private RemoteSettingsPage? _remoteSettingsPage;
     private ScreenControlPage? _screenControlPage;
     private CloudRelaySettingsPage? _cloudRelaySettingsPage;
     private NotesPage? _notesPage;
@@ -604,6 +605,17 @@ public sealed partial class MainWindow : Window
             case TransferSettingsPage transferSettings:
                 _transferSettingsPage = transferSettings;
                 ConfigureTransferSettingsPage(transferSettings);
+                break;
+            case RemoteSettingsPage remoteSettings:
+                _remoteSettingsPage = remoteSettings;
+                remoteSettings.RemoteStatus.Text = GetRemoteInputSettingsSummary();
+                remoteSettings.PhoneStatus.Text = _screenCancellation != null ? "正在投屏" : "未运行";
+                if (_configuredPages.Add(remoteSettings))
+                {
+                    remoteSettings.Back.Click += (_, _) => ContentFrame.Navigate(typeof(SettingsPage));
+                    remoteSettings.PhoneScreen.Click += (_, _) => ContentFrame.Navigate(typeof(ScreenControlPage));
+                    remoteSettings.RemoteInput.Click += (_, _) => ContentFrame.Navigate(typeof(RemoteInputSettingsPage));
+                }
                 break;
             case ScreenControlPage screenControl:
                 if (!ReferenceEquals(_screenControlPage, screenControl))
@@ -1167,13 +1179,11 @@ public sealed partial class MainWindow : Window
     private void ConfigureSettingsPage(SettingsPage page)
     {
         _settingsPage = page;
-        page.RemoteInputSettingsSummary.Text = GetRemoteInputSettingsSummary();
         page.ScreenControl.Click -= OpenScreenControl_Click;
         page.ScreenControl.Click += OpenScreenControl_Click;
         if (!_configuredPages.Add(page)) return;
         page.Personalization.Click += BtnPersonalization_Click;
         page.WindowsSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WindowsSettingsPage));
-        page.RemoteInputSettings.Click += (_, _) => ContentFrame.Navigate(typeof(RemoteInputSettingsPage));
         page.TransferSettings.Click += (_, _) => ContentFrame.Navigate(typeof(TransferSettingsPage));
         page.CloudRelaySettings.Click += (_, _) => ContentFrame.Navigate(typeof(CloudRelaySettingsPage));
         page.WebDavSettings.Click += (_, _) => ContentFrame.Navigate(typeof(WebDavSettingsPage));
@@ -1271,8 +1281,7 @@ public sealed partial class MainWindow : Window
     {
         var deviceName = _remoteInputManager.ActiveDeviceName;
         string summary = GetRemoteInputSettingsSummary();
-        if (_settingsPage is { } settingsPage)
-            settingsPage.RemoteInputSettingsSummary.Text = summary;
+        if (_remoteSettingsPage != null) _remoteSettingsPage.RemoteStatus.Text = summary;
         if (_remoteInputSettingsPage is not { } page) return;
 
         page.AllowRemoteInput.IsOn = _remoteInputManager.Enabled;
@@ -1341,7 +1350,7 @@ public sealed partial class MainWindow : Window
         UpdateScreenStatus(_screenStatus);
     }
 
-    private void OpenScreenControl_Click(object sender, RoutedEventArgs e) => ContentFrame.Navigate(typeof(ScreenControlPage));
+    private void OpenScreenControl_Click(object sender, RoutedEventArgs e) => ContentFrame.Navigate(typeof(RemoteSettingsPage));
 
     private void ConfigureScreenControlPage(ScreenControlPage page)
     {
@@ -1354,17 +1363,29 @@ public sealed partial class MainWindow : Window
         }
         catch { options = new ScreenControlOptions(); }
         page.SetOptions(options);
-        page.Back.Click += (_, _) => ContentFrame.Navigate(typeof(SettingsPage));
+        page.Back.Click += (_, _) => ContentFrame.Navigate(typeof(RemoteSettingsPage));
         page.Pairing.Click += (_, _) => ContentFrame.Navigate(typeof(TransferSettingsPage));
         page.Mirror.Click += async (_, _) => await StartScreenAsync(false);
         page.Control.Click += async (_, _) => await StartScreenAsync(true);
         page.Stop.Click += (_, _) => _screenCancellation?.Cancel();
         page.Codec.SelectionChanged += (_, _) => SaveScreenOptions();
-        page.MaxFps.ValueChanged += (_, _) => SaveScreenOptions();
-        page.VideoBufferMs.ValueChanged += (_, _) => SaveScreenOptions();
-        page.BitRate.ValueChanged += (_, _) => SaveScreenOptions();
-        page.MaxSize.ValueChanged += (_, _) => SaveScreenOptions();
+        page.MaxFps.ValueChanged += (_, _) => ScheduleScreenOptionsSave();
+        page.VideoBufferMs.ValueChanged += (_, _) => ScheduleScreenOptionsSave();
+        page.BitRate.ValueChanged += (_, _) => ScheduleScreenOptionsSave();
+        page.MaxSize.ValueChanged += (_, _) => ScheduleScreenOptionsSave();
         page.HardwareDecoding.Toggled += (_, _) => SaveScreenOptions();
+    }
+
+    private DispatcherTimer? _screenOptionsSaveTimer;
+    private void ScheduleScreenOptionsSave()
+    {
+        if (_screenOptionsSaveTimer == null)
+        {
+            _screenOptionsSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _screenOptionsSaveTimer.Tick += (_, _) => { _screenOptionsSaveTimer.Stop(); SaveScreenOptions(); };
+        }
+        _screenOptionsSaveTimer.Stop();
+        _screenOptionsSaveTimer.Start();
     }
 
     private void SaveScreenOptions()
@@ -1381,6 +1402,7 @@ public sealed partial class MainWindow : Window
     private async Task StartScreenAsync(bool control)
     {
         if (_screenControlPage is not { } page || _screenCancellation != null || _wirelessAdbBusy) return;
+        SaveScreenOptions();
         using var cancellation = new CancellationTokenSource();
         _screenCancellation = cancellation;
         _screenFrameRate = "实时渲染帧率：等待统计…";
@@ -1427,6 +1449,7 @@ public sealed partial class MainWindow : Window
     private void UpdateScreenStatus(string message)
     {
         _screenStatus = message;
+        if (_remoteSettingsPage != null) _remoteSettingsPage.PhoneStatus.Text = _screenCancellation != null ? "正在投屏" : "未运行";
         var running = _screenCancellation != null;
         if (_transferSettingsPage is { } diagnostics)
         {
@@ -1441,6 +1464,7 @@ public sealed partial class MainWindow : Window
         page.Stop.IsEnabled = running;
         page.Codec.IsEnabled = !running;
         page.MaxFps.IsEnabled = !running;
+        page.VideoBufferMs.IsEnabled = !running;
         page.BitRate.IsEnabled = !running;
         page.MaxSize.IsEnabled = !running;
         page.HardwareDecoding.IsEnabled = !running;
@@ -2058,11 +2082,15 @@ public sealed partial class MainWindow : Window
 
     private void HeaderBackButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ContentFrame.Content is GameLayoutSettingsPage)
+        if (ContentFrame.Content is RemoteInputSettingsPage or ScreenControlPage)
+        {
+            ContentFrame.Navigate(typeof(RemoteSettingsPage));
+        }
+        else if (ContentFrame.Content is GameLayoutSettingsPage)
         {
             ContentFrame.Navigate(typeof(RemoteInputSettingsPage));
         }
-        else if (ContentFrame.Content is PersonalizationPage or WindowsSettingsPage or TransferSettingsPage or CloudRelaySettingsPage or RemoteInputSettingsPage)
+        else if (ContentFrame.Content is PersonalizationPage or WindowsSettingsPage or TransferSettingsPage or CloudRelaySettingsPage or RemoteSettingsPage)
         {
             NavigateTo("设置", 0);
         }

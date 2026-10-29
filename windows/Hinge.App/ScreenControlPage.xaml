@@ -8,18 +8,18 @@
             <StackPanel Style="{StaticResource HingeSettingsPageStackStyle}" Spacing="24">
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <local:HandCursorButton x:Name="BackButton" AutomationProperties.AutomationId="ScreenControlPage.BackButton" AutomationProperties.Name="返回设置" ToolTipService.ToolTip="返回设置" Style="{StaticResource HingeIconButtonStyle}">
+                    <local:HandCursorButton x:Name="BackButton" AutomationProperties.AutomationId="ScreenControlPage.BackButton" AutomationProperties.Name="返回投屏与远控" ToolTipService.ToolTip="返回投屏与远控" Style="{StaticResource HingeIconButtonStyle}">
                         <SymbolIcon Symbol="Back" />
                     </local:HandCursorButton>
                     <StackPanel Grid.Column="1" Spacing="2">
-                        <TextBlock Text="手机投屏与远控" Style="{StaticResource HingePageTitleStyle}" />
-                        <TextBlock Text="在电脑上显示并操作已配对的手机。投屏组件已内置。" Style="{StaticResource HingePageDescriptionStyle}" />
+                        <TextBlock Text="手机投屏到电脑" Style="{StaticResource HingePageTitleStyle}" />
+                        <TextBlock Text="在电脑上显示并操作已配对的手机。" Style="{StaticResource HingePageDescriptionStyle}" />
                     </StackPanel>
                 </Grid>
                 <Border Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="开始使用" Style="{StaticResource HingeM3TitleMediumStyle}" />
-                        <TextBlock Text="手机需开启无线调试，并已在 Hinge 中完成无线调试配对。投屏目标是已绑定的调试手机，不随文件管理标签切换。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <TextBlock Text="电脑控制手机" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                        <TextBlock Text="开启手机无线调试并完成配对，即可投屏或控制。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <local:HandCursorButton x:Name="MirrorButton" Content="仅投屏" AutomationProperties.AutomationId="ScreenControlPage.MirrorButton" Style="{StaticResource HingeM3TonalButtonStyle}" />
                             <local:HandCursorButton x:Name="ControlButton" Content="投屏并控制" AutomationProperties.AutomationId="ScreenControlPage.ControlButton" Style="{StaticResource HingeM3FilledButtonStyle}" />
@@ -41,12 +41,16 @@
                         <TextBlock Text="H.265 通常能在相同带宽下提供更好画质，但不一定降低延迟。AV1 编码支持较少，软件编码可能更慢并增加发热；启动失败时请切换 H.264。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                         <ToggleSwitch x:Name="HardwareDecodingToggle" Header="优先硬件解码" IsOn="True" OnContent="自动选择硬件，不可用时回退软件" OffContent="使用软件解码（兼容模式）" AutomationProperties.AutomationId="ScreenControlPage.HardwareDecodingToggle" />
                         <TextBlock Text="如出现显卡驱动或原生解码进程异常，可关闭硬件解码后重试；软件解码会增加电脑 CPU 负担。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
-                        <NumberBox x:Name="MaxFpsBox" Header="帧率上限（1–240 FPS）" Value="60" Minimum="1" Maximum="240" SmallChange="1" LargeChange="30" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.MaxFpsBox" />
-                        <TextBlock Text="可填 30、60、90、120 或其他整数。这是上限，不保证锁定帧率；静止画面或低帧率视频会减少输出。上方显示实际渲染帧率与跳过帧数。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
-                        <NumberBox x:Name="VideoBufferMsBox" Header="画面平滑缓冲（0–200 毫秒）" Value="0" Minimum="0" Maximum="200" SmallChange="10" LargeChange="50" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.VideoBufferMsBox" />
+                        <TextBlock x:Name="MaxFpsBoxLabel" Style="{StaticResource HingeM3BodyStyle}" />
+                        <Slider x:Name="MaxFpsBox" Value="60" Minimum="1" Maximum="240" StepFrequency="1" AutomationProperties.Name="帧率上限" />
+                        <TextBlock Text="帧率为上限，实际输出取决于手机画面和设备性能。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="VideoBufferMsBoxLabel" Style="{StaticResource HingeM3BodyStyle}" />
+                        <Slider x:Name="VideoBufferMsBox" Value="0" Minimum="0" Maximum="200" StepFrequency="10" AutomationProperties.Name="平滑缓冲" />
                         <TextBlock Text="默认 0 毫秒以降低远控延迟；画面断续时可试 50 毫秒补偿传输抖动，缓冲越大，画面与操作反馈越慢。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
-                        <NumberBox x:Name="BitRateBox" Header="视频码率（1–200 Mbps）" Value="8" Minimum="1" Maximum="200" SmallChange="1" LargeChange="4" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.BitRateBox" />
-                        <NumberBox x:Name="MaxSizeBox" Header="画面最长边（16–7680；0 为原始分辨率）" Value="1920" Minimum="0" Maximum="7680" SmallChange="16" LargeChange="240" SpinButtonPlacementMode="Inline" AutomationProperties.AutomationId="ScreenControlPage.MaxSizeBox" />
+                        <TextBlock x:Name="BitRateBoxLabel" Style="{StaticResource HingeM3BodyStyle}" />
+                        <Slider x:Name="BitRateBox" Value="8" Minimum="1" Maximum="200" StepFrequency="1" AutomationProperties.Name="视频码率" />
+                        <TextBlock x:Name="MaxSizeBoxLabel" Style="{StaticResource HingeM3BodyStyle}" />
+                        <Slider x:Name="MaxSizeBox" Value="1920" Minimum="0" Maximum="7680" StepFrequency="16" AutomationProperties.Name="画面最长边" />
                         <TextBlock Text="帧率不足时可先将最长边改为 1280 或降低码率，减轻编码、网络和解码压力。设置自动保存，下次启动投屏时生效；投屏期间暂停修改。默认关闭音频和自动剪贴板同步。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>

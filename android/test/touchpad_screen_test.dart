@@ -100,8 +100,10 @@ void main() {
     (tester) async {
       tester.view.physicalSize = const Size(1080, 486);
       tester.view.devicePixelRatio = 1;
+      tester.view.viewPadding = const FakeViewPadding(left: 48);
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewPadding);
       final connection = _Connection();
       final calls = <MethodCall>[];
       final inputs = <RemoteInputEvent>[];
@@ -165,13 +167,34 @@ void main() {
         (_) {},
       );
       ready(false);
+      await connection.accept();
+      await connection.queue;
       await tester.pumpAndSettle();
       expect(find.text('退出全屏'), findsOneWidget);
       expect(find.byTooltip('全屏显示桌面'), findsNothing);
-      expect(
-        tester.getRect(find.byKey(const ValueKey('touchpad-surface'))).height,
-        486,
+      final leftRail = tester.getRect(
+        find.byKey(const ValueKey('desktop-control-rail-left')),
       );
+      final screen = tester.getRect(
+        find.byKey(const ValueKey('touchpad-surface')),
+      );
+      final rightRail = tester.getRect(
+        find.byKey(const ValueKey('desktop-control-rail-right')),
+      );
+      expect(leftRail.width, closeTo(rightRail.width, 0.1));
+      expect(leftRail.right, closeTo(screen.left, 0.1));
+      expect(screen.right, closeTo(rightRail.left, 0.1));
+      expect(
+        screen.center.dx,
+        closeTo(tester.view.physicalSize.width / 2, 0.1),
+      );
+      expect(screen.height, 486);
+      await tester.tap(find.text('右键'));
+      await tester.pump();
+      expect(inputs.last.buttonOrKey, RemoteMouseButton.right.value);
+      await tester.tap(find.text('左键'));
+      await tester.pump();
+      expect(inputs.last.buttonOrKey, RemoteMouseButton.left.value);
       await tester.tap(find.text('操作'));
       await tester.pumpAndSettle();
       expect(find.text('游戏模式'), findsNothing);

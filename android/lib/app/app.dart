@@ -3750,107 +3750,116 @@ class _DevicesScreenState extends State<DevicesScreen>
                           ),
                         ],
                       ),
-                      child: Row(
-                        children: List.generate(destinations.length, (index) {
-                          final destination = destinations[index];
-                          final selected = index == _selectedNavigationIndex;
-                          final foreground = selected
-                              ? scheme.onPrimaryContainer
-                              : scheme.onSurfaceVariant;
-                          return Expanded(
-                            child: Semantics(
-                              button: true,
-                              selected: selected,
-                              label: destination.label,
-                              child: Tooltip(
-                                message: destination.label,
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    onTap: () =>
-                                        _selectNavigationDestination(index),
-                                    borderRadius: BorderRadius.circular(28),
-                                    splashFactory: NoSplash.splashFactory,
-                                    overlayColor: const WidgetStatePropertyAll(
-                                      Colors.transparent,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final itemWidth =
+                              constraints.maxWidth / destinations.length;
+                          return ClipRRect(
+                            borderRadius: BorderRadius.circular(28),
+                            child: Stack(
+                              children: [
+                                Positioned(
+                                  left: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: itemWidth,
+                                  child: AnimatedSlide(
+                                    duration: const Duration(milliseconds: 240),
+                                    curve: Curves.easeOutCubic,
+                                    offset: Offset(
+                                      _selectedNavigationIndex.toDouble(),
+                                      0,
                                     ),
-                                    child: Stack(
-                                      fit: StackFit.expand,
-                                      alignment: Alignment.center,
-                                      children: [
-                                        if (selected)
-                                          Positioned.fill(
-                                            child:
-                                                TweenAnimationBuilder<double>(
-                                                  key: ValueKey(
-                                                    'capsule_indicator_$index',
-                                                  ),
-                                                  tween: Tween(
-                                                    begin: 0.0,
-                                                    end: 1.0,
-                                                  ),
-                                                  duration: const Duration(
-                                                    milliseconds: 160,
-                                                  ),
-                                                  curve: Curves.easeOutCubic,
-                                                  builder:
-                                                      (
-                                                        context,
-                                                        opacity,
-                                                        child,
-                                                      ) => Opacity(
-                                                        opacity: opacity,
-                                                        child: child,
-                                                      ),
-                                                  child: DecoratedBox(
-                                                    decoration: BoxDecoration(
-                                                      color: scheme
-                                                          .primaryContainer,
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            28,
-                                                          ),
-                                                    ),
-                                                  ),
-                                                ),
-                                          ),
-                                        Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            IconTheme(
-                                              data: IconThemeData(
-                                                color: foreground,
-                                                size: 22,
-                                              ),
-                                              child: selected
-                                                  ? (destination.selectedIcon ??
-                                                        destination.icon)
-                                                  : destination.icon,
-                                            ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              destination.label,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                fontSize: 11.5,
-                                                fontWeight: selected
-                                                    ? FontWeight.w600
-                                                    : FontWeight.w500,
-                                                color: foreground,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        color: scheme.primaryContainer,
+                                        borderRadius: BorderRadius.circular(28),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
+                                Row(
+                                  children: List.generate(destinations.length, (
+                                    index,
+                                  ) {
+                                    final destination = destinations[index];
+                                    final selected =
+                                        index == _selectedNavigationIndex;
+                                    final foreground = selected
+                                        ? scheme.onPrimaryContainer
+                                        : scheme.onSurfaceVariant;
+                                    return Expanded(
+                                      child: Semantics(
+                                        button: true,
+                                        selected: selected,
+                                        label: destination.label,
+                                        child: Tooltip(
+                                          message: destination.label,
+                                          child: Material(
+                                            color: Colors.transparent,
+                                            child: InkWell(
+                                              onTap: () =>
+                                                  _selectNavigationDestination(
+                                                    index,
+                                                  ),
+                                              borderRadius:
+                                                  BorderRadius.circular(28),
+                                              splashFactory:
+                                                  NoSplash.splashFactory,
+                                              overlayColor:
+                                                  const WidgetStatePropertyAll(
+                                                    Colors.transparent,
+                                                  ),
+                                              child: Stack(
+                                                fit: StackFit.expand,
+                                                alignment: Alignment.center,
+                                                children: [
+                                                  Column(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      IconTheme(
+                                                        data: IconThemeData(
+                                                          color: foreground,
+                                                          size: 22,
+                                                        ),
+                                                        child: selected
+                                                            ? (destination
+                                                                      .selectedIcon ??
+                                                                  destination
+                                                                      .icon)
+                                                            : destination.icon,
+                                                      ),
+                                                      const SizedBox(height: 2),
+                                                      Text(
+                                                        destination.label,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 11.5,
+                                                          fontWeight: selected
+                                                              ? FontWeight.w600
+                                                              : FontWeight.w500,
+                                                          color: foreground,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                                ),
+                              ],
                             ),
                           );
-                        }),
+                        },
                       ),
                     ),
             ),
@@ -5179,19 +5188,16 @@ class _DevicesScreenState extends State<DevicesScreen>
                 settingTile(
                   icon: Symbols.cast_rounded,
                   title: '投屏与远控',
-                  subtitle: '在电脑上显示并操作手机',
+                  subtitle: '双向投屏、触控板与游戏控制',
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
-                      builder: (_) =>
-                          ScreenControlScreen(dataService: widget.dataService),
+                      builder: (_) => ScreenControlScreen(
+                        dataService: widget.dataService,
+                        onOpenComputer: _openPhoneRemoteControlSettings,
+                        computerStatus: () => _phoneRemoteControlSummary,
+                      ),
                     ),
                   ),
-                ),
-                settingTile(
-                  icon: Symbols.touch_app_rounded,
-                  title: '手机远控电脑',
-                  subtitle: _phoneRemoteControlSummary,
-                  onTap: _openPhoneRemoteControlSettings,
                 ),
                 settingTile(
                   icon: Symbols.cloud_rounded,

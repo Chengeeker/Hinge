@@ -296,3 +296,68 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 待完成：独立于视频的光标元数据/本地绘制、游戏地图与3D视角的自动/手动切换深化、游戏按住左/右/中键转视角与分轴灵敏度、完整特殊键键盘。这些没有作为本轮已实现交付；仍不能宣称达到UU全部体验。
 - 两端均需覆盖更新以启用直接触控。未操作手机、未恢复定时任务、未推送GitHub。回退publish/rollback/pre-desktop-interaction-20261029；实机仍需验收点击小图标、缩放后点击、地图拖拽、多屏和VIVO触觉体验。
 - 最终产物核验：Windows Setup 229866370 bytes SHA256 8BB93F47AAF44AF8E676A734CAAA09EAB02B0BC740D88009600979C02357F8E4；ZIP 161480142 bytes/838项 SHA256 2E8F14C54BB9859FAED69F3C40B85A49E11AF990F8889058EA0A433FFDA73006；源DLL/helper一致与Setup内嵌载荷通过。Android最终源码后重新构建，22294423 bytes SHA256 0D7FD3245595131931D0680A32174078FF9071710B73C21C74A6DA3D9AC03C84，V2/V3签名、仅arm64-v8a、16KiB对齐通过。报告tmp/desktop-interaction-artifacts.json；构建日志tmp/desktop-interaction-windows-build.log、tmp/desktop-interaction-android-final-build.log。验收表已更新；没有实机验收。
+
+# 422. DXGI 内嵌/隐藏光标时补画回退箭头（2026-10-29）
+
+- 用户反馈手机端仍看不到鼠标。#416只在`PointerPosition.Visible`为真时调用绘制；DXGI把光标视为已经嵌入画面时该字段为假，若此时Windows应用又隐藏系统光标，帧内没有可见光标，之前的`GetCursorPos`备用箭头分支也被整体跳过。
+- 依据Microsoft Desktop Duplication文档：硬件叠加指针单独报告；嵌入桌面图像的指针不单独报告。现在仅在系统光标隐藏时对嵌入路径强制画轻量箭头；系统光标可见且已嵌入画面仍不重复绘制，分离指针继续使用真实系统形状/热点。没有改系统光标设置。
+- `--verify-pointer`加入四种DXGI/Win32可见状态组合的选择断言，原有边缘裁剪/非法画布检查通过。桌面采集器Release构建通过；包内helper与构建输出相同并复跑自检。
+- Windows产品版本`2.3.1.0`：Setup 229867156 bytes SHA256 `E1C4AA465750F400B7548B738F433015ABC2095671A641BE58853F6929FC33FE`；ZIP 161480925 bytes/838项 SHA256 `E60C34229206CA70AEDDAF78146CE7B239A7AE12D200EF1AFB59E499188FDC0D`。内嵌ZIP与便携ZIP哈希相同，helper SHA256 `C18CE85D5E5CD7E7CCEA752574E25936A61B37CD80F02250B140B2A19BFFBAB6`与编译输出一致。
+- 按项目流程重建Android主线APK（仅版本元数据变化）：`2.3.1+129`，22294423 bytes SHA256 `F71EA91B210F2AD91B7F39ABB2FEAF75EF74A88106DCC4A8584CBFC3B1C54DB1`；包名、ARM64唯一ABI、V2/V3签名、16KiB对齐通过。Android远端画面代码未改，光标修复需要更新Windows端。
+- 回退材料：`publish/rollback/pre-cursor-visibility-followup-20261029`。仅离线构建/包检查，未连接或操作手机、未安装候选、未推送/发布。隐藏光标手机实机验证待用户覆盖更新Windows后确认。日志及产物信息：`tmp/cursor-visibility-followup-*.log`、`tmp/cursor-visibility-followup-artifacts.json`。
+
+# 423. 横屏桌面改为左右对称控制栏（2026-10-29）
+
+- 用户反馈单侧右栏把画面视觉中心推向左侧。全屏横屏改为左右等宽栏，中央`DesktopVideoView`仍按原桌面宽高比居中显示，不拉伸视频；左右按较大的安全区统一预留，单侧缺口下仍保持栏位等宽与视频居中。
+- 左栏增加左键、右键、按住/松开拖拽、缩放/平移快捷操作；右栏保留操作菜单、键盘、显示桌面、所有窗口和退出全屏。仅观看时禁止输入类快捷操作，缩放仍可用于本地视口。两侧列表按钮最小高度64dp，短屏可滚动；文字可随系统字体放大。
+- `touchpad_screen_test.dart`定向6项通过；全屏测试通过模拟左侧48dp单侧缺口，验证左右栏对称、中心视频可用区域居中及左右点击分别发送正确鼠标按钮。`flutter analyze lib/app/touchpad_screen.dart`无问题。
+- 功能候选递增Android `2.4.0+130`、Windows `2.4.0.0`。最终Android主APK 22294423 bytes SHA256 `803174318F8BB19F09A188CC1A9D0DE4B488C8D8E7AC146236C855AD4ADCB2D2`，仅arm64-v8a、V2/V3签名、16KiB对齐通过。Windows Setup 229866808 bytes SHA256 `D7DA36B4ACA979B706BB4F3D16CDA15166EA44C0EFDBC060AE531044CF227A09`；ZIP 161480578 bytes/838项 SHA256 `82CEFA03CD1912D24B615C2BB09903BE0AC06A7DA55139AB00CD2DB527468F56`。Setup内嵌ZIP与便携ZIP一致；桌面视频helper与编译输出一致并通过`--verify-pointer`。
+- 回退材料：`publish/rollback/pre-landscape-dual-rails-20261029`。未连接/操作手机、未做实机视觉验收、未推送或发布；需更新Android APK后确认设备实际黑边、字体缩放、缺口安全区和触控手感。日志/产物：`tmp/landscape-dual-rails-*.log`及`tmp/landscape-dual-rails-artifacts.json`。
+
+# 424. 修复双指缩放时桌面视频闪烁（2026-10-29）
+
+> 后续用户复测仍黑帧交替，本节根因判断未证实，补丁未解决问题；已由#425替换。
+
+- `DesktopGestureSurface`把实时桌面`Texture`包在Flutter `Transform`中。Flutter 3.47.1的`RenderTransform.paint`把纯平移（包括单位矩阵）直接绘制并清除层；放大时则走`pushTransform`。捏合在1倍边界来回时会反复切换合成路径，导致闪屏。对应[Flutter 3.47.1源码](https://github.com/flutter/flutter/blob/6655482ec06e547f90abf8ae7590466f4415978d/packages/flutter/lib/src/rendering/proxy_box.dart#L2735)；视频由独立纹理层更新，见[TextureLayer API](https://api.flutter.dev/flutter/rendering/TextureLayer-class.html)。
+- 绘制矩阵在逻辑缩放恰好为1倍时使用`1.00001`的不可感知倍率，持续保留同一变换层；触控坐标映射仍使用精确逻辑缩放值，不改变点击落点或缩放边界。
+- 新增回归用例先捏合放大再回到1倍，并断言绘制倍率继续略大于1，避免变换层退化成单位/平移矩阵。`desktop_gesture_surface_test.dart`共7项通过，目标文件Flutter静态分析通过。
+- Android补丁候选`2.4.1+131`，Windows同步`2.4.1.0`。APK 22294423 bytes SHA256 `E5A49D271069B7B4F792EA71DC4677233F4958706C7554315BF2B44EFCF11C74`，仅arm64-v8a、V2/V3签名及16KiB对齐通过。Windows Setup 229867263 bytes SHA256 `C6A365362097D9A364CE5CD592138040ADB7B2C2F6ADBC7102D776AA3E93FC44`；便携ZIP 161481032 bytes SHA256 `D621C1868C801295F2F132553794933AF07ED391C58DAA4B65FD69D1CF6BCC0D`，安装器内嵌载荷与ZIP逐字节哈希一致。
+- 回退包：`publish/rollback/pre-pinch-texture-flicker-20261029`。只做离线测试和打包检查；未安装/操作手机、未做真实VIVO设备的闪烁视觉复测、未推送GitHub或发布。记录：`tmp/pinch-texture-flicker-artifacts.json`。
+
+# 425. 双指缩放黑帧交替：移除实时纹理的Transform路径（2026-10-29）
+
+- 用户确认2.4.1仍出现画面与黑屏交替闪，#424的1倍变换层假设未获实机证实，不能继续当作已定位根因。删除该版1.00001绘制倍率补丁。
+- DesktopGestureSurface改用固定裁剪视口和Positioned显示矩形，通过宽高/位置表达缩放和平移，不再对实时Texture施加Transform。手势坐标区域固定；解码Surface分辨率、textureId、视频会话不随捏合修改。保留1–4倍逻辑倍率及原坐标逆映射。
+- 回归改为逐帧连续放大、缩小，验证视频显示矩形按预期增长/收回、中心稳定；手势、DesktopVideoView、TouchpadScreen共25项通过，目标文件Flutter静态分析通过。模拟测试不能验证真实GPU合成是否还黑屏。
+- Android候选2.4.2+132；Windows保持2.4.1.0，此问题只需更新手机APK。旧手机包保存于publish/rollback/pre-pinch-layout-20261029/Hinge.apk。本轮未操作手机，未推送或发布。实机黑帧验收待用户更新后复测。
+- APK最终核验：22294423 bytes，SHA256 6DEFACDDD337DAC54B5F1F3A6C44838610935834A6C928B3D623486C2AD36D25；com.hinge.office / 2.4.2+132，arm64-v8a唯一ABI、V2/V3签名、16KiB对齐通过。
+
+# 426. 缩放大量黑块：迁移Android视频Surface实现（2026-10-29）
+
+- 用户确认2.4.2仍会在缩放时频繁出现大量黑块。#424和#425均未通过实机验收，不能继续把Flutter布局/变换解释为确定根因。
+- 原生DesktopVideoBridge由createSurfaceTexture迁移到createSurfaceProducer，交由Flutter选择ImageReader/HardwareBuffer或兼容后端。官方依据：https://docs.flutter.dev/release/breaking-changes/android-surface-plugins 。没有全局禁用Impeller或改变其他页面渲染器。
+- 首个有效视频包确定Surface尺寸后才获取Surface并配置解码器，解码格式回调只更新显示比例，不再在绑定MediaCodec后修改Surface缓冲区尺寸。Surface归Producer所有，先停止解码再release Producer，不额外release借用的Surface；Surface失效中断并走既有恢复。会话内视频尺寸变化明确要求重连，避免向过期Surface继续写帧。
+- SurfaceProducer没有公开的frame-consumed回调，textureSampling=false，纹理取帧统计显示不可用。ready改为MediaCodec首帧提交Surface后的onFrameRendered通知；这只能证明解码器向Surface输出，不能证明Flutter/GPU物理呈现。保留8秒首帧输出超时和后台停流恢复；不得拿该指标宣称黑块消失。
+- 视频视图/统计16项Flutter测试通过，Android正式Release原生Kotlin/R8编译通过；仅arm64-v8a，V2/V3签名和16KiB对齐通过。APK 2.4.3+133，22294423 bytes，SHA256 9F0086050166E18049A47763C421174BC577F3AB674BA02625BCD127650E3144。Windows保持2.4.1.0，只需覆盖更新手机包。
+- 上版APK回退目录publish/rollback/pre-surface-producer-20261029。未连接/操作手机、未推送或发布；实际VIVO GPU缩放黑块、画面裁剪/方向、后台恢复仍待实机验收。不能以离线构建或Mock测试宣布根因已证实。
+
+
+# 427. 统一投屏远控入口与参数交互（2026-10-29）
+
+- Android和Windows设置首页均仅保留“投屏与远控”。统一页按“手机控制电脑”“电脑控制手机”组织：前者进入原有桌面共享、触控板和游戏配置，后者保留无线调试准备/配对、开始/停止和手机画面参数。Windows手机控制电脑页返回统一页，游戏布局继续归属该方向。
+- Android删除多段技术教程及错误的旧剪贴板说明，只保留开发者选项状态、打开系统调试设置按钮、同网/配对/可信设备提示。无线调试是系统权限，不新增无法执行的应用内假开关；原远控开关、设备列表和控制状态仍在方向页。统一页从方向页返回后重新读取状态，系统设置返回后继续刷新。
+- Windows手机投屏的帧率、缓冲、码率、最长边由NumberBox改为项目已有Slider样式，数值标签实时显示单位，最长边0仍表示原始分辨率。保留原配置键和格式、范围、验证、硬解及编码选项；拖动静止300ms后保存，启动前立即保存；投屏运行时四项参数均禁用，避免缓冲滑块呈现可改却不保存。
+- 安卓入口/系统设置/返回状态回归4项通过，四个变更Dart文件静态分析通过。Windows WinUI Release编译通过（0警告/0错误）；WinApp CLI的系统执行别名不可访问，使用项目现有Slider接口和实际XAML编译验证，未把CLI调用失败当验证通过。
+- Android 2.5.0+134，Windows 2.5.0.0。包名/版本、仅arm64-v8a、V2/V3签名、16KiB对齐通过；APK和Windows ZIP CRC完整，Setup内嵌ZIP哈希与便携ZIP一致。检查报告tmp/remote-settings-artifacts.json；构建日志tmp/remote-settings-android-build.log、tmp/remote-settings-windows-build.log。
+- 回退材料publish/rollback/pre-remote-settings-20261029。未安装候选或操作手机，未做Windows/手机实际界面视觉验收；未推送GitHub或创建Release。本轮仅优化设置与入口，不代表此前缩放黑块已经实机解决。
+- 产物SHA256：apk FB6F29C1996E1F11726D014BB849C79A0DA7E50F03AC08A42E61DE8DDA049CC5；setup 243DDEF71C4A4FD9D7392154D5BBDFF91E98ACCA4478406FCEC3DBFD09321F9E；zip 8276319E85963F06C0889DA7DF7EA263557B6CDAF792CD1F24C7A0483DBF7316。
+
+
+# 428. Windows投屏远控改为对等二级设置（2026-10-29）
+
+- 用户指出#427层级不对等：统一页直接展示手机投屏参数，而另一方向需进入子页。改为独立RemoteSettingsPage统一页，只放“手机投屏到电脑”“手机远控电脑”两个同样式入口和状态摘要；不承载开始/停止、开关、滑块或编码参数。
+- 原ScreenControlPage恢复为“手机投屏到电脑”子页；原RemoteInputSettingsPage为“手机远控电脑”子页。两者返回统一页，统一页返回设置首页；游戏布局继续返回其所属远控子页。状态摘要由原运行/授权状态更新，不新建另一套控制或视频会话。原滑块、自动保存、配对和共享配置不变。
+- Android仅校正指向Windows子页的路径提示，未改变安卓设置结构。版本Windows 2.5.1.0、Android 2.5.1+135。保留publish/rollback/pre-remote-hierarchy-20261029的上一候选。
+- Windows实际WinUI/XAML Release构建通过，0警告/0错误；新页XML结构检查通过。Android主线正式Release构建通过；仅arm64-v8a、V2/V3签名、16KiB对齐、包版本检查通过。APK与Windows ZIP完整性、Setup内嵌ZIP哈希一致。报告tmp/remote-hierarchy-artifacts.json；日志tmp/remote-hierarchy-windows-build.log、tmp/remote-hierarchy-android-build.log。
+- 未安装候选、未操作手机、未实机验证界面与点击返回，未推送GitHub或发布。此前缩放黑块仍不属于本轮已验收内容。
+- 产物SHA256：apk D81E632E49CD9D635FCF5A6FE797101513871290FD95402A149EF1D64A06F2D5；setup 733164FEAA02A579F3F4751C9D49F5D0ACFD9B8F67FAB421C3EF8DCD60BCB885；zip 64845A0DA2FB2613323A171FCEC4147D5D9B30FF4348333CDD9222A864B9DF79。

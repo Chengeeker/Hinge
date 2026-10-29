@@ -8,6 +8,10 @@ inline bool SwapsAxes(DXGI_MODE_ROTATION rotation) {
     return rotation == DXGI_MODE_ROTATION_ROTATE90 || rotation == DXGI_MODE_ROTATION_ROTATE270;
 }
 
+inline bool ShouldCompositeDesktopCursor(bool dxgiPointerVisible, bool systemCursorVisible) {
+    return dxgiPointerVisible || !systemCursorVisible;
+}
+
 inline void DrawDesktopPointer(std::vector<unsigned char>& nv12, UINT width, UINT height, int px, int py) {
     if (width < 2 || height < 2 || width > 8192 || height > 8192 || (width & 1) || (height & 1) ||
         nv12.size() != (size_t)width * height * 3 / 2)

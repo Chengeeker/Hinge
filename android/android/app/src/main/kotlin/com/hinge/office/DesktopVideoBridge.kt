@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.Build
-import android.view.Surface
 import android.view.WindowManager
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
@@ -51,8 +50,7 @@ internal class DesktopVideoBridge(
                         val name = call.argument<String>("name") ?: "Android 手机"
                         require(host.length in 1..256 && port in 1..65535 && peer.length in 1..256 && localId.length in 1..256 && name.length in 1..128)
                         stop()
-                        val texture = textures.createSurfaceTexture()
-                        texture.surfaceTexture().setDefaultBufferSize(1280, 720)
+                        val texture = textures.createSurfaceProducer()
                         val session = Session(++nextId, texture, host, port, peer, localId, name)
                         active = session
                         result.success(mapOf("sessionId" to session.id, "textureId" to texture.id()))
@@ -102,7 +100,7 @@ internal class DesktopVideoBridge(
     override fun close() { stop(); methods.setMethodCallHandler(null); events.setStreamHandler(null); sink = null }
 
     private inner class Session(
-        val id: Long, private val texture: TextureRegistry.SurfaceTextureEntry,
+        val id: Long, private val texture: TextureRegistry.SurfaceProducer,
         private val host: String, private val port: Int, private val peer: String,
         private val localId: String, private val name: String,
     ) {
@@ -128,16 +126,20 @@ internal class DesktopVideoBridge(
         private val textureStatistics = DesktopTextureStatistics()
 
         init {
-            texture.setOnFrameConsumedListener {
-                if (!stopped.get()) {
-                    try { textureStatistics.consumed(texture.surfaceTexture().timestamp, System.nanoTime()) }
-                    catch (_: Exception) { textureStatistics.available = false }
-                    if (established && (videoDecoder?.decodedFrames ?: 0L) > 0L &&
-                        readySent.compareAndSet(false, true)) {
-                        main.removeCallbacks(firstFrameDeadline)
-                        emit("ready", mapOf("canControl" to canControl, "relativeMouse" to relativeMouse, "absoluteMouse" to absoluteMouse))
-                    }
+            // SurfaceProducer has no public frame-consumed callback; never report
+            // decoder output as Flutter texture sampling.
+            textureStatistics.available = false
+            texture.setCallback(object : TextureRegistry.SurfaceProducer.Callback {
+                override fun onSurfaceCleanup() {
+                    if (!stopped.get()) fail("桌面视频显示Surface已失效，请重新连接", true)
                 }
+            })
+        }
+
+        private fun framePresented() {
+            if (!stopped.get() && established && readySent.compareAndSet(false, true)) {
+                main.removeCallbacks(firstFrameDeadline)
+                emit("ready", mapOf("canControl" to canControl, "relativeMouse" to relativeMouse, "absoluteMouse" to absoluteMouse))
             }
         }
 
@@ -194,7 +196,6 @@ internal class DesktopVideoBridge(
         } catch (_: Exception) { 0f }
         fun run() {
             var decoder: DesktopVideoDecoder? = null
-            var surface: Surface? = null
             var stage = "初始化手机桌面身份"
             try {
                 val identity = DesktopClientIdentity(context)
@@ -241,18 +242,24 @@ internal class DesktopVideoBridge(
                 stage = "接收电脑桌面"
                 identity.confirmServer(peer, DesktopClientIdentity.fingerprint(server.encoded))
                 tls.soTimeout = if (reply.optBoolean("mediaHeartbeat", false)) 6500 else 0
-                surface = Surface(texture.surfaceTexture())
+                main.postDelayed(firstFrameDeadline, 8000)
+                var firstPacket = DesktopVideoProtocol.read(input) ?: throw EOFException("电脑已停止桌面共享")
+                while (firstPacket.flags == DesktopVideoProtocol.HEARTBEAT) {
+                    firstPacket = DesktopVideoProtocol.read(input) ?: throw EOFException("电脑已停止桌面共享")
+                }
+                texture.setSize(firstPacket.width, firstPacket.height)
+                val surface = texture.surface
                 val video = DesktopVideoDecoder(surface, { width, height ->
-                    texture.surfaceTexture().setDefaultBufferSize(width, height)
                     emit("format", mapOf("width" to width, "height" to height))
-                }, { error -> fail(error.message ?: "视频解码失败") })
+                }, { error -> fail(error.message ?: "视频解码失败") }, ::framePresented)
                 decoder = video
                 videoDecoder = video
                 canControl = reply.optBoolean("canControl", false)
                 relativeMouse = reply.optBoolean("relativeMouse", false)
                 absoluteMouse = reply.optBoolean("absoluteMouse", false)
                 established = true
-                main.postDelayed(firstFrameDeadline, 8000)
+                received.incrementAndGet()
+                video.submit(firstPacket) { !stopped.get() }
                 if (canControl) inputWriter.execute {
                     try {
                         while (!stopped.get()) {
@@ -285,6 +292,9 @@ internal class DesktopVideoBridge(
                 while (!stopped.get()) {
                     val packet = DesktopVideoProtocol.read(input) ?: throw EOFException("电脑已停止桌面共享")
                     if (packet.flags == DesktopVideoProtocol.HEARTBEAT) continue
+                    if (packet.width != firstPacket.width || packet.height != firstPacket.height) {
+                        throw IOException("电脑视频尺寸已改变，请重新连接")
+                    }
                     received.incrementAndGet()
                     video.submit(packet) { !stopped.get() }
                 }
@@ -295,9 +305,8 @@ internal class DesktopVideoBridge(
                 stop()
                 videoDecoder = null
                 try { decoder?.close() } catch (_: Exception) { }
-                surface?.release()
                 main.post {
-                    texture.setOnFrameConsumedListener(null)
+                    texture.setCallback(null)
                     texture.release()
                     if (active === this) active = null
                     sink?.success(mapOf("sessionId" to id, "state" to "stopped"))

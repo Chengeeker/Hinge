@@ -8,9 +8,10 @@ class GameControl {
   final String id;
   String label;
   String? image;
-  double x, y, size, aspect;
+  double x, y, size, aspect, cornerRadius;
   int binding;
   bool joystick;
+  String shape;
   List<int> directions;
   GameControl({
     required this.id,
@@ -19,6 +20,8 @@ class GameControl {
     required this.y,
     this.size = .15,
     this.aspect = 1,
+    this.shape = 'auto',
+    this.cornerRadius = .12,
     this.binding = 0,
     this.joystick = false,
     this.image,
@@ -31,6 +34,8 @@ class GameControl {
     'y': y,
     'size': size,
     'aspect': aspect,
+    'shape': shape,
+    'cornerRadius': cornerRadius,
     'binding': binding,
     'joystick': joystick,
     'image': image,
@@ -53,6 +58,12 @@ class GameControl {
         : 0;
     final image = json['image'];
     final directions = json['directions'];
+    final shapeValue = json['shape'];
+    final shape =
+        shapeValue is String &&
+            const ['auto', 'circle', 'rounded', 'rect'].contains(shapeValue)
+        ? shapeValue
+        : 'auto';
     return GameControl(
       id: json['id'] is String
           ? (json['id'] as String).substring(
@@ -67,7 +78,9 @@ class GameControl {
       x: number('x', .5, 0, 1),
       y: number('y', .5, 0, 1),
       size: number('size', .15, .10, .48),
-      aspect: number('aspect', 1, .5, 3),
+      aspect: shape == 'circle' ? 1 : number('aspect', 1, .5, 3),
+      shape: shape,
+      cornerRadius: shape == 'circle' ? .5 : number('cornerRadius', .12, 0, .5),
       binding: key(json['binding']),
       joystick: json['joystick'] == true,
       image:

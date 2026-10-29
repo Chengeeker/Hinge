@@ -17,6 +17,7 @@ public class RemoteInputManager : IDisposable
         if (key.Length != 32) throw new ArgumentException("Invalid control key.");
         lock (_sync)
         {
+            EndAuthenticatedControlLocked();
             if (_activeConnection is { } active) EndControlLocked(active);
             foreach (var pair in _secure) { pair.Key.StateChanged -= SecureConnection_StateChanged; pair.Value.Cipher.Dispose(); }
             _secure.Clear();
@@ -35,6 +36,7 @@ public class RemoteInputManager : IDisposable
         }
     }
     private SessionConnection? _activeConnection;
+    private AuthenticatedControlLease? _authenticatedControl;
     private bool _enabled;
     private bool _disposed;
     private readonly Timer _watchdog;
@@ -42,13 +44,14 @@ public class RemoteInputManager : IDisposable
 
     public bool Enabled { get { lock (_sync) return _enabled; } }
     public bool EncryptionRequired { get { lock (_sync) return _encryptionRequired; } }
+    public bool ActiveControlEncrypted { get { lock (_sync) return _authenticatedControl != null || _encryptionRequired; } }
     public string? ActiveDeviceName
     {
         get
         {
             lock (_sync)
             {
-                var id = _activeConnection?.RemoteDeviceId;
+                var id = _authenticatedControl?.DeviceId ?? _activeConnection?.RemoteDeviceId;
                 return id == null ? null : _trustStore.GetDevice(id)?.Name ?? "已连接手机";
             }
         }
@@ -68,14 +71,20 @@ public class RemoteInputManager : IDisposable
     private async Task ExpireControlAsync()
     {
         SessionConnection? stopped = null;
+        bool authenticatedExpired = false;
         lock (_sync)
         {
+            if (_authenticatedControl != null && Environment.TickCount64 - _lastInputAt >= 3000)
+            {
+                EndAuthenticatedControlLocked(); authenticatedExpired = true;
+            }
             if (_activeConnection is { } active && Environment.TickCount64 - _lastInputAt >= 3000)
             {
                 stopped = active;
                 EndControlLocked(active);
             }
         }
+        if (authenticatedExpired) StatusChanged?.Invoke(this, EventArgs.Empty);
         if (stopped == null) return;
         StatusChanged?.Invoke(this, EventArgs.Empty);
         await SendControlStatusAsync(stopped, RemoteActionType.ControlEnded);
@@ -145,7 +154,7 @@ public class RemoteInputManager : IDisposable
                 {
                     reply = RemoteActionType.ControlDenied;
                 }
-                else if (_activeConnection != null && !ReferenceEquals(_activeConnection, conn))
+                else if (_authenticatedControl != null || (_activeConnection != null && !ReferenceEquals(_activeConnection, conn)))
                 {
                     reply = RemoteActionType.ControlDenied;
                 }
@@ -191,6 +200,7 @@ public class RemoteInputManager : IDisposable
         {
             if (_disposed || _enabled == enabled) return;
             _enabled = enabled;
+            if (!enabled) EndAuthenticatedControlLocked();
             if (!enabled && _activeConnection is { } active)
             {
                 stoppedConnection = active;
@@ -237,6 +247,66 @@ public class RemoteInputManager : IDisposable
         return !string.IsNullOrWhiteSpace(deviceId) && _trustStore.IsTrusted(deviceId);
     }
 
+    /// <summary>Only call after transport identity verification and explicit desktop authorization.</summary>
+    public AuthenticatedControlLease? BeginAuthenticatedControl(string deviceId) => BeginAuthenticatedControl(deviceId, _injector);
+
+    public AuthenticatedControlLease? BeginAuthenticatedControl(string deviceId, IInputInjector injector)
+    {
+        ArgumentNullException.ThrowIfNull(injector);
+        AuthenticatedControlLease lease;
+        lock (_sync)
+        {
+            if (_disposed || !_enabled || _transitioning || !_trustStore.IsTrusted(deviceId) ||
+                _activeConnection != null || _authenticatedControl != null) return null;
+            lease = new AuthenticatedControlLease(this, deviceId, injector);
+            _authenticatedControl = lease; _lastInputAt = Environment.TickCount64;
+        }
+        StatusChanged?.Invoke(this, EventArgs.Empty);
+        return lease;
+    }
+
+    private void EndAuthenticatedControlLocked()
+    {
+        if (_authenticatedControl == null) return;
+        var injector = _authenticatedControl.Injector;
+        _authenticatedControl = null;
+        ReleasePressedButtonsLocked(injector);
+    }
+
+    public sealed class AuthenticatedControlLease : IDisposable
+    {
+        private readonly RemoteInputManager _manager;
+        public string DeviceId { get; }
+        internal IInputInjector Injector { get; }
+        internal AuthenticatedControlLease(RemoteInputManager manager, string id, IInputInjector injector) {
+            _manager = manager; DeviceId = id; Injector = injector;
+        }
+        public bool Send(RemoteInputEvent input)
+        {
+            lock (_manager._sync)
+            {
+                if (_manager._disposed || !_manager._enabled || _manager._transitioning ||
+                    !ReferenceEquals(_manager._authenticatedControl, this) || !_manager._trustStore.IsTrusted(DeviceId)) return false;
+                if (input.ActionType is RemoteActionType.ControlStart or RemoteActionType.ControlStop or
+                    RemoteActionType.ControlProbe or RemoteActionType.ControlAccepted or RemoteActionType.ControlDenied or RemoteActionType.ControlEnded)
+                    return false;
+                _manager._lastInputAt = Environment.TickCount64;
+                _manager.DispatchEventLocked(input, Injector);
+                return true;
+            }
+        }
+        public void Dispose()
+        {
+            bool changed;
+            lock (_manager._sync)
+            {
+                changed = ReferenceEquals(_manager._authenticatedControl, this);
+                if (changed) _manager.EndAuthenticatedControlLocked();
+            }
+            if (changed) _manager.StatusChanged?.Invoke(_manager, EventArgs.Empty);
+        }
+    }
+
     private void ActiveConnection_StateChanged(object? sender, SessionState state)
     {
         if (state == SessionState.Connected || sender is not SessionConnection connection) return;
@@ -254,51 +324,62 @@ public class RemoteInputManager : IDisposable
         return true;
     }
 
-    private void DispatchEventLocked(RemoteInputEvent ev)
+    private void DispatchEventLocked(RemoteInputEvent ev, IInputInjector? scopedInjector = null)
     {
+        var injector = scopedInjector ?? _injector;
         if ((ev.ActionType is RemoteActionType.MouseDown or RemoteActionType.MouseUp or RemoteActionType.MouseClick) &&
             !Enum.IsDefined((RemoteMouseButton)ev.ButtonOrKey)) return;
         switch (ev.ActionType)
         {
             case RemoteActionType.MouseMove:
-                _injector.MoveMouse(Math.Clamp(ev.DeltaX, -4096, 4096), Math.Clamp(ev.DeltaY, -4096, 4096));
+                if ((ev.Flags & RemoteInputEvent.AbsoluteMouseFlag) != 0) {
+                    if (scopedInjector != null && ev.Flags == RemoteInputEvent.AbsoluteMouseFlag &&
+                        ev.DeltaX is >= 0 and <= 65535 && ev.DeltaY is >= 0 and <= 65535)
+                        injector.MoveAbsoluteMouse(ev.DeltaX, ev.DeltaY);
+                    break;
+                }
+                int dx = Math.Clamp(ev.DeltaX, -4096, 4096), dy = Math.Clamp(ev.DeltaY, -4096, 4096);
+                if (scopedInjector != null && (ev.Flags & RemoteInputEvent.RelativeMouseFlag) != 0)
+                    injector.MoveRelativeMouse(dx, dy);
+                else injector.MoveMouse(dx, dy);
                 break;
             case RemoteActionType.MouseDown:
                 var downButton = (RemoteMouseButton)ev.ButtonOrKey;
-                if (_pressedButtons.Add(downButton)) _injector.MouseDown(downButton);
+                if (_pressedButtons.Add(downButton)) injector.MouseDown(downButton);
                 break;
             case RemoteActionType.MouseUp:
                 var upButton = (RemoteMouseButton)ev.ButtonOrKey;
                 _pressedButtons.Remove(upButton);
-                _injector.MouseUp(upButton);
+                injector.MouseUp(upButton);
                 break;
             case RemoteActionType.MouseClick:
-                _injector.MouseClick((RemoteMouseButton)ev.ButtonOrKey);
+                injector.MouseClick((RemoteMouseButton)ev.ButtonOrKey);
                 break;
             case RemoteActionType.MouseDoubleClick:
-                _injector.MouseDoubleClick();
+                injector.MouseDoubleClick();
                 break;
             case RemoteActionType.MouseScroll:
-                _injector.MouseScroll(Math.Clamp(ev.WheelOrData, -1200, 1200));
+                injector.MouseScroll(Math.Clamp(ev.WheelOrData, -1200, 1200));
                 break;
             case RemoteActionType.KeyDown:
-                if (ev.ButtonOrKey >= 8 && ev.ButtonOrKey < 255 && _pressedKeys.Add(ev.ButtonOrKey)) _injector.KeyDown(ev.ButtonOrKey);
+                if (ev.ButtonOrKey >= 8 && ev.ButtonOrKey < 255 && _pressedKeys.Add(ev.ButtonOrKey)) injector.KeyDown(ev.ButtonOrKey);
                 break;
             case RemoteActionType.KeyUp:
-                if (_pressedKeys.Remove(ev.ButtonOrKey)) _injector.KeyUp(ev.ButtonOrKey);
+                if (_pressedKeys.Remove(ev.ButtonOrKey)) injector.KeyUp(ev.ButtonOrKey);
                 break;
             case RemoteActionType.TextInput:
                 if (!string.IsNullOrEmpty(ev.TextPayload) && ev.TextPayload.Length <= 8192)
-                    _injector.SendText(ev.TextPayload);
+                    injector.SendText(ev.TextPayload);
                 break;
         }
     }
 
-    private void ReleasePressedButtonsLocked()
+    private void ReleasePressedButtonsLocked(IInputInjector? scopedInjector = null)
     {
-        foreach (var key in _pressedKeys) _injector.KeyUp(key);
+        var injector = scopedInjector ?? _injector;
+        foreach (var key in _pressedKeys) injector.KeyUp(key);
         _pressedKeys.Clear();
-        foreach (var button in _pressedButtons) _injector.MouseUp(button);
+        foreach (var button in _pressedButtons) injector.MouseUp(button);
         _pressedButtons.Clear();
     }
 
@@ -337,6 +418,7 @@ public class RemoteInputManager : IDisposable
             if (_disposed) return;
             _disposed = true;
             _watchdog.Dispose();
+            EndAuthenticatedControlLocked();
             if (_activeConnection is { } active) EndControlLocked(active);
             _enabled = false;
             foreach (var pair in _secure) { pair.Key.StateChanged -= SecureConnection_StateChanged; pair.Value.Cipher.Dispose(); }

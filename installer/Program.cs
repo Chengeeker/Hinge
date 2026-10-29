@@ -525,7 +525,7 @@ internal static class Program
     private static string? Install(string installPath, IProgress<InstallProgress>? progress = null)
     {
         progress?.Report(new InstallProgress(5, "正在检查并停止已运行的实例…"));
-        StopRunningApp();
+        StopRunningApp(installPath);
 
         Directory.CreateDirectory(installPath);
 
@@ -544,7 +544,7 @@ internal static class Program
         progress?.Report(new InstallProgress(82, "正在注册卸载程序信息…"));
         RegisterUninstaller(installPath, executablePath);
 
-        progress?.Report(new InstallProgress(88, "正在配置 Windows 11 右键菜单集成（注册最多等待 45 秒）…"));
+        progress?.Report(new InstallProgress(88, "正在检查 Windows 11 右键菜单集成…"));
         var shellWarning = RegisterModernExplorerMenu(installPath);
 
         progress?.Report(new InstallProgress(95, "正在配置局域网防火墙规则…"));
@@ -584,11 +584,21 @@ internal static class Program
             }
 
             var certificate = new X509Certificate2(certificatePath);
+            var maySkipRegistration = false;
+            using (var previousSnapshot = Registry.CurrentUser.OpenSubKey(ExplorerSnapshotPath))
+            {
+                maySkipRegistration = previousSnapshot?.GetValue("ModernMenuRegistered") is int registered && registered == 1 &&
+                    string.Equals(
+                        previousSnapshot.GetValue("CertificateThumbprint") as string,
+                        certificate.Thumbprint,
+                        StringComparison.OrdinalIgnoreCase);
+            }
+
             EnsureMachineCertificateTrusted(certificatePath, certificate.Thumbprint);
 
-            RegisterSparseIdentity(packagePath, installPath);
+            var packageUpdated = RegisterSparseIdentity(packagePath, installPath, maySkipRegistration);
 
-            NotifyShellAssociationChanged();
+            if (packageUpdated) NotifyShellAssociationChanged();
 
             using var snapshot = Registry.CurrentUser.CreateSubKey(ExplorerSnapshotPath, writable: true);
             snapshot?.SetValue("ModernMenuRegistered", 1, RegistryValueKind.DWord);
@@ -613,26 +623,78 @@ internal static class Program
         }
     }
 
-    private static void RegisterSparseIdentity(string packagePath, string installPath)
+    private static bool RegisterSparseIdentity(string packagePath, string installPath, bool maySkipRegistration)
     {
         using var archive = ZipFile.OpenRead(packagePath);
         using var manifestStream = (archive.GetEntry("AppxManifest.xml")
             ?? throw new InvalidDataException("Windows 集成包缺少清单。")).Open();
-        var manifest = System.Xml.Linq.XDocument.Load(manifestStream);
-        var identity = manifest.Root?.Elements().SingleOrDefault(element => element.Name.LocalName == "Identity");
-        var expectedVersion = Version.Parse(identity?.Attribute("Version")?.Value
+        var manifest = new System.Xml.XmlDocument { XmlResolver = null };
+        manifest.Load(manifestStream);
+        var identity = manifest.SelectSingleNode("/*[local-name()='Package']/*[local-name()='Identity']")
+            ?? throw new InvalidDataException("Windows 集成包缺少身份声明。");
+        var expectedVersion = Version.Parse(identity.Attributes?["Version"]?.Value
             ?? throw new InvalidDataException("Windows 集成包缺少版本。"));
+        var publisher = identity.Attributes?["Publisher"]?.Value
+            ?? throw new InvalidDataException("Windows 集成包缺少发布者。");
+        identity.Attributes!["Version"]!.Value = "0.0.0.0";
+        var manifestFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(manifest.OuterXml)));
         var package = QuotePowerShellLiteral(Path.GetFullPath(packagePath));
-        var externalLocation = QuotePowerShellLiteral(Path.GetFullPath(installPath));
-        var command =
-            "$ErrorActionPreference='Stop'; " +
-            $"Add-AppxPackage -Path {package} -ExternalLocation {externalLocation} " +
-            "-ForceApplicationShutdown -ForceUpdateFromAnyVersion; " +
-            $"$registered = @(Get-AppxPackage -Name '{SparsePackageName}' -ErrorAction SilentlyContinue); " +
-            $"if (@($registered | Where-Object {{ $_.Status -eq 'Ok' -and $_.Version -eq [version]'{expectedVersion}' }}).Count -eq 0) {{ " +
-            "  throw 'Hinge 稀疏身份包注册后版本或状态不符合预期。'; " +
-            "}";
-        RunPowerShell(command);
+        var externalLocation = QuotePowerShellLiteral(
+            Path.GetFullPath(installPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var publisherLiteral = QuotePowerShellLiteral(publisher);
+        var fingerprintLiteral = QuotePowerShellLiteral(manifestFingerprint);
+        var allowSkip = maySkipRegistration ? "$true" : "$false";
+        var command = $$"""
+            $ErrorActionPreference='Stop'
+            if ({{allowSkip}}) {
+                try {
+                    $registered = @(Get-AppxPackage -Name '{{SparsePackageName}}' -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Status -eq 'Ok' -and $_.Publisher -eq {{publisherLiteral}} } |
+                        Select-Object -First 1)
+                    if ($registered.Count -gt 0) {
+                        $pmType = [Windows.Management.Deployment.PackageManager,Windows.Management.Deployment,ContentType=WindowsRuntime]
+                        $packageManager = $pmType::new()
+                        $identityPackage = $packageManager.FindPackagesForUser('') |
+                            Where-Object { $_.Id.Name -eq '{{SparsePackageName}}' -and $_.Id.Publisher -eq {{publisherLiteral}} } |
+                            Select-Object -First 1
+                        if ($null -ne $identityPackage -and $null -ne $identityPackage.UserExternalLocation) {
+                            $actualLocation = [IO.Path]::GetFullPath($identityPackage.UserExternalLocation.Path).TrimEnd([char[]]@(92,47))
+                            $expectedLocation = [IO.Path]::GetFullPath({{externalLocation}}).TrimEnd([char[]]@(92,47))
+                            if ([string]::Equals($actualLocation, $expectedLocation, [StringComparison]::OrdinalIgnoreCase)) {
+                                $registeredManifest = New-Object System.Xml.XmlDocument
+                                $registeredManifest.XmlResolver = $null
+                                $registeredManifest.Load((Join-Path $identityPackage.InstalledLocation.Path 'AppxManifest.xml'))
+                                $registeredIdentity = $registeredManifest.SelectSingleNode("/*[local-name()='Package']/*[local-name()='Identity']")
+                                $registeredIdentity.SetAttribute('Version', '0.0.0.0')
+                                $sha = [Security.Cryptography.SHA256]::Create()
+                                try {
+                                    $actualFingerprint = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($registeredManifest.OuterXml)))).Replace('-', '')
+                                } finally {
+                                    $sha.Dispose()
+                                }
+                                if ([string]::Equals($actualFingerprint, {{fingerprintLiteral}}, [StringComparison]::OrdinalIgnoreCase)) {
+                                    Write-Output 'HINGE_ALREADY_REGISTERED'
+                                    exit 0
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    # If health or location cannot be confirmed, repair the registration.
+                }
+            }
+            Add-AppxPackage -Path {{package}} -ExternalLocation {{externalLocation}} -ForceApplicationShutdown -ForceUpdateFromAnyVersion
+            $registered = @(Get-AppxPackage -Name '{{SparsePackageName}}' -ErrorAction SilentlyContinue)
+            if (@($registered | Where-Object { $_.Status -eq 'Ok' -and $_.Version -eq [version]'{{expectedVersion}}' }).Count -eq 0) {
+                throw 'Hinge 稀疏身份包注册后版本或状态不符合预期。'
+            }
+            Write-Output 'HINGE_REGISTERED'
+            """;
+        var result = RunPowerShell(command).Trim();
+        if (string.Equals(result, "HINGE_ALREADY_REGISTERED", StringComparison.Ordinal)) return false;
+        if (string.Equals(result, "HINGE_REGISTERED", StringComparison.Ordinal)) return true;
+        throw new InvalidOperationException("Windows 右键菜单注册返回了无法识别的状态。");
     }
 
     private static void EnsureMachineCertificateTrusted(string certificatePath, string thumbprint)
@@ -715,13 +777,13 @@ internal static class Program
     private static string QuotePowerShellLiteral(string value) =>
         "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 
-    private static void RunPowerShell(string command)
+    private static string RunPowerShell(string command)
     {
         // Console output avoids PowerShell's redirected CLIXML error/progress stream.
         var wrapped = "$ProgressPreference='SilentlyContinue'; try { " + command +
             " } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }";
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(wrapped));
-        InstallerProcessRunner.Run(new ProcessStartInfo
+        return InstallerProcessRunner.Run(new ProcessStartInfo
         {
             FileName = "powershell.exe",
             Arguments = $"-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {encoded}",
@@ -889,7 +951,7 @@ internal static class Program
         }
     }
 
-    private static void StopRunningApp()
+    private static void StopRunningApp(string installPath)
     {
         foreach (var process in Process.GetProcessesByName("Hinge"))
         {
@@ -917,6 +979,24 @@ internal static class Program
             {
                 process.Dispose();
             }
+        }
+        foreach (var helper in Process.GetProcessesByName("Hinge.DesktopVideo"))
+        {
+            try
+            {
+                if (helper.HasExited) continue;
+                string? executable;
+                try { executable = helper.MainModule?.FileName; }
+                catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { continue; }
+                if (!InstallerPathPolicy.IsInstalledDesktopHelper(executable, installPath)) continue;
+                // Wait for parent-exit cleanup, then stop only this installed helper, never user-app descendants.
+                if (helper.WaitForExit(3000)) continue;
+                try { helper.Kill(entireProcessTree: false); }
+                catch (InvalidOperationException) { }
+                catch (System.ComponentModel.Win32Exception) when (helper.HasExited) { }
+                if (!helper.WaitForExit(2000)) throw new IOException("无法停止已安装的桌面采集组件，请退出远控后重试。");
+            }
+            finally { helper.Dispose(); }
         }
     }
 

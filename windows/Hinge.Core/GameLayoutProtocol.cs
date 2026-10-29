@@ -31,6 +31,8 @@ public sealed class GameLayoutDocument
                     !double.IsFinite(control.Y) || control.Y is < 0 or > 1 ||
                     !double.IsFinite(control.Size) || control.Size is < .10 or > .48 ||
                     !double.IsFinite(control.Aspect) || control.Aspect is < .5 or > 3 ||
+                    !ValidShape(control.Shape) || !double.IsFinite(control.CornerRadius) ||
+                    control.CornerRadius is < 0 or > .5 ||
                     !ValidKey(control.Binding) || control.Directions is null || control.Directions.Length != 4 ||
                     control.Directions.Any(direction => !ValidKey(direction)) ||
                     control.Image is { Length: > 4096 })
@@ -44,6 +46,9 @@ public sealed class GameLayoutDocument
 
     private static bool ValidKey(int key) =>
         key == 0 || key is >= 8 and <= 254 || key is >= -3 and <= -1;
+
+    private static bool ValidShape(string? shape) =>
+        shape is "auto" or "circle" or "rounded" or "rect";
 }
 
 public sealed class GameLayoutPreset
@@ -62,6 +67,8 @@ public sealed class GameLayoutControl
     [JsonPropertyName("y")] public double Y { get; set; } = .5;
     [JsonPropertyName("size")] public double Size { get; set; } = .15;
     [JsonPropertyName("aspect")] public double Aspect { get; set; } = 1;
+    [JsonPropertyName("shape")] public string Shape { get; set; } = "auto";
+    [JsonPropertyName("cornerRadius")] public double CornerRadius { get; set; } = .12;
     [JsonPropertyName("binding")] public int Binding { get; set; }
     [JsonPropertyName("joystick")] public bool Joystick { get; set; }
     [JsonPropertyName("directions")] public int[] Directions { get; set; } = [87, 65, 83, 68];

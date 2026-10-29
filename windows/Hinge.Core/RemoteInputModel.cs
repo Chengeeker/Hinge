@@ -33,6 +33,8 @@ public enum RemoteMouseButton : byte
 public class RemoteInputEvent
 {
     public const int HeaderSize = 16;
+    public const ushort RelativeMouseFlag = 0x0004;
+    public const ushort AbsoluteMouseFlag = 0x0008;
 
     public RemoteActionType ActionType { get; set; }
     public byte ButtonOrKey { get; set; }

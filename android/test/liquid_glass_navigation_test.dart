@@ -59,6 +59,7 @@ void main() {
     var bar = tester.widget<GlassTabBar>(find.byType(GlassTabBar));
     expect(bar.settings?.glassColor, const Color(0xF0FFFFFF));
     expect(bar.settings?.rimLight, 1);
+    expect(bar.settings?.shadowElevation, 0.55);
     expect(bar.indicatorSettings?.glassColor, const Color(0x18000000));
     expect(bar.indicatorSettings?.bodyMode, GlassBodyMode.clear);
     expect(bar.indicatorSettings?.rimShade, 0.12);
@@ -86,6 +87,7 @@ void main() {
     bar = tester.widget<GlassTabBar>(find.byType(GlassTabBar));
     expect(bar.settings?.glassColor, const Color(0x66000000));
     expect(bar.settings?.rimLight, 0);
+    expect(bar.settings?.shadowElevation, 0);
     expect(bar.indicatorSettings?.glassColor, Colors.transparent);
     expect(bar.indicatorSettings?.bodyMode, GlassBodyMode.adaptive);
     expect(bar.indicatorSettings?.rimShade, 0);

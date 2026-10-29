@@ -30,6 +30,7 @@ public enum MessageType : ushort
     ToolResult      = 0x0081,
     CompressedControl = 0x0082,
     GameProfileSync = 0x0083,
+    DesktopControl = 0x0084,
 }
 
 public class ProtocolFrame

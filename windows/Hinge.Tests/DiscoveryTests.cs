@@ -278,6 +278,26 @@ public class DiscoveryTests
     }
 
     [Fact]
+    public void DeviceRegistry_ReadySession_Restores_Offline_Record_Without_Discovery()
+    {
+        var registry = new DeviceRegistry();
+        var message = new DiscoveryMessage { DeviceId = "phone-recovered", Name = "Phone", Platform = "android" };
+        registry.UpsertDevice(message, "192.168.3.28");
+        registry.PruneOffline(TimeSpan.FromSeconds(-1));
+        Assert.True(registry.TryGetDevice(message.DeviceId, out var device));
+        Assert.Equal(ConnectionState.Disconnected, device!.ConnectionState);
+        int notifications = 0;
+        registry.DevicesChanged += (_, _) => notifications++;
+
+        registry.MarkSessionConnected(message.DeviceId);
+        registry.MarkSessionConnected(message.DeviceId);
+        registry.PruneOffline(TimeSpan.FromSeconds(-1));
+
+        Assert.Equal(ConnectionState.Connected, device.ConnectionState);
+        Assert.Equal(1, notifications);
+    }
+
+    [Fact]
     public void DiscoveryService_Lifecycle_StartsAndStops()
     {
         var identity = new DeviceIdentity { DeviceId = "test-local", Name = "LocalTest" };

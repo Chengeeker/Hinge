@@ -13,13 +13,13 @@
                     </local:HandCursorButton>
                     <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                         <TextBlock Text="手机远控电脑" Style="{StaticResource HingePageTitleStyle}" />
-                        <TextBlock Text="把 Android 手机用作此电脑的触控板与游戏键鼠。" Style="{StaticResource HingePageDescriptionStyle}" />
+                        <TextBlock Text="在 Android 手机查看电脑桌面，使用触控板或游戏键鼠。" Style="{StaticResource HingePageDescriptionStyle}" />
                     </StackPanel>
                 </Grid>
                 <Border Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="14">
                         <ToggleSwitch x:Name="AllowRemoteInputToggle" Header="允许 Android 手机控制此电脑" OnContent="已开启" OffContent="已关闭" AutomationProperties.AutomationId="RemoteInputSettingsPage.AllowRemoteInputToggle" />
-                        <ToggleSwitch x:Name="RequireEncryptionToggle" Header="加密远控指令（可选）" OnContent="已开启" OffContent="局域网明文" AutomationProperties.AutomationId="RemoteInputSettingsPage.RequireEncryptionToggle" />
+                        <ToggleSwitch x:Name="RequireEncryptionToggle" Header="独立触控板指令加密（可选）" OnContent="已开启" OffContent="局域网明文" AutomationProperties.AutomationId="RemoteInputSettingsPage.RequireEncryptionToggle" />
                         <TextBlock x:Name="RemoteInputStatusText" Text="已关闭" Style="{StaticResource HingeM3TitleMediumStyle}" AutomationProperties.AutomationId="RemoteInputSettingsPage.StatusText" />
                         <TextBlock x:Name="RemoteInputStatusDetailsText" Text="手机需在 Hinge 设置中启用远控，并从已连接电脑列表打开触控板。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                     </StackPanel>
@@ -37,10 +37,40 @@
                         </Grid>
                     </local:HandCursorButton>
                 </Border>
+                <Border Style="{StaticResource HingeCardStyle}">
+                    <StackPanel Spacing="12">
+                        <ToggleSwitch x:Name="ShareDesktopToggle" Header="允许手机查看电脑桌面" OnContent="已开启" OffContent="已关闭" AutomationProperties.AutomationId="RemoteInputSettingsPage.ShareDesktop" />
+                        <TextBlock x:Name="DesktopStatusText" Text="桌面共享已关闭" Style="{StaticResource HingeM3BodyStyle}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="DesktopEncoderStatusText" Text="未启动桌面编码" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <TextBlock Text="首次连接在两端核对身份码，后续复用已确认身份。关闭应用会停止共享；鼠标操作仍需开启上方远控开关。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <ComboBox x:Name="DesktopMonitorCombo" Header="共享的显示器" PlaceholderText="正在读取显示器…" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="RemoteInputSettingsPage.DesktopMonitor">
+                            <ComboBox.Resources>
+                                <ResourceDictionary>
+                                    <ResourceDictionary.ThemeDictionaries>
+                                        <ResourceDictionary x:Key="Light"><StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" /></ResourceDictionary>
+                                        <ResourceDictionary x:Key="Dark"><StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" /></ResourceDictionary>
+                                        <ResourceDictionary x:Key="HighContrast"><StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" /></ResourceDictionary>
+                                    </ResourceDictionary.ThemeDictionaries>
+                                </ResourceDictionary>
+                            </ComboBox.Resources>
+                        </ComboBox>
+                        <Button x:Name="RefreshDesktopMonitorsButton" Content="刷新显示器" AutomationProperties.AutomationId="RemoteInputSettingsPage.RefreshDesktopMonitors" />
+                        <TextBlock x:Name="DesktopFpsLabel" Style="{StaticResource HingeM3BodyStyle}" />
+                        <Slider x:Name="DesktopFpsSlider" Minimum="15" Maximum="120" StepFrequency="1" AutomationProperties.Name="桌面视频帧率上限" />
+                        <TextBlock x:Name="DesktopEdgeLabel" Style="{StaticResource HingeM3BodyStyle}" />
+                        <Slider x:Name="DesktopEdgeSlider" Minimum="640" Maximum="3840" StepFrequency="16" AutomationProperties.Name="桌面视频最长边" />
+                        <TextBlock x:Name="DesktopBitrateLabel" Style="{StaticResource HingeM3BodyStyle}" />
+                        <Slider x:Name="DesktopBitrateSlider" Minimum="1" Maximum="50" StepFrequency="1" AutomationProperties.Name="桌面视频码率 Mbps" />
+                        <TextBlock Text="建议先用 60 FPS、1920 像素、8 Mbps。帧率是上限，静止桌面不会重复发送画面；更高参数需要两端编解码和网络共同支持。保存时会结束当前观看，手机可重新连接。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <Button x:Name="ApplyDesktopVideoButton" Content="保存桌面画质设置" />
+                        <Button x:Name="StopDesktopButton" Content="停止桌面共享" IsEnabled="False" AutomationProperties.AutomationId="RemoteInputSettingsPage.StopDesktop" />
+                        <Button x:Name="ResetDesktopPeersButton" Content="清除已确认的手机桌面身份" AutomationProperties.AutomationId="RemoteInputSettingsPage.ResetDesktopPeers" />
+                    </StackPanel>
+                </Border>
                 <Border x:Name="RemoteInputTokenPanel" Style="{StaticResource HingeCardStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock Text="可选加密密钥" Style="{StaticResource HingeM3TitleMediumStyle}" /><TextBox x:Name="ControlTokenBox" AutomationProperties.AutomationId="RemoteInputSettingsPage.ControlToken" IsReadOnly="True" Header="仅在开启远控加密时需要；手机可选择安全保存" TextWrapping="Wrap" /><Button x:Name="RotateTokenButton" AutomationProperties.AutomationId="RemoteInputSettingsPage.RotateToken" Content="重置加密密钥并结束当前控制" />
-                        <TextBlock Text="默认不要求输入密钥，远控指令在局域网明文传输；请只在可信网络使用。可开启上方加密开关启用 AES-GCM 并校验重放，此时需将电脑端密钥输入手机。关闭远控或断线会释放鼠标和键盘；文件等其他业务消息不在此加密范围。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <TextBlock Text="电脑桌面模式的画面和操作使用独立 TLS 加密，无需复制此密钥。以下设置仅用于独立触控板和游戏模式：默认不要求输入密钥，指令在局域网明文传输；请只在可信网络使用。可开启上方加密开关启用 AES-GCM 并校验重放，此时需将电脑端密钥输入手机。关闭远控或断线会释放鼠标和键盘；文件等其他业务消息不在此加密范围。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
             </StackPanel>

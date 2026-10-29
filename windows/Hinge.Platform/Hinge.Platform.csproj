@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Hinge.Tests" />
     <ProjectReference Include="..\Hinge.Core\Hinge.Core.csproj" />
     <!-- Reuse the Windows App SDK already used by the WinUI host for native
          app notifications; no additional notification library is required. -->

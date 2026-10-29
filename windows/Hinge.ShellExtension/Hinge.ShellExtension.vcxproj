@@ -39,9 +39,12 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
+      <EnableIncrementalLinking>false</EnableIncrementalLinking>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <OptimizeReferences>true</OptimizeReferences>
       <ModuleDefinitionFile>Hinge.ShellExtension.def</ModuleDefinitionFile>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
       <AdditionalDependencies>advapi32.lib;runtimeobject.lib;shlwapi.lib;shell32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>

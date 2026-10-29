@@ -30,7 +30,8 @@ class _Sender extends RemoteInputSender {
   @override
   void sendKey(int key, bool down) => events.add('$key:$down');
   @override
-  void sendMouseMove(int dx, int dy) => events.add('move');
+  void sendMouseMove(int dx, int dy, {bool relative = false}) =>
+      events.add('move');
   @override
   void sendMouseDown(RemoteMouseButton button) =>
       events.add('mouseDown:${button.value}');

@@ -42,6 +42,8 @@ enum RemoteMouseButton {
 
 class RemoteInputEvent {
   static const int headerSize = 16;
+  static const int relativeMouseFlag = 0x0004;
+  static const int absoluteMouseFlag = 0x0008;
 
   final RemoteActionType actionType;
   final int buttonOrKey;

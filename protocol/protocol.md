@@ -216,4 +216,38 @@ SECURE_REMOTE_INPUT (0x0051) 载荷为：版本1:uint8、序号:uint64BE、密�
 
 ### 4.2.2 游戏布局同步 (`GAME_PROFILE_SYNC`, `0x0083`)
 
-仅允许已连接且位于双方信任库中的 Windows/Android 对端使用。Windows 发送 `{"version":1,"action":"get"}` 读取 Android 本机 `game-controls/presets.json`；Android 以 `action=data` 返回完整布局文档。Windows 编辑后发送 `action=set` 与 `document`，Android 必须先完整验证版本、预设/控件数量、坐标、比例、键位及 1MiB 上限，再用现有原子文件保存，成功后回 `action=ack`；校验或保存失败不得替换旧文件。Android 收到远端更新时通知已打开的游戏模式重载布局。该配置帧走现有 Hinge 会话，默认局域网通道没有载荷加密；只同步受信任手机上的游戏布局，不用于传递密钥或敏感数据。
+仅允许已连接且位于双方信任库中的 Windows/Android 对端使用。Windows 发送 `{"version":1,"action":"get"}` 读取 Android 本机 `game-controls/presets.json`；Android 以 `action=data` 返回完整布局文档。Windows 编辑后发送 `action=set` 与 `document`，Android 必须先完整验证版本、预设/控件数量、坐标、比例、形状、圆角、键位及 1MiB 上限，再用现有原子文件保存，成功后回 `action=ack`；校验或保存失败不得替换旧文件。Android 收到远端更新时通知已打开的游戏模式重载布局。
+
+控件的 `shape` 和 `cornerRadius` 是可选字段，缺少时按 `auto` 与 `0.12` 处理，不改变旧布局文件的读取方式。`shape` 可为 `auto`、`circle`、`rounded` 或 `rect`：`auto` 沿用原客户端外观规则；`circle` 与摇杆始终保持正圆并锁定 1:1；`rounded` 按短边长度乘以 `cornerRadius` 计算圆角；`rect` 使用直角。`cornerRadius` 是 0 到 0.5 的短边比例，仅对 `rounded` 生效。Android 读取未知形状时回退到 `auto`；Windows 保存前拒绝未知形状和值域越界，避免静默写入无效布局。旧客户端可能忽略新增字段，因此编辑新形状后请同时更新两端。
+
+该配置帧走现有 Hinge 会话，默认局域网通道没有载荷加密；只同步受信任手机上的游戏布局，不用于传递密钥或敏感数据。
+
+## Desktop media and authenticated input (0x0084 / HDV1)
+
+`0x0084 DesktopControl` carries bounded JSON only: `describe` with an opaque requestId, and `description` with version 1, enabled, port, name and matching requestId. The media peer connects to the existing Hinge connection's remote address, never a host supplied in this JSON. A disabled Windows desktop-sharing switch does not open a listener.
+
+The dedicated listener uses TLS 1.2/1.3 with a client certificate. Before any image or input, an unknown peer requires both local confirmation and a matching displayed 64-bit code derived from role-ordered server/client certificate fingerprints. Confirmed certificate pins persist; a changed pinned client/server identity fails closed. `verifyIdentity:true` in hello forces confirmation when the client lost its server pin. Existing Hinge trust/connected state remains an additional authorization condition, not cryptographic identity proof.
+
+TLS control JSON uses a 4-byte big-endian length then UTF-8 JSON, 2..8192 bytes, depth <=8. Hello contains version, deviceId, name and optional verifyIdentity. Server replies verify/code then waits for confirm and local approval, or directly ready for matching pins. Ready includes `canControl`; false permits video viewing only. Pairing is bounded to 60 seconds; TLS handshake 10 seconds. A new handshake is required on reconnection.
+
+After ready, server-to-client HDV1 media uses the 32-byte DesktopVideoProtocol header and a bounded complete Annex B access unit. Client-to-server messages remain framed JSON: keepAlive (every second), stop, or input with Base64 `data` containing the existing RemoteInputEvent bytes (16..4096 bytes). Native input writers are bounded to 128 queued events; overload closes the connection and releases held inputs rather than dropping key releases. Large text is split at UTF-8 character boundaries into <=4000-byte text chunks. Video bytes and input never enter the ordinary file-transfer queue.
+
+Desktop input is protected by this mutual TLS channel and uses an exclusive RemoteInputManager authenticated transport lease, even if the legacy optional AES control key was never configured. The legacy 0x0050/0x0051 independent touchpad/game protocol stays compatible. Desktop input never silently falls back to those channels. Disabling control, transport loss, stop, lease expiry, or disposal releases held keys/buttons. RemoteInputManager retains the existing 3-second input/keepAlive watchdog; desktop viewer heartbeat timeout is 5 seconds.
+
+## HDV1 idle heartbeat extension
+
+A client advertises `mediaHeartbeat:true` in its TLS hello. Ready echoes whether it is enabled. Only negotiated streams emit HDV1 flag `0x04` (Heartbeat): exactly one zero payload byte, no configuration/keyframe flags, valid even dimensions, PTS ignored. The media writer assigns one increasing sequence across video and heartbeats. A heartbeat is sent after one second without a frame; it does not configure/decode video or increment video frame statistics. Older clients that omit this capability keep the old frame-only stream.
+
+Negotiated Android reads use a 6500ms socket-read timeout. A static desktop can therefore remain connected without fake encoded frames, while a dead downlink times out. Each server packet write is bounded to two seconds; prolonged backpressure closes the session and releases input rather than accumulating old video. Source iterator cancellation is awaited before disposal so a pending native pipe read cannot race disposal. The native encoder also limits in-flight inputs to three and detects three seconds without output while inputs remain pending; a truly static capture with no pending input does not trigger that encoder watchdog.
+
+## Desktop game relative-pointer capability
+
+A current server adds `relativeMouse:true` to its authenticated TLS ready message when control is granted. Absence/false disables the Android desktop game overlay; older viewers ignore the additive field. No extra control socket or plaintext fallback is created.
+
+For MouseMove only, RemoteInputEvent flag `0x0004` requests game relative movement. The authenticated desktop lease dispatches it to MoveRelativeMouse with the same bounded deltas and ownership checks. Ordinary desktop moves continue to position within the selected monitor; game relative movement intentionally does not clamp the camera at screen edges. The scoped Windows injector still checks that the selected display exists and its bounds have not changed. Click/scroll placement and key/button release retain the desktop safety rules. Legacy standalone touchpad/game movement remains relative and compatible. This input flag is unrelated to HDV1 media heartbeat flag 0x04.
+
+Android uses the existing sender, presets and multitouch state for the transparent game overlay over the live texture. Entry/exit preserves the media session; leaving, permission/capability loss and backgrounding release held controls. This uses normal Windows SendInput and does not bypass application integrity/anti-cheat restrictions.
+
+### Desktop absolute touch input
+
+The authenticated desktop TLS ready JSON may advertise `absoluteMouse: true`. Only after this capability is received may a client send MouseMove with flags exactly `0x0008` and DeltaX/DeltaY in 0..65535, describing the selected monitor (not the entire virtual desktop). The desktop lease rejects out-of-range coordinates and mixed relative/absolute flags. Ordinary LAN input does not accept this flag. Old servers omit the capability; clients retain pointer mode. Existing relative game input flag 0x0004 is unchanged. The client inverse-maps the visible video rectangle through local zoom/pan and rejects letterbox touches. This is mouse emulation, not native Windows multi-touch injection.

@@ -85,7 +85,10 @@ class _PhoneRemoteControlSettingsScreenState
     return count == 0 ? '已开启 · 等待 Windows 电脑连接' : '已开启 · $count 台电脑在线';
   }
 
-  Future<void> _openTouchpad(SessionConnection connection) async {
+  Future<void> _openTouchpad(
+    SessionConnection connection, {
+    bool desktop = false,
+  }) async {
     if (!_enabled || connection.state != SessionState.connected) return;
     final peerName = connection.peerInfo?.name ?? 'Windows 电脑';
     final peerId = connection.peerInfo?.deviceId;
@@ -111,6 +114,7 @@ class _PhoneRemoteControlSettingsScreenState
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => TouchpadScreen(
+          showDesktop: desktop,
           peerName: peerName,
           controlKey: key,
           onEncryptionRequired: () => _requestRemoteControlKey(peerId),
@@ -235,6 +239,24 @@ class _PhoneRemoteControlSettingsScreenState
     }
   }
 
+  Future<void> _forgetDesktopIdentity(SessionConnection connection) async {
+    final peer = connection.peerInfo?.deviceId;
+    if (peer == null) return;
+    try {
+      await const MethodChannel('hinge/desktop_video')
+          .invokeMethod<void>('forgetPeer', {'peerId': peer});
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已清除桌面身份，下次连接需重新核对。')));
+      }
+    } on PlatformException {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('无法清除桌面身份。')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -249,7 +271,7 @@ class _PhoneRemoteControlSettingsScreenState
               child: SwitchListTile.adaptive(
                 value: _enabled,
                 onChanged: widget.workspaceState.setPhoneRemoteControlEnabled,
-                title: const Text('启用手机触控板'),
+                title: const Text('启用手机远控电脑'),
                 subtitle: const Text('开启后，可用此手机控制已连接的 Windows 电脑。'),
                 secondary: const Icon(Icons.touch_app_outlined),
               ),
@@ -287,41 +309,64 @@ class _PhoneRemoteControlSettingsScreenState
             else
               for (final connection in computers)
                 Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.computer_outlined),
-                    title: Text(connection.peerInfo?.name ?? 'Windows 电脑'),
-                    subtitle: Text(
-                      identical(connection, _activeControlConnection)
-                          ? '正在控制'
-                          : '已连接 · 等待开始控制',
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FilledButton.tonal(
-                          onPressed:
-                              _enabled && _activeControlConnection == null
-                              ? () => _openTouchpad(connection)
-                              : null,
-                          child: const Text('打开触控板'),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.computer_outlined),
+                        title: Text(connection.peerInfo?.name ?? 'Windows 电脑'),
+                        subtitle: Text(
+                          identical(connection, _activeControlConnection)
+                              ? '正在控制'
+                              : '已连接 · 等待开始控制',
                         ),
-                        PopupMenuButton<String>(
-                          tooltip: '密钥选项',
-                          onSelected: (_) => _forgetRemoteKey(connection),
+                        trailing: PopupMenuButton<String>(
+                          tooltip: '远控身份选项',
+                          onSelected: (value) => value == 'desktop'
+                              ? _forgetDesktopIdentity(connection)
+                              : _forgetRemoteKey(connection),
                           itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'desktop',
+                              child: Text('清除此电脑的桌面身份'),
+                            ),
                             PopupMenuItem(
                               value: 'forget',
                               child: Text('清除此电脑的已保存密钥'),
                             ),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton.icon(
+                              label: const Text('电脑桌面'),
+                              onPressed:
+                                  _enabled && _activeControlConnection == null
+                                  ? () =>
+                                        _openTouchpad(connection, desktop: true)
+                                  : null,
+                              icon: const Icon(Icons.desktop_windows, size: 18),
+                            ),
+                            FilledButton.tonal(
+                              onPressed:
+                                  _enabled && _activeControlConnection == null
+                                  ? () => _openTouchpad(connection)
+                                  : null,
+                              child: const Text('打开触控板'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             const SizedBox(height: 12),
             Text(
-              '电脑端需开启“允许手机控制此电脑”。电脑关闭加密时，手机无需输入密钥；开启加密时，首次输入后可选择由 Android Keystore 安全保存。游戏模式可从竖屏或横屏触控板直接进入。',
+              '电脑桌面的画面与操作自动通过 TLS 加密，无需复制密钥。独立触控板和游戏模式需电脑开启“允许手机控制此电脑”：电脑关闭加密时，手机无需输入密钥；开启加密时，首次输入后可选择由 Android Keystore 安全保存。游戏模式可从竖屏或横屏触控板直接进入。',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),

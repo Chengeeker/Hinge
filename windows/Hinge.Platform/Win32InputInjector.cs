@@ -5,10 +5,74 @@ namespace Hinge.Platform;
 
 public class Win32InputInjector : IInputInjector
 {
+    private readonly Func<DesktopPointerBounds>? _desktopBounds;
+    public Win32InputInjector() { }
+    private Win32InputInjector(Func<DesktopPointerBounds> desktopBounds) => _desktopBounds = desktopBounds;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MONITORINFOEX {
+        public int Size; public RECT Monitor, Work; public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+    }
+    private delegate bool MonitorCallback(IntPtr monitor, IntPtr dc, ref RECT bounds, IntPtr data);
+    [DllImport("user32.dll")]
+    private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorCallback callback, IntPtr data);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
+
+    public static Win32InputInjector ForDesktop(string deviceName)
+    {
+        new DesktopVideoSettings(MonitorDeviceName: deviceName).Validate();
+        IntPtr selected = IntPtr.Zero;
+        MonitorCallback callback = (IntPtr monitor, IntPtr dc, ref RECT bounds, IntPtr data) => {
+            var info = new MONITORINFOEX { Size = Marshal.SizeOf<MONITORINFOEX>() };
+            if (GetMonitorInfo(monitor, ref info) && info.DeviceName == deviceName) selected = monitor;
+            return true;
+        };
+        if (!EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero) || selected == IntPtr.Zero)
+            throw new IOException("所选显示器不可用，请刷新后重新连接。");
+        DesktopPointerBounds ReadBounds()
+        {
+            var info = new MONITORINFOEX { Size = Marshal.SizeOf<MONITORINFOEX>() };
+            if (!GetMonitorInfo(selected, ref info) || info.DeviceName != deviceName)
+                throw new IOException("所选显示器已断开，已停止远程输入。");
+            var bounds = new DesktopPointerBounds(info.Monitor.Left, info.Monitor.Top,
+                info.Monitor.Right - info.Monitor.Left, info.Monitor.Bottom - info.Monitor.Top);
+            bounds.Validate(); return bounds;
+        }
+        var original = ReadBounds();
+        return new Win32InputInjector(() => {
+            var bounds = ReadBounds();
+            if (bounds != original) throw new IOException("显示器布局或分辨率已变化，请重新连接。");
+            return bounds;
+        });
+    }
+
+    private INPUT DesktopPointerMove(int deltaX, int deltaY)
+    {
+        var bounds = _desktopBounds!();
+        if (!GetCursorPos(out var cursor)) throw new IOException("无法读取桌面鼠标位置。");
+        var target = bounds.Move(cursor.X, cursor.Y, deltaX, deltaY);
+        var virtualDesktop = new DesktopPointerBounds(GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79));
+        var normalized = virtualDesktop.Normalize(target.X, target.Y);
+        return new INPUT { type = INPUT_MOUSE, u = new InputUnion { mi = new MOUSEINPUT {
+            dx = normalized.X, dy = normalized.Y, dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK } } };
+    }
+
     private const uint INPUT_MOUSE = 0;
     private const uint INPUT_KEYBOARD = 1;
 
     private const uint MOUSEEVENTF_MOVE = 0x0001;
+    private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+    private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
@@ -84,6 +148,32 @@ public class Win32InputInjector : IInputInjector
 
     public void MoveMouse(int deltaX, int deltaY)
     {
+        if (_desktopBounds != null) {
+            var move = DesktopPointerMove(deltaX, deltaY);
+            if (SendInput(1, new[] { move }, Marshal.SizeOf<INPUT>()) != 1)
+                throw new IOException("系统未接受远程鼠标移动。");
+            return;
+        }
+        MoveRelativeMouse(deltaX, deltaY);
+    }
+
+    public void MoveAbsoluteMouse(int x, int y)
+    {
+        if (_desktopBounds == null) throw new InvalidOperationException("Absolute input requires a selected desktop.");
+        var target = _desktopBounds().FromNormalized(x, y);
+        var virtualDesktop = new DesktopPointerBounds(GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79));
+        var normalized = virtualDesktop.Normalize(target.X, target.Y);
+        var input = new INPUT { type = INPUT_MOUSE, u = new InputUnion { mi = new MOUSEINPUT {
+            dx = normalized.X, dy = normalized.Y,
+            dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK } } };
+        if (SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>()) != 1)
+            throw new IOException("系统未接受桌面触控定位。");
+    }
+
+
+    public void MoveRelativeMouse(int deltaX, int deltaY)
+    {
+        _desktopBounds?.Invoke();
         var input = new INPUT
         {
             type = INPUT_MOUSE,
@@ -98,7 +188,8 @@ public class Win32InputInjector : IInputInjector
             }
         };
 
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        if (SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>()) != 1 && _desktopBounds != null)
+            throw new IOException("系统未接受游戏相对鼠标移动。");
     }
 
     public void MouseDown(RemoteMouseButton button)
@@ -153,7 +244,7 @@ public class Win32InputInjector : IInputInjector
             }
         };
 
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        SendPointerInput(input, true);
     }
 
     public void SendText(string text)
@@ -195,7 +286,7 @@ public class Win32InputInjector : IInputInjector
         SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
     }
 
-    private static void SendMouseFlag(uint flag)
+    private void SendMouseFlag(uint flag)
     {
         var input = new INPUT
         {
@@ -209,7 +300,14 @@ public class Win32InputInjector : IInputInjector
             }
         };
 
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        SendPointerInput(input, (flag & (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_MIDDLEDOWN)) != 0);
+    }
+
+    private void SendPointerInput(INPUT input, bool position)
+    {
+        var inputs = _desktopBounds != null && position ? new[] { DesktopPointerMove(0, 0), input } : new[] { input };
+        if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>()) != inputs.Length && _desktopBounds != null && position)
+            throw new IOException("系统未接受远程鼠标操作。");
     }
 
     public void Dispose()

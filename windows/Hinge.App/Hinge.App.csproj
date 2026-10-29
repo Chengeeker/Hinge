@@ -50,4 +50,10 @@
       <Content Include="tools\scrcpy\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
   </Target>
+  <Target Name="PrepareDesktopVideo" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\build_desktop_video.ps1&quot;" />
+    <ItemGroup>
+      <Content Include="..\..\tmp\Hinge-desktop-video\Hinge.DesktopVideo.exe" Link="Hinge.DesktopVideo.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 </Project>

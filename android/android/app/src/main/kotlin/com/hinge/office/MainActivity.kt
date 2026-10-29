@@ -198,9 +198,11 @@ class MainActivity : FlutterActivity() {
     }
 
     private var gameProfileBridge: GameProfileBridge? = null
+    private var desktopVideoBridge: DesktopVideoBridge? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         gameProfileBridge = GameProfileBridge(this, flutterEngine.dartExecutor.binaryMessenger)
+        desktopVideoBridge = DesktopVideoBridge(this, flutterEngine.dartExecutor.binaryMessenger, flutterEngine.renderer)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result -> handleMethod(call, result) }
         EventChannel(
@@ -294,7 +296,13 @@ class MainActivity : FlutterActivity() {
         super.onPause()
     }
 
+    override fun onStop() {
+        desktopVideoBridge?.stop()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        desktopVideoBridge?.close()
         gameProfileBridge?.close()
         stopScreenCapture()
         releaseDiscoveryMulticastLock()

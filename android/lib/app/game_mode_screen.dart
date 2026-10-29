@@ -14,11 +14,13 @@ class GameModeScreen extends StatefulWidget {
   final RemoteInputSender sender;
   final SessionConnection connection;
   final List<DeviceOrientation> restoreOrientations;
+  final VoidCallback? onExit;
   const GameModeScreen({
     super.key,
     required this.sender,
     required this.connection,
     this.restoreOrientations = const [],
+    this.onExit,
   });
   @override
   State<GameModeScreen> createState() => _GameModeScreenState();
@@ -47,6 +49,7 @@ class _GameModeScreenState extends State<GameModeScreen>
       !_editing &&
       !_suspended &&
       widget.sender.ready &&
+      widget.sender.supportsGameKeys &&
       widget.connection.state == SessionState.connected;
 
   @override
@@ -105,6 +108,7 @@ class _GameModeScreenState extends State<GameModeScreen>
   void _connectionChanged() {
     if (!mounted) return;
     if (!widget.sender.ready ||
+        !widget.sender.supportsGameKeys ||
         widget.connection.state != SessionState.connected) {
       _release();
     }
@@ -618,6 +622,40 @@ class _GameModeScreenState extends State<GameModeScreen>
                       }
                     },
                   ),
+              if (!control.joystick)
+                DropdownButtonFormField<String>(
+                  initialValue: control.shape,
+                  decoration: const InputDecoration(labelText: '控件外观'),
+                  items: const [
+                    DropdownMenuItem(value: 'auto', child: Text('按原布局')),
+                    DropdownMenuItem(value: 'circle', child: Text('圆形（锁定比例）')),
+                    DropdownMenuItem(value: 'rounded', child: Text('圆角矩形')),
+                    DropdownMenuItem(value: 'rect', child: Text('直角矩形')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      control.shape = value;
+                      if (value == 'circle') {
+                        control.aspect = 1;
+                        control.cornerRadius = .5;
+                      }
+                    });
+                    refresh(() {});
+                  },
+                ),
+              if (!control.joystick && control.shape == 'rounded') ...[
+                Text('圆角比例 ${(control.cornerRadius * 100).round()}%'),
+                Slider(
+                  value: control.cornerRadius,
+                  min: 0,
+                  max: .5,
+                  onChanged: (value) {
+                    setState(() => control.cornerRadius = value);
+                    refresh(() {});
+                  },
+                ),
+              ],
               Text('大小 ${(control.size * 100).round()}%'),
               Slider(
                 value: control.size,
@@ -628,7 +666,7 @@ class _GameModeScreenState extends State<GameModeScreen>
                   refresh(() {});
                 },
               ),
-              if (!control.joystick) ...[
+              if (!control.joystick && control.shape != 'circle') ...[
                 const Text('宽高比'),
                 Slider(
                   value: control.aspect,
@@ -739,17 +777,19 @@ class _GameModeScreenState extends State<GameModeScreen>
         }
       }
     } else if (mounted) {
-      Navigator.pop(context);
+      if (widget.onExit != null) {
+        widget.onExit!();
+      } else {
+        Navigator.pop(context);
+      }
     }
   }
 
   Rect _rect(GameControl control, Size area) {
     final short = math.min(area.width, area.height);
     final h = (short * control.size).clamp(48.0, area.height);
-    final w = (h * (control.joystick ? 1 : control.aspect)).clamp(
-      48.0,
-      area.width,
-    );
+    final circle = control.joystick || control.shape == 'circle';
+    final w = (h * (circle ? 1 : control.aspect)).clamp(48.0, area.width);
     final top = (control.y * area.height - h / 2).clamp(
       0.0,
       math.max(0.0, area.height - h),
@@ -771,6 +811,17 @@ class _GameModeScreenState extends State<GameModeScreen>
     return rect;
   }
 
+  double _cornerRadius(GameControl control, Rect rect) {
+    if (control.joystick || control.shape == 'circle') {
+      return math.min(rect.width, rect.height) / 2;
+    }
+    if (control.shape == 'rect') return 0;
+    if (control.shape == 'rounded') {
+      return math.min(rect.width, rect.height) * control.cornerRadius;
+    }
+    return (control.aspect - 1).abs() < .02 ? rect.height / 2 : 18;
+  }
+
   Widget _control(GameControl control, Rect rect) {
     final colors = Theme.of(context).colorScheme;
     final selected = _selectedControl == control.id;
@@ -780,9 +831,7 @@ class _GameModeScreenState extends State<GameModeScreen>
         color: pressed
             ? colors.primaryContainer
             : colors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(
-          control.joystick || control.aspect == 1 ? rect.height / 2 : 18,
-        ),
+        borderRadius: BorderRadius.circular(_cornerRadius(control, rect)),
         border: Border.all(
           color: selected
               ? colors.primary
@@ -883,12 +932,14 @@ class _GameModeScreenState extends State<GameModeScreen>
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return PopScope(
-      canPop: !_editing,
+      canPop: !_editing && widget.onExit == null,
       onPopInvokedWithResult: (popped, _) {
         if (!popped) _exit();
       },
       child: Scaffold(
-        backgroundColor: colors.surface,
+        backgroundColor: widget.onExit == null
+            ? colors.surface
+            : Colors.transparent,
         body: SafeArea(
           child: _loading
               ? const Center(child: CircularProgressIndicator())
@@ -900,10 +951,7 @@ class _GameModeScreenState extends State<GameModeScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(_error!),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('返回'),
-                        ),
+                        TextButton(onPressed: _exit, child: const Text('返回')),
                       ],
                     ),
                   ),
@@ -958,7 +1006,11 @@ class _GameModeScreenState extends State<GameModeScreen>
                               _remainderX -= dx;
                               _remainderY -= dy;
                               if (dx != 0 || dy != 0) {
-                                widget.sender.sendMouseMove(dx, dy);
+                                widget.sender.sendMouseMove(
+                                  dx,
+                                  dy,
+                                  relative: true,
+                                );
                               }
                             },
                             onPointerUp: (e) => _endCanvasPointer(e.pointer),
@@ -972,7 +1024,17 @@ class _GameModeScreenState extends State<GameModeScreen>
                                       : '单指滑动移动视角 · 双指按住并移动可拖拽（鼠标左键）',
                                   style: Theme.of(context).textTheme.bodySmall
                                       ?.copyWith(
-                                        color: colors.onSurfaceVariant,
+                                        color: widget.onExit == null
+                                            ? colors.onSurfaceVariant
+                                            : Colors.white,
+                                        shadows: widget.onExit == null
+                                            ? null
+                                            : const [
+                                                Shadow(
+                                                  color: Colors.black,
+                                                  blurRadius: 6,
+                                                ),
+                                              ],
                                       ),
                                 ),
                               ),
@@ -1040,6 +1102,7 @@ class _GameModeScreenState extends State<GameModeScreen>
                           ),
                         if (!_editing &&
                             (!widget.sender.ready ||
+                                !widget.sender.supportsGameKeys ||
                                 widget.connection.state !=
                                     SessionState.connected))
                           Positioned(
@@ -1052,7 +1115,9 @@ class _GameModeScreenState extends State<GameModeScreen>
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: Text(
-                                  '控制已停止，所有按键已释放。请返回触控板重新连接。',
+                                  widget.onExit == null
+                                      ? '控制已停止，所有按键已释放。请返回触控板重新连接。'
+                                      : '控制已停止，所有按键已释放。请退出游戏模式，检查电脑端支持并重新连接。',
                                   style: TextStyle(
                                     color: colors.onErrorContainer,
                                   ),

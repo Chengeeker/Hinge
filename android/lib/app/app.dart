@@ -3681,7 +3681,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                             refractiveIndex: 1.19,
                             chromaticAberration: 0.008,
                             rimLight: isDark ? 0 : 1,
-                            shadowElevation: 0,
+                            shadowElevation: isDark ? 0 : 0.55,
                           ),
                           indicatorSettings: LiquidGlassSettings(
                             glassColor: isDark

@@ -558,6 +558,8 @@ public sealed partial class MainWindow : Window
         });
         StartCloudRelayPolling();
         App.LogLifecycle("main-window-constructor-complete");
+        if (_desktopSharingEnabled)
+            DispatcherQueue.TryEnqueue(() => _ = RestoreDesktopSharingPreferenceAsync());
     }
 
     public bool HandleActivationArguments(string? arguments)
@@ -1202,6 +1204,7 @@ public sealed partial class MainWindow : Window
         if (!_configuredPages.Add(page)) return;
         page.BackToSettings.Click += HeaderBackButton_Click;
         page.GameLayoutSettings.Click += (_, _) => ContentFrame.Navigate(typeof(GameLayoutSettingsPage));
+        ConfigureDesktopSharing(page);
         page.AllowRemoteInput.Toggled += RemoteInputEnabled_Toggled;
         page.RequireEncryption.Toggled += RemoteInputEncryption_Toggled;
         async Task LoadControlKey(bool rotate)
@@ -1291,7 +1294,7 @@ public sealed partial class MainWindow : Window
         !_remoteInputManager.Enabled
             ? "已关闭"
             : _remoteInputManager.ActiveDeviceName is { } deviceName
-                ? $"正在由 {deviceName} 控制{(_remoteInputManager.EncryptionRequired ? string.Empty : "（局域网未加密）")}"
+                ? $"正在由 {deviceName} 控制{(_remoteInputManager.ActiveControlEncrypted ? "（已加密）" : "（局域网未加密）")}"
                 : $"已开启，等待手机控制{(_remoteInputManager.EncryptionRequired ? string.Empty : "（局域网未加密）")}";
 
     private void ConfigureWindowsSettingsPage(WindowsSettingsPage page)
@@ -4315,6 +4318,11 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            if (args.Frame.Type == MessageType.DesktopControl)
+            {
+                await HandleDesktopDescriptionAsync(args.Connection, args.Frame);
+                return;
+            }
             await _transferManager.HandleIncomingFrameAsync(args.Connection, args.Frame);
             if (_remoteInputManager.EncryptionRequired &&
                 args.Frame.Type is (MessageType.RemoteInput or MessageType.SecureRemoteInput))
@@ -5323,6 +5331,11 @@ public sealed partial class MainWindow : Window
 
     private void OnPeerIdentified(object? sender, SessionPeerInfo peer)
     {
+        if (!DispatcherQueue.HasThreadAccess)
+        {
+            DispatcherQueue.TryEnqueue(() => OnPeerIdentified(sender, peer));
+            return;
+        }
         if (sender is not SessionConnection connection || !connection.IsSessionReady) return;
 
         // Direct TCP can arrive without the UDP reverse-request marker. Do
@@ -5458,10 +5471,18 @@ public sealed partial class MainWindow : Window
 
     private void OnConnectionStateChanged(object? sender, SessionState state)
     {
+        if (!DispatcherQueue.HasThreadAccess)
+        {
+            DispatcherQueue.TryEnqueue(() => OnConnectionStateChanged(sender, state));
+            return;
+        }
         if (sender is not SessionConnection connection)
         {
             return;
         }
+
+        // Queued notifications may describe a state the connection has already left.
+        state = connection.State;
 
         DispatcherQueue.TryEnqueue(() => UpdateHomeSendFileAvailability());
         var deviceId = connection.RemoteDeviceId ?? string.Empty;
@@ -8496,6 +8517,8 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _desktopSharingClosed = true;
+        _ = StopDesktopSharingAsync();
         _screenCancellation?.Cancel();
         ThemeBrushes.PaletteChanged -= IntegratedTitleBar_PaletteChanged;
         AppNavigation.UnregisterPropertyChangedCallback(NavigationView.IsPaneOpenProperty, _paneOpenChangedToken);

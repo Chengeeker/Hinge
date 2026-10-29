@@ -269,6 +269,10 @@ if ($null -eq $signingCertificate) {
 $publicCertificate = Join-Path $bundleDir 'Hinge.Identity.cer'
 Export-Certificate -Cert $signingCertificate -FilePath $publicCertificate -Force | Out-Null
 
+# Use the reproducible unsigned image and signer identity for the DLL path.
+# Authenticode signing metadata changes between builds even when the image does not.
+$shellContentHash = (Get-FileHash -LiteralPath $shellDll -Algorithm SHA256).Hash.ToLowerInvariant()
+
 # Sign the in-process shell extension with the same certificate used by the
 # sparse identity package. This does not claim public CA trust, but it avoids
 # shipping an unsigned COM DLL when the installer has already established the
@@ -277,10 +281,10 @@ Export-Certificate -Cert $signingCertificate -FilePath $publicCertificate -Force
 if ($LASTEXITCODE -ne 0) {
     throw 'Windows 11 右键菜单组件签名失败。'
 }
-# Same-version test builds can differ too. Identify the final signed bytes,
-# never overwrite a previous Explorer-loaded extension under the same name.
-$shellContentHash = (Get-FileHash -LiteralPath $shellDll -Algorithm SHA256).Hash.ToLowerInvariant()
-$versionedShellName = "Hinge.ShellExtension.v$productVersion.$shellContentHash.dll"
+# A new image or signing certificate gets a new path, so an Explorer-loaded DLL
+# is never overwritten; repeated builds of the same image reuse the same path.
+$signerThumbprint = $signingCertificate.Thumbprint.ToLowerInvariant()
+$versionedShellName = "Hinge.ShellExtension.v$shellContentHash.$signerThumbprint.dll"
 # Package identity must change on every rebuild, including same-product-version
 # test builds (signed payload/manifest may differ). Keep source product version
 # validation above; only the staged, independently versioned integration changes.

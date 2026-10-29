@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -9,6 +10,7 @@ import 'session_manager.dart';
 
 class RemoteInputSender extends ChangeNotifier {
   final SessionConnection connection;
+  final void Function(Uint8List)? desktopTransport;
 
   Uint8List? controlKey;
   final Future<Uint8List?> Function()? onEncryptionRequired;
@@ -21,6 +23,7 @@ class RemoteInputSender extends ChangeNotifier {
   bool _disposed = false;
   bool ready = false;
   bool supportsGameKeys = false;
+  bool supportsAbsoluteMouse = false;
   bool _allowPlaintext = false;
   bool isEncrypted = false;
   String status = '正在验证远控密钥…';
@@ -32,6 +35,7 @@ class RemoteInputSender extends ChangeNotifier {
     this.connection, {
     this.controlKey,
     this.onEncryptionRequired,
+    this.desktopTransport,
   });
 
   void _fail(String message) {
@@ -128,6 +132,10 @@ class RemoteInputSender extends ChangeNotifier {
     _states = connection.stateStream.listen((state) {
       if (state != SessionState.connected) _fail('连接已断开，远控已停止。');
     });
+    if (desktopTransport != null) {
+      status = '正在连接桌面加密控制通道…';
+      return;
+    }
     _frames = connection.frames.listen((frame) {
       _incoming = _incoming
           .then((_) => _receive(frame))
@@ -146,13 +154,55 @@ class RemoteInputSender extends ChangeNotifier {
   void stopControl() =>
       _sendEvent(RemoteInputEvent(actionType: RemoteActionType.controlStop));
 
-  void sendMouseMove(int dx, int dy) {
+  void setDesktopReady(bool allowed, {bool relativeMouse = false}) {
+    if (_disposed || desktopTransport == null) return;
+    ready = allowed;
+    isEncrypted = true;
+    supportsGameKeys = allowed && relativeMouse;
+    status = allowed ? '已连接 · TLS 加密控制' : '电脑尚未允许控制，仍可查看桌面';
+    _verified.add(
+      ProtocolFrame(
+        type: MessageType.remoteInput,
+        payload: RemoteInputEvent(
+          actionType: allowed
+              ? RemoteActionType.controlAccepted
+              : RemoteActionType.controlEnded,
+          flags: 1,
+        ).serialize(),
+      ),
+    );
+    notifyListeners();
+  }
+
+  void sendMouseMove(int dx, int dy, {bool relative = false}) {
+    if (relative && desktopTransport != null && !supportsGameKeys) return;
     final ev = RemoteInputEvent(
       actionType: RemoteActionType.mouseMove,
+      flags: relative ? RemoteInputEvent.relativeMouseFlag : 0,
       deltaX: dx,
       deltaY: dy,
     );
     _sendEvent(ev);
+  }
+
+  void sendAbsoluteMouse(int x, int y) {
+    if (!ready ||
+        desktopTransport == null ||
+        !supportsAbsoluteMouse ||
+        x < 0 ||
+        x > 65535 ||
+        y < 0 ||
+        y > 65535) {
+      return;
+    }
+    _sendEvent(
+      RemoteInputEvent(
+        actionType: RemoteActionType.mouseMove,
+        flags: RemoteInputEvent.absoluteMouseFlag,
+        deltaX: x,
+        deltaY: y,
+      ),
+    );
   }
 
   void sendMouseDown(RemoteMouseButton button) {
@@ -197,6 +247,23 @@ class RemoteInputSender extends ChangeNotifier {
 
   void sendTextInput(String text) {
     if (text.isEmpty) return;
+    if (desktopTransport != null && utf8.encode(text).length > 4000) {
+      var chunk = StringBuffer();
+      var size = 0;
+      for (final rune in text.runes) {
+        final character = String.fromCharCode(rune),
+            bytes = utf8.encode(String.fromCharCode(rune)).length;
+        if (size + bytes > 4000) {
+          sendTextInput(chunk.toString());
+          chunk = StringBuffer();
+          size = 0;
+        }
+        chunk.write(character);
+        size += bytes;
+      }
+      if (size > 0) sendTextInput(chunk.toString());
+      return;
+    }
     final ev = RemoteInputEvent(
       actionType: RemoteActionType.textInput,
       textPayload: text,
@@ -222,6 +289,10 @@ class RemoteInputSender extends ChangeNotifier {
 
   void _sendEvent(RemoteInputEvent ev) {
     if (_disposed) return;
+    if (desktopTransport != null) {
+      if (ready) desktopTransport!(ev.serialize());
+      return;
+    }
     if (_allowPlaintext && ready) {
       connection.sendFrame(MessageType.remoteInput, ev.serialize());
       return;

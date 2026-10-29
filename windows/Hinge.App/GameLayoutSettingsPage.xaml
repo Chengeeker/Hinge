@@ -28,9 +28,12 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="1.5*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <Border x:Name="EditorCanvasCard" Style="{StaticResource HingeCardStyle}" Padding="12" VerticalAlignment="Top">
-                        <Viewbox Stretch="Uniform" MaxHeight="520">
-                            <Canvas x:Name="LayoutCanvas" Width="1280" Height="576" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}" />
-                        </Viewbox>
+                        <StackPanel Spacing="8">
+                            <Viewbox Stretch="Uniform" MaxHeight="520">
+                                <Canvas x:Name="LayoutCanvas" Width="1280" Height="576" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}" />
+                            </Viewbox>
+                            <TextBlock Text="单击选中，再拖动主体移动；拖动角柄调整大小。圆形会保持圆形；外观和圆角可在右侧单独设置，移动时会显示对齐参考线。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
                     </Border>
                     <Border x:Name="EditorPropertiesCard" Grid.Column="1" Style="{StaticResource HingeCardStyle}" Padding="16" VerticalAlignment="Top">
                         <StackPanel Spacing="10">
@@ -55,6 +58,29 @@
                             <Slider x:Name="SizeSlider" Minimum="0.1" Maximum="0.48" StepFrequency="0.01" />
                             <TextBlock Text="宽高比（宽 ÷ 高）" Style="{StaticResource HingeM3BodyVariantStyle}" />
                             <Slider x:Name="AspectSlider" Minimum="0.5" Maximum="3" StepFrequency="0.05" />
+                            <ComboBox x:Name="ShapeCombo" Header="外观" PlaceholderText="选择控件外观">
+                                <ComboBox.Resources>
+                                    <ResourceDictionary>
+                                        <ResourceDictionary.ThemeDictionaries>
+                                            <ResourceDictionary x:Key="Light">
+                                                <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                            </ResourceDictionary>
+                                            <ResourceDictionary x:Key="Dark">
+                                                <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                            </ResourceDictionary>
+                                            <ResourceDictionary x:Key="HighContrast">
+                                                <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
+                                            </ResourceDictionary>
+                                        </ResourceDictionary.ThemeDictionaries>
+                                    </ResourceDictionary>
+                                </ComboBox.Resources>
+                                <ComboBoxItem Tag="auto"><TextBlock Text="按原布局" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                                <ComboBoxItem Tag="circle"><TextBlock Text="圆形（锁定比例）" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                                <ComboBoxItem Tag="rounded"><TextBlock Text="圆角矩形" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                                <ComboBoxItem Tag="rect"><TextBlock Text="直角矩形" Style="{StaticResource HingeM3BodyStyle}" /></ComboBoxItem>
+                            </ComboBox>
+                            <TextBlock x:Name="CornerRadiusLabel" Text="圆角比例（12%）" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                            <Slider x:Name="CornerRadiusSlider" Minimum="0" Maximum="0.5" StepFrequency="0.01" />
                             <TextBox x:Name="DirectionKeysBox" Header="摇杆方向 VK 码（上,左,下,右）" PlaceholderText="87,65,83,68" />
                             <Button x:Name="SaveAndSyncButton" Content="保存并同步到手机" HorizontalAlignment="Stretch" />
                         </StackPanel>

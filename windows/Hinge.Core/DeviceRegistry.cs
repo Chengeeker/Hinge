@@ -242,7 +242,6 @@ public class DeviceRegistry
         {
             if (string.IsNullOrWhiteSpace(deviceId) ||
                 !_devices.TryGetValue(deviceId, out var record) ||
-                record.Device.ConnectionState == ConnectionState.Disconnected ||
                 record.Device.ConnectionState == ConnectionState.Connected)
             {
                 return;

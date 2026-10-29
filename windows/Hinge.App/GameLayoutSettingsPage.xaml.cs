@@ -1,5 +1,6 @@
 using Hinge.Core;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -12,6 +13,7 @@ public sealed partial class GameLayoutSettingsPage : Page
 {
     private const double CanvasWidth = 1280;
     private const double CanvasHeight = 576;
+    private const double SnapTolerance = 12;
     private SessionManager? _sessionManager;
     private TrustStore? _trustStore;
     private SessionConnection? _connection;
@@ -23,7 +25,18 @@ public sealed partial class GameLayoutSettingsPage : Page
     private bool _updating;
     private bool _sessionEventsAttached;
     private uint? _dragPointer;
+    private GameLayoutControl? _gestureControl;
+    private Border? _gestureBorder;
+    private PointerGesture _pointerGesture;
+    private ResizeCorner _resizeCorner;
+    private Point _dragOffset;
+    private Rect _resizeStartRect;
+    private readonly List<Border> _resizeHandles = [];
+    private readonly List<Border> _alignmentGuides = [];
     private CancellationTokenSource? _readTimeout;
+
+    private enum PointerGesture { None, Move, Resize }
+    private enum ResizeCorner { TopLeft, TopRight, BottomLeft, BottomRight }
 
     public Button BackToSettings => BackButton;
 
@@ -44,11 +57,18 @@ public sealed partial class GameLayoutSettingsPage : Page
         ProfileNameBox.TextChanged += ProfileNameBox_TextChanged;
         ControlLabelBox.TextChanged += ControlLabelBox_TextChanged;
         ControlBindingCombo.SelectionChanged += ControlBindingCombo_SelectionChanged;
+        ShapeCombo.SelectionChanged += ShapeCombo_SelectionChanged;
         DirectionKeysBox.TextChanged += DirectionKeysBox_TextChanged;
         PositionXSlider.ValueChanged += (_, e) => UpdateControl(c => c.X = e.NewValue);
         PositionYSlider.ValueChanged += (_, e) => UpdateControl(c => c.Y = e.NewValue);
         SizeSlider.ValueChanged += (_, e) => UpdateControl(c => c.Size = e.NewValue);
         AspectSlider.ValueChanged += (_, e) => UpdateControl(c => c.Aspect = e.NewValue);
+        CornerRadiusSlider.ValueChanged += (_, e) =>
+        {
+            if (_updating) return;
+            CornerRadiusLabel.Text = $"圆角比例（{Math.Round(e.NewValue * 100):0}%）";
+            UpdateControl(c => c.CornerRadius = e.NewValue);
+        };
         PopulateBindingOptions();
         Loaded += (_, _) =>
         {
@@ -269,7 +289,7 @@ public sealed partial class GameLayoutSettingsPage : Page
             {
                 _document = document;
                 SelectPreset(document.Presets.FirstOrDefault(preset => preset.Id == document.Selected) ?? document.Presets[0]);
-                SyncStatusText.Text = $"已从手机读取 {document.Presets.Count} 套预设；拖动左侧按键调整位置，保存后同步。";
+                SyncStatusText.Text = $"已读取 {document.Presets.Count} 套预设。单击控件选中；再次拖动主体移动，拖动角柄调整大小和比例；移动到其他控件附近时会对齐吸附。";
             }
             else if (action == "ack")
             {
@@ -327,10 +347,13 @@ public sealed partial class GameLayoutSettingsPage : Page
         PositionXSlider.IsEnabled = hasControl;
         PositionYSlider.IsEnabled = hasControl;
         SizeSlider.IsEnabled = hasControl;
-        AspectSlider.IsEnabled = hasControl;
+        AspectSlider.IsEnabled = _control is { Joystick: false, Shape: not "circle" };
+        ShapeCombo.IsEnabled = _control is { Joystick: false };
+        CornerRadiusSlider.IsEnabled = _control is { Joystick: false, Shape: "rounded" };
         DirectionKeysBox.IsEnabled = _control?.Joystick == true;
         if (_control is { } control)
         {
+            if (control.Shape == "circle") control.Aspect = 1;
             ControlLabelBox.Text = control.Label;
             ControlBindingCombo.SelectedItem = ControlBindingCombo.Items.OfType<ComboBoxItem>()
                 .FirstOrDefault(item => item.Tag is int key && key == control.Binding);
@@ -338,12 +361,19 @@ public sealed partial class GameLayoutSettingsPage : Page
             PositionYSlider.Value = control.Y;
             SizeSlider.Value = control.Size;
             AspectSlider.Value = control.Aspect;
+            ShapeCombo.SelectedItem = ShapeCombo.Items.OfType<ComboBoxItem>()
+                .FirstOrDefault(item => item.Tag as string == (control.Joystick ? "circle" : control.Shape));
+            CornerRadiusSlider.Value = control.CornerRadius;
+            CornerRadiusLabel.Text = $"圆角比例（{Math.Round(control.CornerRadius * 100):0}%）";
             DirectionKeysBox.Text = string.Join(',', control.Directions);
         }
         else
         {
             ControlLabelBox.Text = string.Empty;
             ControlBindingCombo.SelectedItem = null;
+            ShapeCombo.SelectedItem = null;
+            CornerRadiusSlider.Value = .12;
+            CornerRadiusLabel.Text = "圆角比例（12%）";
             DirectionKeysBox.Text = string.Empty;
         }
         _updating = false;
@@ -371,6 +401,21 @@ public sealed partial class GameLayoutSettingsPage : Page
         if (_updating || _control == null ||
             ControlBindingCombo.SelectedItem is not ComboBoxItem { Tag: int key } || !ValidKey(key)) return;
         _control.Binding = key;
+        DrawControls();
+    }
+
+    private void ShapeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updating || _control == null || _control.Joystick ||
+            ShapeCombo.SelectedItem is not ComboBoxItem { Tag: string shape } ||
+            shape is not ("auto" or "circle" or "rounded" or "rect")) return;
+        _control.Shape = shape;
+        if (shape == "circle")
+        {
+            _control.Aspect = 1;
+            _control.CornerRadius = .5;
+        }
+        RefreshSelectedControl();
         DrawControls();
     }
 
@@ -425,6 +470,7 @@ public sealed partial class GameLayoutSettingsPage : Page
             {
                 Id = Guid.NewGuid().ToString("N"), Label = control.Label, Image = control.Image,
                 X = control.X, Y = control.Y, Size = control.Size, Aspect = control.Aspect,
+                Shape = control.Shape, CornerRadius = control.CornerRadius,
                 Binding = control.Binding, Joystick = control.Joystick, Directions = control.Directions.ToArray()
             }).ToList()
         };
@@ -458,15 +504,24 @@ public sealed partial class GameLayoutSettingsPage : Page
 
     private void DrawControls()
     {
+        CancelCanvasGesture();
         LayoutCanvas.Children.Clear();
         _rendered.Clear();
+        _resizeHandles.Clear();
+        _alignmentGuides.Clear();
         AddToolbarMarker("×", CanvasWidth / 2 - 26, 8);
         AddToolbarMarker("⚙", CanvasWidth - 60, 8);
         if (_preset == null) return;
         foreach (var control in _preset.Controls)
         {
             double height = CanvasHeight * control.Size;
-            double width = Math.Min(CanvasWidth, height * (control.Joystick ? 1 : control.Aspect));
+            bool circle = control.Joystick || control.Shape == "circle";
+            if (control.Shape == "circle")
+            {
+                control.Aspect = 1;
+                control.CornerRadius = .5;
+            }
+            double width = Math.Min(CanvasWidth, height * (circle ? 1 : control.Aspect));
             height = Math.Min(CanvasHeight, height);
             var border = new Border
             {
@@ -476,7 +531,7 @@ public sealed partial class GameLayoutSettingsPage : Page
                 Background = new SolidColorBrush(ThemeBrushes.Color(LayoutCanvas, "HingeM3SurfaceContainerHighestBrush")),
                 BorderBrush = new SolidColorBrush(ThemeBrushes.Color(LayoutCanvas, _control == control ? "HingeM3PrimaryBrush" : "HingeM3OutlineVariantBrush")),
                 BorderThickness = new Thickness(_control == control ? 3 : 2),
-                CornerRadius = control.Joystick || Math.Abs(control.Aspect - 1) < .02 ? new CornerRadius(height / 2) : new CornerRadius(14),
+                CornerRadius = new CornerRadius(CornerRadiusFor(control, width, height)),
                 Child = new TextBlock
                 {
                     Text = control.Label,
@@ -491,13 +546,24 @@ public sealed partial class GameLayoutSettingsPage : Page
             };
             border.PointerPressed += Control_PointerPressed;
             border.PointerMoved += Control_PointerMoved;
-            border.PointerReleased += Control_PointerReleased;
-            border.PointerCanceled += Control_PointerCanceled;
+            border.PointerReleased += CanvasGesture_PointerReleased;
+            border.PointerCanceled += CanvasGesture_PointerCanceled;
             LayoutCanvas.Children.Add(border);
             _rendered[control] = border;
             PlaceControl(control, border);
         }
+        DrawResizeHandles();
     }
+
+    private static double CornerRadiusFor(GameLayoutControl control, double width, double height) =>
+        control.Joystick || control.Shape == "circle"
+            ? Math.Min(width, height) / 2
+            : control.Shape switch
+            {
+                "rect" => 0,
+                "rounded" => Math.Min(width, height) * control.CornerRadius,
+                _ => Math.Abs(control.Aspect - 1) < .02 ? height / 2 : 14
+            };
 
     private void AddToolbarMarker(string label, double left, double top)
     {
@@ -536,42 +602,297 @@ public sealed partial class GameLayoutSettingsPage : Page
         first.Left < second.Right && first.Right > second.Left &&
         first.Top < second.Bottom && first.Bottom > second.Top;
 
+    private void DrawResizeHandles()
+    {
+        if (_control == null || !_rendered.TryGetValue(_control, out var border)) return;
+        double left = Canvas.GetLeft(border);
+        double top = Canvas.GetTop(border);
+        foreach (var (corner, x, y, symbol) in new[]
+        {
+            (ResizeCorner.TopLeft, left, top, "↖"),
+            (ResizeCorner.TopRight, left + border.Width, top, "↗"),
+            (ResizeCorner.BottomLeft, left, top + border.Height, "↙"),
+            (ResizeCorner.BottomRight, left + border.Width, top + border.Height, "↘")
+        })
+        {
+            var handle = new Border
+            {
+                Width = 24,
+                Height = 24,
+                CornerRadius = new CornerRadius(6),
+                Background = new SolidColorBrush(ThemeBrushes.Color(LayoutCanvas, "HingeM3PrimaryBrush")),
+                BorderBrush = new SolidColorBrush(ThemeBrushes.Color(LayoutCanvas, "HingeM3SurfaceBrush")),
+                BorderThickness = new Thickness(2),
+                Tag = corner,
+                Child = new TextBlock
+                {
+                    Text = symbol,
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = new SolidColorBrush(ThemeBrushes.Color(LayoutCanvas, "HingeM3OnPrimaryBrush"))
+                }
+            };
+            AutomationProperties.SetName(handle, $"调整 {symbol} 角的大小和宽高比");
+            ToolTipService.SetToolTip(handle, $"拖动 {symbol} 角调整大小和宽高比");
+            handle.PointerPressed += ResizeHandle_PointerPressed;
+            handle.PointerMoved += ResizeHandle_PointerMoved;
+            handle.PointerReleased += CanvasGesture_PointerReleased;
+            handle.PointerCanceled += CanvasGesture_PointerCanceled;
+            Canvas.SetLeft(handle, x - handle.Width / 2);
+            Canvas.SetTop(handle, y - handle.Height / 2);
+            LayoutCanvas.Children.Add(handle);
+            _resizeHandles.Add(handle);
+        }
+    }
+
+    private void UpdateResizeHandles()
+    {
+        if (_control == null || !_rendered.TryGetValue(_control, out var border) || _resizeHandles.Count != 4) return;
+        double left = Canvas.GetLeft(border);
+        double top = Canvas.GetTop(border);
+        var points = new[]
+        {
+            new Point(left, top),
+            new Point(left + border.Width, top),
+            new Point(left, top + border.Height),
+            new Point(left + border.Width, top + border.Height)
+        };
+        for (int i = 0; i < _resizeHandles.Count; i++)
+        {
+            Canvas.SetLeft(_resizeHandles[i], points[i].X - _resizeHandles[i].Width / 2);
+            Canvas.SetTop(_resizeHandles[i], points[i].Y - _resizeHandles[i].Height / 2);
+        }
+    }
+
+    private void ResizeHandle_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (_control == null || sender is not Border { Tag: ResizeCorner corner } handle ||
+            !_rendered.TryGetValue(_control, out var border)) return;
+        _pointerGesture = PointerGesture.Resize;
+        _gestureControl = _control;
+        _gestureBorder = border;
+        _resizeCorner = corner;
+        _resizeStartRect = new Rect(Canvas.GetLeft(border), Canvas.GetTop(border), border.Width, border.Height);
+        PreserveShapeOnResize(_gestureControl, _resizeStartRect);
+        RefreshSelectedControl();
+        _dragPointer = e.Pointer.PointerId;
+        handle.CapturePointer(e.Pointer);
+        ClearAlignmentGuides();
+        e.Handled = true;
+    }
+
+    private void ResizeHandle_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_pointerGesture != PointerGesture.Resize || _dragPointer != e.Pointer.PointerId ||
+            _gestureControl == null || _gestureBorder == null) return;
+        Point point = e.GetCurrentPoint(LayoutCanvas).Position;
+        ResizeControl(point);
+        e.Handled = true;
+    }
+
+    private void ResizeControl(Point point)
+    {
+        if (_gestureControl == null || _gestureBorder == null) return;
+        bool leftCorner = _resizeCorner is ResizeCorner.TopLeft or ResizeCorner.BottomLeft;
+        bool topCorner = _resizeCorner is ResizeCorner.TopLeft or ResizeCorner.TopRight;
+        double anchorX = leftCorner ? _resizeStartRect.Right : _resizeStartRect.Left;
+        double anchorY = topCorner ? _resizeStartRect.Bottom : _resizeStartRect.Top;
+        double width;
+        double height;
+        if (_gestureControl.Joystick || _gestureControl.Shape == "circle")
+        {
+            double diameter = Math.Clamp(
+                (Math.Abs(point.X - anchorX) + Math.Abs(point.Y - anchorY)) / 2,
+                CanvasHeight * 0.1,
+                CanvasHeight * 0.48);
+            width = diameter;
+            height = diameter;
+            _gestureControl.Aspect = 1;
+        }
+        else
+        {
+            width = Math.Clamp(Math.Abs(point.X - anchorX), 48, CanvasWidth);
+            height = Math.Clamp(Math.Abs(point.Y - anchorY), CanvasHeight * 0.1, CanvasHeight * 0.48);
+            width = height * Math.Clamp(width / height, 0.5, 3);
+        }
+        double left = Math.Clamp(anchorX - (leftCorner ? width : 0), 0, CanvasWidth - width);
+        double top = Math.Clamp(anchorY - (topCorner ? height : 0), 0, CanvasHeight - height);
+        _gestureBorder.Width = width;
+        _gestureBorder.Height = height;
+        _gestureBorder.CornerRadius = new CornerRadius(CornerRadiusFor(_gestureControl, width, height));
+        Canvas.SetLeft(_gestureBorder, left);
+        Canvas.SetTop(_gestureBorder, top);
+        _gestureControl.X = (left + width / 2) / CanvasWidth;
+        _gestureControl.Y = (top + height / 2) / CanvasHeight;
+        _gestureControl.Size = height / CanvasHeight;
+        if (!_gestureControl.Joystick) _gestureControl.Aspect = width / height;
+        if (_gestureControl.Shape == "circle") _gestureControl.Aspect = 1;
+        PlaceControl(_gestureControl, _gestureBorder);
+        _gestureControl.X = (Canvas.GetLeft(_gestureBorder) + width / 2) / CanvasWidth;
+        _gestureControl.Y = (Canvas.GetTop(_gestureBorder) + height / 2) / CanvasHeight;
+        UpdatePositionSliders();
+        UpdateResizeHandles();
+    }
+
+    private static void PreserveShapeOnResize(GameLayoutControl control, Rect rect)
+    {
+        if (control.Joystick || control.Shape != "auto") return;
+        if (Math.Abs(control.Aspect - 1) < .02)
+        {
+            control.Shape = "circle";
+            control.Aspect = 1;
+            control.CornerRadius = .5;
+        }
+        else
+        {
+            control.Shape = "rounded";
+            control.CornerRadius = Math.Clamp(14 / Math.Min(rect.Width, rect.Height), 0, .5);
+        }
+    }
+
     private void Control_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (sender is not Border { Tag: GameLayoutControl control } border) return;
-        _control = control;
+        if (_control != control)
+        {
+            _control = control;
+            _updating = true;
+            ControlList.SelectedItem = ControlList.Items.OfType<ListViewItem>()
+                .FirstOrDefault(item => ReferenceEquals(item.Tag, control));
+            _updating = false;
+            RefreshSelectedControl();
+            DrawControls();
+            e.Handled = true;
+            return;
+        }
+        _pointerGesture = PointerGesture.Move;
+        _gestureControl = control;
+        _gestureBorder = border;
+        Point point = e.GetCurrentPoint(LayoutCanvas).Position;
+        _dragOffset = new Point(point.X - Canvas.GetLeft(border), point.Y - Canvas.GetTop(border));
         _dragPointer = e.Pointer.PointerId;
         border.CapturePointer(e.Pointer);
-        RefreshSelectedControl();
-        foreach (var pair in _rendered)
-        {
-            pair.Value.BorderBrush = new SolidColorBrush(ThemeBrushes.Color(LayoutCanvas,
-                _control == pair.Key ? "HingeM3PrimaryBrush" : "HingeM3OutlineVariantBrush"));
-            pair.Value.BorderThickness = new Thickness(_control == pair.Key ? 3 : 2);
-        }
+        ClearAlignmentGuides();
         e.Handled = true;
     }
 
     private void Control_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        if (sender is not Border { Tag: GameLayoutControl control } border || _dragPointer != e.Pointer.PointerId) return;
+        if (_pointerGesture != PointerGesture.Move || _dragPointer != e.Pointer.PointerId ||
+            _gestureControl == null || _gestureBorder == null) return;
         Point point = e.GetCurrentPoint(LayoutCanvas).Position;
-        control.X = Math.Clamp(point.X / CanvasWidth, 0, 1);
-        control.Y = Math.Clamp(point.Y / CanvasHeight, 0, 1);
-        PlaceControl(control, border);
+        double left = Math.Clamp(point.X - _dragOffset.X, 0, CanvasWidth - _gestureBorder.Width);
+        double top = Math.Clamp(point.Y - _dragOffset.Y, 0, CanvasHeight - _gestureBorder.Height);
+        var rect = new Rect(left, top, _gestureBorder.Width, _gestureBorder.Height);
+        double? guideX = SnapAxis(ref left, rect.Width, true);
+        double? guideY = SnapAxis(ref top, rect.Height, false);
+        left = Math.Clamp(left, 0, CanvasWidth - rect.Width);
+        top = Math.Clamp(top, 0, CanvasHeight - rect.Height);
+        Canvas.SetLeft(_gestureBorder, left);
+        Canvas.SetTop(_gestureBorder, top);
+        _gestureControl.X = (left + rect.Width / 2) / CanvasWidth;
+        _gestureControl.Y = (top + rect.Height / 2) / CanvasHeight;
+        PlaceControl(_gestureControl, _gestureBorder);
+        _gestureControl.X = (Canvas.GetLeft(_gestureBorder) + rect.Width / 2) / CanvasWidth;
+        _gestureControl.Y = (Canvas.GetTop(_gestureBorder) + rect.Height / 2) / CanvasHeight;
+        UpdatePositionSliders();
+        UpdateResizeHandles();
+        DrawAlignmentGuides(guideX, guideY);
+        e.Handled = true;
+    }
+
+    private double? SnapAxis(ref double position, double size, bool horizontal)
+    {
+        double canvasSize = horizontal ? CanvasWidth : CanvasHeight;
+        var targets = new List<double> { 0, canvasSize / 2, canvasSize };
+        foreach (var (control, border) in _rendered)
+        {
+            if (ReferenceEquals(control, _gestureControl)) continue;
+            double start = horizontal ? Canvas.GetLeft(border) : Canvas.GetTop(border);
+            double extent = horizontal ? border.Width : border.Height;
+            targets.AddRange([start, start + extent / 2, start + extent]);
+        }
+        double[] offsets = [0, size / 2, size];
+        double bestDelta = 0;
+        double bestTarget = 0;
+        double bestDistance = SnapTolerance + 1;
+        foreach (double offset in offsets)
+        foreach (double target in targets)
+        {
+            double delta = target - (position + offset);
+            double distance = Math.Abs(delta);
+            if (distance < bestDistance)
+            {
+                bestDelta = delta;
+                bestTarget = target;
+                bestDistance = distance;
+            }
+        }
+        if (bestDistance > SnapTolerance) return null;
+        position += bestDelta;
+        return bestTarget;
+    }
+
+    private void DrawAlignmentGuides(double? x, double? y)
+    {
+        ClearAlignmentGuides();
+        if (x is double guideX) AddAlignmentGuide(guideX, vertical: true);
+        if (y is double guideY) AddAlignmentGuide(guideY, vertical: false);
+    }
+
+    private void AddAlignmentGuide(double position, bool vertical)
+    {
+        var guide = new Border
+        {
+            Width = vertical ? 2 : CanvasWidth,
+            Height = vertical ? CanvasHeight : 2,
+            Background = new SolidColorBrush(ThemeBrushes.Color(LayoutCanvas, "HingeM3PrimaryBrush")),
+            Opacity = 0.8,
+            IsHitTestVisible = false
+        };
+        Canvas.SetLeft(guide, vertical ? position - 1 : 0);
+        Canvas.SetTop(guide, vertical ? 0 : position - 1);
+        LayoutCanvas.Children.Add(guide);
+        _alignmentGuides.Add(guide);
+    }
+
+    private void ClearAlignmentGuides()
+    {
+        foreach (var guide in _alignmentGuides) LayoutCanvas.Children.Remove(guide);
+        _alignmentGuides.Clear();
+    }
+
+    private void UpdatePositionSliders()
+    {
+        if (_gestureControl == null) return;
         _updating = true;
-        PositionXSlider.Value = control.X;
-        PositionYSlider.Value = control.Y;
+        PositionXSlider.Value = _gestureControl.X;
+        PositionYSlider.Value = _gestureControl.Y;
+        SizeSlider.Value = _gestureControl.Size;
+        AspectSlider.Value = _gestureControl.Aspect;
         _updating = false;
     }
 
-    private void Control_PointerReleased(object sender, PointerRoutedEventArgs e)
+    private void CancelCanvasGesture()
     {
-        if (_dragPointer == e.Pointer.PointerId) _dragPointer = null;
+        _dragPointer = null;
+        _pointerGesture = PointerGesture.None;
+        _gestureControl = null;
+        _gestureBorder = null;
     }
 
-    private void Control_PointerCanceled(object sender, PointerRoutedEventArgs e) =>
-        Control_PointerReleased(sender, e);
+    private void CanvasGesture_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragPointer != e.Pointer.PointerId) return;
+        if (sender is UIElement element) element.ReleasePointerCapture(e.Pointer);
+        CancelCanvasGesture();
+        ClearAlignmentGuides();
+    }
+
+    private void CanvasGesture_PointerCanceled(object sender, PointerRoutedEventArgs e) =>
+        CanvasGesture_PointerReleased(sender, e);
 
     private void EditorLayout_SizeChanged(object sender, SizeChangedEventArgs e)
     {

@@ -27,6 +27,7 @@ enum MessageType {
   toolResult(0x0081),
   compressedControl(0x0082),
   gameProfileSync(0x0083),
+  desktopControl(0x0084),
   unknown(0x0000);
 
   final int value;

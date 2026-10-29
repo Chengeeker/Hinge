@@ -6,7 +6,7 @@
 
 - Windows：`publish/windows/Hinge-Setup.exe`，另有同目录便携 ZIP。
 - Android：`publish/Hinge.apk`，主包 `com.hinge.office`，2.2.0+126，仅 arm64-v8a，沿用正式签名。
-- 未推送或发布 GitHub，未安装当前候选。各阶段回退包在 `publish/rollback/`，不要删除。
+- 源码已推送至 GitHub `main`（`e035097`），未发布 GitHub Release，也未安装当前候选。各阶段回退包在 `publish/rollback/`，不要删除。
 - 此方向为 Windows → Android 桌面视频，目前使用 H.264；不要和原有 Android → Windows 的 scrcpy 投屏编码选项混淆。
 
 ## 真机步骤与预期

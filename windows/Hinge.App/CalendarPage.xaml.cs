@@ -825,7 +825,7 @@ public sealed partial class CalendarPage : Page
 
     private async void JumpDateButton_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new CalendarDatePicker
+        var picker = new HandCursorCalendarDatePicker
         {
             Header = "日期",
             Date = new DateTimeOffset(_selectedDate),
@@ -856,7 +856,7 @@ public sealed partial class CalendarPage : Page
     {
         try
         {
-            var datePicker = new CalendarDatePicker
+            var datePicker = new HandCursorCalendarDatePicker
             {
                 Header = "日期",
                 Date = new DateTimeOffset(_selectedDate),
@@ -875,14 +875,14 @@ public sealed partial class CalendarPage : Page
                 Header = "地点（可选）",
                 PlaceholderText = "输入地点",
             };
-            var allDayBox = new CheckBox { Content = "全天", IsChecked = false };
-            var startPicker = new TimePicker
+            var allDayBox = new HandCursorCheckBox { Content = "全天", IsChecked = false };
+            var startPicker = new HandCursorTimePicker
             {
                 Style = (Style)Application.Current.Resources["HingeM3TimePickerStyle"],
                 Header = "开始时间",
                 Time = new TimeSpan(9, 0, 0),
             };
-            var endPicker = new TimePicker
+            var endPicker = new HandCursorTimePicker
             {
                 Style = (Style)Application.Current.Resources["HingeM3TimePickerStyle"],
                 Header = "结束时间",

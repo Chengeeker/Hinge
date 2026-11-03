@@ -20,6 +20,8 @@
     <Using Include="Xunit" />
     <Compile Include="..\Hinge.App\WebDavSettingsStore.cs" Link="WebDavSettingsStore.cs" />
     <Compile Include="..\Hinge.App\RecentFileFilterRules.cs" Link="RecentFileFilterRules.cs" />
+    <Compile Include="..\Hinge.App\WinUiPopupCursor.cs" Link="WinUiPopupCursor.cs" />
+    <Compile Include="..\Hinge.App\DesktopSystemActions.cs" Link="DesktopSystemActions.cs" />
     <Compile Include="..\Hinge.App\WirelessAdbClient.cs" Link="WirelessAdbClient.cs" />
     <Compile Include="..\Hinge.App\ScrcpyLauncher.cs" Link="ScrcpyLauncher.cs" />
     <Compile Include="..\Hinge.App\WirelessAdbConnectionManager.cs" Link="WirelessAdbConnectionManager.cs" />

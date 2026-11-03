@@ -29,32 +29,79 @@ internal static class ThemeBrushes
         "SurfaceContainer", "SurfaceContainerHigh", "SurfaceContainerHighest"
     ];
 
-    // ARGB roles exported from the Android ColorScheme.fromSeed tonalSpot path; neutral uses its neutral variant.
+    // Keep Hinge primary colors; Review supplies tonal secondary roles and neutral dark scaffold/navigation surfaces.
     private static readonly IReadOnlyDictionary<string, PaletteRoles> Palettes = new Dictionary<string, PaletteRoles>
     {
         ["sage"] = CreatePalette(
-            "3E6837,FFFFFF,BEF0B2,265022,3E6837,FFFFFF,BEF0B2,265022,3E6837,FFFFFF,BEF0B2,265022,BA1A1A,FFFFFF,FFDAD6,93000A,F7FBF1,191D17,42493F,73796E,C2C8BC,2E322B,EFF2E8,A3D397,3E6837,000000,000000,D8DBD2,F7FBF1,FFFFFF,F2F5EB,ECEFE5,E6E9E0,E0E4DA",
-            "A3D397,0E380D,265022,BEF0B2,A3D397,0E380D,265022,BEF0B2,A3D397,0E380D,265022,BEF0B2,FFB4AB,690005,93000A,FFDAD6,11140F,E0E4DA,C2C8BC,8C9388,42493F,E0E4DA,2E322B,3E6837,A3D397,000000,000000,11140F,363A34,0B0F0A,191D17,1D211B,272B25,323630"),
+            "3E6837,FFFFFF,BEF0B2,265022,53634E,FFFFFF,D6E8CD,3C4B37,386569,FFFFFF,BCEBEF,1E4D51,BA1A1A,FFFFFF,FFDAD6,93000A,F7FBF1,191D17,42493F,73796E,C2C8BC,2E322B,EFF2E8,A3D397,3E6837,000000,000000,D8DBD2,F7FBF1,FFFFFF,F2F5EB,ECEFE5,E6E9E0,E0E4DA",
+            "A3D397,0E380D,265022,BEF0B2,BACCB2,263422,3C4B37,D6E8CD,A0CFD3,00363A,1E4D51,BCEBEF,FFB4AB,690005,93000A,FFDAD6,111215,E0E4DA,C2C8BC,8C9388,42493F,E0E4DA,2E322B,3E6837,A3D397,000000,000000,11140F,363A34,0B0F0A,191D17,16171B,272B25,323630"),
         ["blue"] = CreatePalette(
-            "39608F,FFFFFF,D3E4FF,1E4876,39608F,FFFFFF,D3E4FF,1E4876,39608F,FFFFFF,D3E4FF,1E4876,BA1A1A,FFFFFF,FFDAD6,93000A,F8F9FF,191C20,43474E,73777F,C3C6CF,2E3035,EFF0F7,A3C9FE,39608F,000000,000000,D8DAE0,F8F9FF,FFFFFF,F2F3FA,ECEDF4,E7E8EE,E1E2E8",
-            "A3C9FE,00315B,1E4876,D3E4FF,A3C9FE,00315B,1E4876,D3E4FF,A3C9FE,00315B,1E4876,D3E4FF,FFB4AB,690005,93000A,FFDAD6,111418,E1E2E8,C3C6CF,8D9199,43474E,E1E2E8,2E3035,39608F,A3C9FE,000000,000000,111418,37393E,0C0E13,191C20,1D2024,272A2F,32353A"),
+            "39608F,FFFFFF,D3E4FF,1E4876,545F70,FFFFFF,D8E3F8,3C4758,6C5677,FFFFFF,F5D9FF,543F5E,BA1A1A,FFFFFF,FFDAD6,93000A,F8F9FF,191C20,43474E,73777F,C3C6CF,2E3035,EFF0F7,A3C9FE,39608F,000000,000000,D8DAE0,F8F9FF,FFFFFF,F2F3FA,ECEDF4,E7E8EE,E1E2E8",
+            "A3C9FE,00315B,1E4876,D3E4FF,BCC7DB,263141,3C4758,D8E3F8,D8BDE3,3C2947,543F5E,F5D9FF,FFB4AB,690005,93000A,FFDAD6,111215,E1E2E8,C3C6CF,8D9199,43474E,E1E2E8,2E3035,39608F,A3C9FE,000000,000000,111418,37393E,0C0E13,191C20,16171B,272A2F,32353A"),
         ["purple"] = CreatePalette(
-            "6750A4,FFFFFF,EADDFF,21005D,6750A4,FFFFFF,EADDFF,21005D,6750A4,FFFFFF,EADDFF,21005D,B3261E,FFFFFF,F9DEDC,410E0B,FEF7FF,1D1B20,49454F,79747E,CAC4D0,322F35,F5EFF7,D0BCFF,65558F,000000,000000,DED8E0,FDF7FF,FFFFFF,F7F2FA,F3EDF7,ECE6F0,E6E0E9",
-            "CFBDFE,36275D,4D3D75,E9DDFF,CFBDFE,36275D,4D3D75,E9DDFF,CFBDFE,36275D,4D3D75,E9DDFF,FFB4AB,690005,93000A,FFDAD6,141218,E6E0E9,CAC4CF,948F99,49454E,E6E0E9,322F35,65558F,CFBDFE,000000,000000,141218,3B383E,0F0D13,1D1B20,211F24,2B292F,36343A"),
+            "6750A4,FFFFFF,EADDFF,21005D,625B71,FFFFFF,E8DEF8,4A4458,7E5260,FFFFFF,FFD9E3,633B48,B3261E,FFFFFF,F9DEDC,410E0B,FEF7FF,1D1B20,49454F,79747E,CAC4D0,322F35,F5EFF7,D0BCFF,65558F,000000,000000,DED8E0,FDF7FF,FFFFFF,F7F2FA,F3EDF7,ECE6F0,E6E0E9",
+            "CFBDFE,36275D,4D3D75,E9DDFF,CBC2DB,332D41,4A4458,E8DEF8,EFB8C8,4A2532,633B48,FFD9E3,FFB4AB,690005,93000A,FFDAD6,111215,E6E0E9,CAC4CF,948F99,49454E,E6E0E9,322F35,65558F,CFBDFE,000000,000000,141218,3B383E,0F0D13,1D1B20,16171B,2B292F,36343A"),
         ["teal"] = CreatePalette(
-            "006A60,FFFFFF,9EF2E4,005048,006A60,FFFFFF,9EF2E4,005048,006A60,FFFFFF,9EF2E4,005048,BA1A1A,FFFFFF,FFDAD6,93000A,F4FBF8,161D1B,3F4947,6F7977,BEC9C6,2B3230,ECF2EF,82D5C8,006A60,000000,000000,D5DBD9,F4FBF8,FFFFFF,EFF5F2,E9EFED,E3EAE7,DDE4E1",
-            "82D5C8,003731,005048,9EF2E4,82D5C8,003731,005048,9EF2E4,82D5C8,003731,005048,9EF2E4,FFB4AB,690005,93000A,FFDAD6,0E1513,DDE4E1,BEC9C6,899390,3F4947,DDE4E1,2B3230,006A60,82D5C8,000000,000000,0E1513,343B39,090F0E,161D1B,1A211F,252B2A,303635"),
+            "006A60,FFFFFF,9EF2E4,005048,4A635F,FFFFFF,CCE8E2,334B47,466179,FFFFFF,CCE5FF,2D4961,BA1A1A,FFFFFF,FFDAD6,93000A,F4FBF8,161D1B,3F4947,6F7977,BEC9C6,2B3230,ECF2EF,82D5C8,006A60,000000,000000,D5DBD9,F4FBF8,FFFFFF,EFF5F2,E9EFED,E3EAE7,DDE4E1",
+            "82D5C8,003731,005048,9EF2E4,B1CCC6,1C3531,334B47,CCE8E2,ADCAE6,153349,2D4961,CCE5FF,FFB4AB,690005,93000A,FFDAD6,111215,DDE4E1,BEC9C6,899390,3F4947,DDE4E1,2B3230,006A60,82D5C8,000000,000000,0E1513,343B39,090F0E,161D1B,16171B,252B2A,303635"),
         ["orange"] = CreatePalette(
-            "855318,FFFFFF,FFDCBE,693C00,855318,FFFFFF,FFDCBE,693C00,855318,FFFFFF,FFDCBE,693C00,BA1A1A,FFFFFF,FFDAD6,93000A,FFF8F5,211A14,51453A,837468,D5C3B5,372F28,FDEEE3,FDB975,855318,000000,000000,E6D7CD,FFF8F5,FFFFFF,FFF1E7,FAEBE0,F4E5DB,EFE0D5",
-            "FDB975,4A2800,693C00,FFDCBE,FDB975,4A2800,693C00,FFDCBE,FDB975,4A2800,693C00,FFDCBE,FFB4AB,690005,93000A,FFDAD6,19120C,EFE0D5,D5C3B5,9D8E81,51453A,EFE0D5,372F28,855318,FDB975,000000,000000,19120C,403830,130D07,211A14,261E18,302822,3C332C"),
+            "855318,FFFFFF,FFDCBE,693C00,725A42,FFFFFF,FEDCBE,59422C,58633A,FFFFFF,DBE8B5,404B25,BA1A1A,FFFFFF,FFDAD6,93000A,FFF8F5,211A14,51453A,837468,D5C3B5,372F28,FDEEE3,FDB975,855318,000000,000000,E6D7CD,FFF8F5,FFFFFF,FFF1E7,FAEBE0,F4E5DB,EFE0D5",
+            "FDB975,4A2800,693C00,FFDCBE,E1C1A4,402C18,59422C,FEDCBE,BFCC9A,2A3410,404B25,DBE8B5,FFB4AB,690005,93000A,FFDAD6,111215,EFE0D5,D5C3B5,9D8E81,51453A,EFE0D5,372F28,855318,FDB975,000000,000000,19120C,403830,130D07,211A14,16171B,302822,3C332C"),
         ["neutral"] = CreatePalette(
-            "516164,FFFFFF,D4E6E9,39494C,516164,FFFFFF,D4E6E9,39494C,516164,FFFFFF,D4E6E9,39494C,BA1A1A,FFFFFF,FFDAD6,93000A,FAF9F9,1B1C1C,464747,777777,C7C6C6,2F3031,F2F0F0,B8CACD,516164,000000,000000,DBDAD9,FAF9F9,FFFFFF,F4F3F3,EFEDED,E9E8E8,E3E2E2",
-            "B8CACD,233336,39494C,D4E6E9,B8CACD,233336,39494C,D4E6E9,B8CACD,233336,39494C,D4E6E9,FFB4AB,690005,93000A,FFDAD6,121414,E3E2E2,C7C6C6,919191,464747,E3E2E2,2F3031,516164,B8CACD,000000,000000,121414,383939,0D0E0F,1B1C1C,1F2020,292A2A,343535")
+            "516164,FFFFFF,D4E6E9,39494C,576062,FFFFFF,DBE4E6,3F484A,4A6267,FFFFFF,CDE7EC,334B4F,BA1A1A,FFFFFF,FFDAD6,93000A,FAF9F9,1B1C1C,464747,777777,C7C6C6,2F3031,F2F0F0,B8CACD,516164,000000,000000,DBDAD9,FAF9F9,FFFFFF,F4F3F3,EFEDED,E9E8E8,E3E2E2",
+            "B8CACD,233336,39494C,D4E6E9,BFC8CA,293234,3F484A,DBE4E6,B1CBD0,1C3438,334B4F,CDE7EC,FFB4AB,690005,93000A,FFDAD6,111215,E3E2E2,C7C6C6,919191,464747,E3E2E2,2F3031,516164,B8CACD,000000,000000,121414,383939,0D0E0F,1B1C1C,16171B,292A2A,343535")
     };
 
     static ThemeBrushes()
     {
         Settings.ColorValuesChanged += (_, _) => RefreshPalette();
+    }
+
+    private static readonly (string Key, string Role)[] ControlBrushAliases =
+    [
+        ("ContentDialogBackground", "SurfaceContainerLow"), ("ContentDialogTopOverlay", "SurfaceContainerLow"),
+        ("TextControlBackgroundFocused", "SurfaceContainerHigh"), ("TextControlBackgroundPointerOver", "SurfaceContainerHigh"),
+        ("TextControlBorderBrushFocused", "Primary"), ("TextControlBorderBrushPointerOver", "Outline"),
+        ("ComboBoxDropDownBackground", "SurfaceContainerLow"), ("ComboBoxDropDownForeground", "OnSurface"),
+        ("ComboBoxBackgroundPointerOver", "SurfaceContainerHigh"), ("ComboBoxBackgroundPressed", "SurfaceContainerHigh"),
+        ("CheckBoxCheckBackgroundFillChecked", "Primary"), ("CheckBoxCheckBackgroundFillCheckedPointerOver", "Primary"),
+        ("CheckBoxCheckBackgroundFillCheckedPressed", "Primary"), ("CheckBoxCheckGlyphForegroundChecked", "OnPrimary"),
+        ("CheckBoxCheckBackgroundStrokeChecked", "Primary"), ("CheckBoxCheckBackgroundStrokeCheckedPointerOver", "Primary"),
+        ("CheckBoxCheckBackgroundStrokeCheckedPressed", "Primary"),
+        ("CheckBoxCheckGlyphForegroundCheckedPointerOver", "OnPrimary"), ("CheckBoxCheckGlyphForegroundCheckedPressed", "OnPrimary")
+    ];
+
+    internal static void ApplyControlResources(FrameworkElement owner)
+    {
+        if (owner is Control control) HandCursorResource.AttachNative(control);
+        if (owner is not (ContentDialog or ComboBox or TextBox or PasswordBox or CheckBox)) return;
+        var dictionary = M3Dictionary();
+        foreach (var theme in new[] { "Light", "Dark", "HighContrast" })
+        {
+            if (!owner.Resources.ThemeDictionaries.TryGetValue(theme, out var existing))
+                owner.Resources.ThemeDictionaries[theme] = existing = new ResourceDictionary();
+            var target = (ResourceDictionary)existing;
+            var source = (ResourceDictionary)dictionary.ThemeDictionaries[theme];
+            foreach (var (key, role) in ControlBrushAliases)
+            {
+                var relevant = owner is ContentDialog ||
+                    (owner is ComboBox && key.StartsWith("ComboBox", StringComparison.Ordinal)) ||
+                    (owner is TextBox or PasswordBox && key.StartsWith("TextControl", StringComparison.Ordinal)) ||
+                    (owner is CheckBox && key.StartsWith("CheckBox", StringComparison.Ordinal));
+                if (relevant && !target.ContainsKey(key)) target[key] = source[$"HingeM3{role}Brush"];
+            }
+        }
+    }
+
+    internal static void ApplyLogicalControlResources(DependencyObject root)
+    {
+        if (root is FrameworkElement element) ApplyControlResources(element);
+        if (root is Panel panel)
+            foreach (var child in panel.Children) ApplyLogicalControlResources(child);
+        else if (root is ContentControl { Content: DependencyObject content })
+            ApplyLogicalControlResources(content);
+        else if (root is Border { Child: { } child })
+            ApplyLogicalControlResources(child);
     }
 
     public static Brush Primary(FrameworkElement owner) => Resource(owner, "HingeM3OnSurfaceBrush");
@@ -112,6 +159,8 @@ internal static class ThemeBrushes
         foreach (var (role, color) in roles)
             SetBrushColor(dictionary, $"HingeM3{role}Brush", color);
 
+        SetBrushColor(dictionary, "HingeM3CardOutlineBrush", roles["OutlineVariant"]);
+        SetBrushColor(dictionary, "HingeM3DividerBrush", roles["OutlineVariant"]);
         var onSurface = roles["OnSurface"];
         var primaryContainer = roles["PrimaryContainer"];
         var onPrimaryContainer = roles["OnPrimaryContainer"];

@@ -747,6 +747,85 @@ internal static class WirelessAdbClient
         return startInfo;
     }
 
+    internal static ProcessStartInfo CreateConsoleStartInfo(string transport, string command)
+    {
+        if (!IsWirelessTransport(transport) || transport.IndexOfAny(['"', '\r', '\n', '\0']) >= 0)
+            throw new ArgumentException("请先连接已配对的无线 ADB 手机。");
+        var arguments = NormalizeConsoleCommand(command);
+        var startInfo = CreateStartInfo();
+        startInfo.ArgumentList.Clear();
+        // Keep the user's Windows quoting intact; never invoke cmd or PowerShell.
+        startInfo.Arguments = $"-P {HingeAdbServerPort} -s \"{transport}\" {arguments}";
+        return startInfo;
+    }
+
+    internal static string NormalizeConsoleCommand(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command) || command.Length > 8192 || command.IndexOfAny(['\0', '\r', '\n']) >= 0)
+            throw new ArgumentException("请输入一条 ADB 指令。");
+        var arguments = Regex.Replace(command.Trim(), @"^adb(?:\.exe)?\s+", "", RegexOptions.IgnoreCase);
+        var verb = Regex.Match(arguments, @"^[A-Za-z][A-Za-z0-9-]*(?=\s|$)").Value;
+        if (verb.Length == 0 || verb.Equals("adb", StringComparison.OrdinalIgnoreCase) ||
+            verb is "connect" or "disconnect" or "pair" or "kill-server" or "start-server" or "server" or "nodaemon")
+            throw new ArgumentException("请输入设备指令，例如 adb shell …；连接管理请使用上方的配对和连接按钮，不要添加 -s 或 -P。");
+        return arguments;
+    }
+
+    internal static async Task<int> RunConsoleProcessAsync(ProcessStartInfo startInfo, IProgress<string> output,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start()) throw new InvalidOperationException("无法启动 ADB。");
+        process.StandardInput.Close();
+        var text = new StringBuilder();
+        var gate = new object();
+        var clock = Stopwatch.StartNew();
+        long lastReport = 0;
+        bool truncated = false;
+        async Task DrainAsync(StreamReader reader)
+        {
+            var buffer = new char[2048];
+            int count;
+            while ((count = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false)) > 0)
+            {
+                lock (gate)
+                {
+                    var remaining = 65536 - text.Length;
+                    text.Append(buffer, 0, Math.Min(count, remaining));
+                    truncated |= count > remaining;
+                    if (clock.ElapsedMilliseconds - lastReport >= 100)
+                    {
+                        output.Report(text.ToString());
+                        lastReport = clock.ElapsedMilliseconds;
+                    }
+                }
+            }
+        }
+        var reads = Task.WhenAll(DrainAsync(process.StandardOutput), DrainAsync(process.StandardError));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(linked.Token).ConfigureAwait(false);
+            await reads.ConfigureAwait(false);
+            return process.ExitCode;
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            await reads.ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new TimeoutException("运行已达到 60 秒上限，已停止本次 ADB 指令。");
+        }
+        finally
+        {
+            lock (gate)
+                output.Report(text + (truncated ? "\n[输出超过 64K 字符，后续内容已省略。]" : ""));
+        }
+    }
+
     private static string FindAdb()
     {
         var executable = OperatingSystem.IsWindows() ? "adb.exe" : "adb";

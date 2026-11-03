@@ -104,6 +104,8 @@ public sealed partial class MainWindow : Window
     private readonly ConcurrentDictionary<string, byte> _manualDisconnectSuppressedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _historicalReconnectTimer;
     private CancellationTokenSource? _wirelessAdbClipboardSyncCancellation;
+    private CancellationTokenSource? _adbConsoleCancellation;
+    private int _adbConsoleRevision;
     private Task? _wirelessAdbClipboardSyncTask;
     private WirelessAdbClipboardBridge? _wirelessAdbClipboardBridge;
     private string? _lastAndroidClipboardText;
@@ -1347,6 +1349,9 @@ public sealed partial class MainWindow : Window
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
         page.WirelessAdbPullLogs.Click += WirelessAdbPullLogs_Click;
+        page.WirelessAdbCommandRun.Click += WirelessAdbCommandRun_Click;
+        page.WirelessAdbCommandStop.Click += (_, _) => _adbConsoleCancellation?.Cancel();
+        page.Unloaded += (_, _) => _adbConsoleCancellation?.Cancel();
         UpdateScreenStatus(_screenStatus);
     }
 
@@ -1583,6 +1588,48 @@ public sealed partial class MainWindow : Window
         }
         if (!string.IsNullOrWhiteSpace(host)) WriteUserSetting(WirelessAdbHostSettingName, host);
         if (!string.IsNullOrWhiteSpace(port)) WriteUserSetting(WirelessAdbConnectPortSettingName, port);
+    }
+
+    private async void WirelessAdbCommandRun_Click(object sender, RoutedEventArgs e)
+    {
+        if (_transferSettingsPage is not { } page || _adbConsoleCancellation != null) return;
+        using var cancellation = new CancellationTokenSource();
+        _adbConsoleCancellation = cancellation;
+        var revision = ++_adbConsoleRevision;
+        page.WirelessAdbCommandRun.IsEnabled = false;
+        page.WirelessAdbCommandStop.IsEnabled = true;
+        page.WirelessAdbCommand.IsEnabled = false;
+        page.WirelessAdbCommandOutput.Text = string.Empty;
+        try
+        {
+            var transport = _wirelessAdbConnectionManager?.CurrentTransport;
+            if (string.IsNullOrWhiteSpace(transport))
+                throw new InvalidOperationException("请先使用上方的“连接 / 重连”连接已配对手机。");
+            var startInfo = WirelessAdbClient.CreateConsoleStartInfo(transport, page.WirelessAdbCommand.Text);
+            page.WirelessAdbCommandStatus.Text = $"正在运行 · {transport}";
+            var output = new Progress<string>(text => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_adbConsoleRevision == revision && text.Length >= page.WirelessAdbCommandOutput.Text.Length)
+                    page.WirelessAdbCommandOutput.Text = text;
+            }));
+            var code = await WirelessAdbClient.RunConsoleProcessAsync(startInfo, output, cancellation.Token);
+            page.WirelessAdbCommandStatus.Text = $"运行结束 · 退出码 {code} · {transport}";
+        }
+        catch (OperationCanceledException)
+        {
+            page.WirelessAdbCommandStatus.Text = "已停止本次指令。已在手机上执行的操作不会撤销。";
+        }
+        catch (Exception exception)
+        {
+            page.WirelessAdbCommandStatus.Text = exception.Message;
+        }
+        finally
+        {
+            _adbConsoleCancellation = null;
+            page.WirelessAdbCommandRun.IsEnabled = true;
+            page.WirelessAdbCommandStop.IsEnabled = false;
+            page.WirelessAdbCommand.IsEnabled = true;
+        }
     }
 
     private async void WirelessAdbClipboardSync_Toggled(object sender, RoutedEventArgs e)
@@ -1861,7 +1908,7 @@ public sealed partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap
         });
         var choices = candidates.GroupBy(device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Select(group => new CheckBox { Content = $"{group.Key}：清理 {group.Count()} 条旧记录", Tag = group.Key }).ToArray();
+            .Select(group => new HandCursorCheckBox { Content = $"{group.Key}：清理 {group.Count()} 条旧记录", Tag = group.Key }).ToArray();
         foreach (var choice in choices) content.Children.Add(choice);
         var dialog = new ContentDialog
         {
@@ -3851,14 +3898,8 @@ public sealed partial class MainWindow : Window
             "dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         };
-        AppNavigation.RequestedTheme = PageRoot.RequestedTheme;
-        ContentFrame.RequestedTheme = PageRoot.RequestedTheme;
         ApplyAppWindowTitleBarTheme(theme);
         _homePage?.ApplyThemePalette();
-        if (_homePage != null)
-        {
-            RefreshDeviceList(_registry.GetAllDevices());
-        }
     }
 
     private void ApplyAppWindowTitleBarTheme(string theme)
@@ -7184,6 +7225,10 @@ public sealed partial class MainWindow : Window
             passwordBox.FontFamily = fontFamily;
         else if (root is RichEditBox richEditBox)
             richEditBox.FontFamily = fontFamily;
+        else if (root is Control control)
+            control.FontFamily = fontFamily;
+
+        if (root is Control themedControl) ThemeBrushes.ApplyControlResources(themedControl);
 
         for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
             ApplyFontFamily(VisualTreeHelper.GetChild(root, index), fontFamily);
@@ -8484,12 +8529,16 @@ public sealed partial class MainWindow : Window
 
     internal static void ApplyM3ContentDialogStyle(ContentDialog dialog)
     {
+        if (dialog.XamlRoot?.Content is FrameworkElement owner)
+            dialog.RequestedTheme = owner.ActualTheme;
+        ThemeBrushes.ApplyControlResources(dialog);
+        if (dialog.Content is DependencyObject content) ThemeBrushes.ApplyLogicalControlResources(content);
         var resources = Application.Current.Resources;
         var primaryStyle = (Style)resources["HingeM3FilledButtonStyle"];
 
-        dialog.Background = (Brush)resources["HingeM3SurfaceContainerLowBrush"];
-        dialog.Foreground = (Brush)resources["HingeM3OnSurfaceBrush"];
-        dialog.BorderBrush = (Brush)resources["HingeM3OutlineVariantBrush"];
+        dialog.Background = ThemeBrushes.MutedSurface(dialog);
+        dialog.Foreground = ThemeBrushes.Primary(dialog);
+        dialog.BorderBrush = ThemeBrushes.Border(dialog);
         dialog.BorderThickness = new Thickness(1);
         dialog.CornerRadius = (CornerRadius)resources["HingeM3ShapeExtraLarge"];
         dialog.PrimaryButtonStyle = primaryStyle;
@@ -8504,6 +8553,7 @@ public sealed partial class MainWindow : Window
         await _contentDialogGate.WaitAsync();
         try
         {
+            ApplyM3ContentDialogStyle(dialog);
             return await dialog.ShowAsync();
         }
         finally
@@ -8554,6 +8604,7 @@ public sealed partial class MainWindow : Window
         CancelHistoricalReconnect();
         Clipboard.ContentChanged -= DesktopClipboard_ContentChanged;
         _wirelessAdbClipboardSyncCancellation?.Cancel();
+        _adbConsoleCancellation?.Cancel();
         _wirelessAdbClipboardBridge?.Dispose();
         _wirelessAdbClipboardBridge = null;
         if (_wirelessAdbConnectionManager != null)

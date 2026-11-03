@@ -37,9 +37,11 @@ internal class DesktopVideoBridge(
     private var sink: EventChannel.EventSink? = null
     private var active: Session? = null
     private var nextId = 0L
+    private var releasing = CompletableFuture.completedFuture<Void>(null)
 
     init {
         methods.setMethodCallHandler { call, result ->
+            var stage = "处理桌面请求"
             try {
                 when (call.method) {
                     "start" -> {
@@ -48,13 +50,24 @@ internal class DesktopVideoBridge(
                         val peer = call.argument<String>("peerId") ?: error("Missing desktop identity")
                         val localId = call.argument<String>("deviceId") ?: error("Missing local identity")
                         val name = call.argument<String>("name") ?: "Android 手机"
-                        require(host.length in 1..256 && port in 1..65535 && peer.length in 1..256 && localId.length in 1..256 && name.length in 1..128)
+                        require(host.length in 1..256 && port in 1..65535 && peer.length in 1..256 && localId.length in 1..256 && name.length in 1..128) { "桌面连接参数无效" }
                         stop()
+                        stage = "创建桌面显示Surface"
+                        check(releasing.isDone) { "上次桌面会话仍在释放显示资源，正在等待重连" }
                         val texture = textures.createSurfaceProducer()
-                        val session = Session(++nextId, texture, host, port, peer, localId, name)
-                        active = session
-                        result.success(mapOf("sessionId" to session.id, "textureId" to texture.id()))
-                        Thread({ session.run() }, "HingeDesktopVideo").start()
+                        var session: Session? = null
+                        try {
+                            session = Session(++nextId, texture, host, port, peer, localId, name)
+                            active = session
+                            val running = session
+                            Thread({ running.run() }, "HingeDesktopVideo").start()
+                            result.success(mapOf("sessionId" to session.id, "textureId" to texture.id()))
+                        } catch (error: Exception) {
+                            session?.stop()
+                            if (active === session) active = null
+                            runCatching { texture.setCallback(null); texture.release() }
+                            throw error
+                        }
                     }
                     "confirm" -> {
                         val session = active
@@ -69,8 +82,12 @@ internal class DesktopVideoBridge(
                     }
                     "stop" -> {
                         val expected = call.argument<Number>("sessionId")?.toLong()
-                        if (expected == null || active?.id == expected) stop()
-                        result.success(null)
+                        val session = active
+                        if (session != null && (expected == null || session.id == expected)) {
+                            stop()
+                            // A retry must not allocate a new decoder before the old Surface is released.
+                            session.released.whenComplete { _, _ -> main.post { result.success(null) } }
+                        } else result.success(null)
                     }
                     "loadInputMode", "saveInputMode" -> {
                         val peer = call.argument<String>("peerId") ?: error("Missing peer")
@@ -79,7 +96,7 @@ internal class DesktopVideoBridge(
                         if (call.method == "saveInputMode") {
                             prefs.edit().putBoolean(peer, call.argument<Boolean>("direct") == true).apply()
                             result.success(null)
-                        } else result.success(prefs.getBoolean(peer, true))
+                        } else result.success(prefs.getBoolean(peer, false))
                     }
                     "forgetPeer" -> {
                         val peer = call.argument<String>("peerId") ?: error("Missing desktop identity")
@@ -88,7 +105,12 @@ internal class DesktopVideoBridge(
                     }
                     else -> result.notImplemented()
                 }
-            } catch (error: Exception) { result.error("desktop_video", error.message, null) }
+            } catch (error: Exception) {
+                val kind = error.javaClass.simpleName
+                android.util.Log.e("HingeDesktopVideo", "$stage ($kind)", error)
+                result.error("desktop_video", "$stage：${error.message?.takeIf { it.isNotBlank() } ?: kind}",
+                    mapOf("stage" to stage, "type" to kind, "retryable" to (stage == "创建桌面显示Surface")))
+            }
         }
         events.setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(arguments: Any?, eventSink: EventChannel.EventSink?) { sink = eventSink }
@@ -96,7 +118,14 @@ internal class DesktopVideoBridge(
         })
     }
 
-    fun stop() { val session = active; active = null; session?.stop() }
+    fun stop() {
+        val session = active
+        active = null
+        if (session != null) {
+            releasing = session.released
+            session.stop()
+        }
+    }
     override fun close() { stop(); methods.setMethodCallHandler(null); events.setStreamHandler(null); sink = null }
 
     private inner class Session(
@@ -108,6 +137,7 @@ internal class DesktopVideoBridge(
         private val failed = AtomicBoolean(false)
         @Volatile private var socket: Socket? = null
         val confirmation = CompletableFuture<Boolean>()
+        val released = CompletableFuture<Void>()
         private val received = AtomicLong(0)
         private val scheduler = Executors.newSingleThreadScheduledExecutor()
         private val inputWriter = Executors.newSingleThreadExecutor()
@@ -118,6 +148,7 @@ internal class DesktopVideoBridge(
         @Volatile private var videoDecoder: DesktopVideoDecoder? = null
         @Volatile private var relativeMouse = false
         @Volatile private var absoluteMouse = false
+        @Volatile private var systemActions = false
         private val readySent = AtomicBoolean(false)
         private val firstFrameDeadline = Runnable {
             if (!readySent.get()) fail("未能在8秒内显示电脑首帧，请检查电脑采集和手机解码状态")
@@ -139,7 +170,7 @@ internal class DesktopVideoBridge(
         private fun framePresented() {
             if (!stopped.get() && established && readySent.compareAndSet(false, true)) {
                 main.removeCallbacks(firstFrameDeadline)
-                emit("ready", mapOf("canControl" to canControl, "relativeMouse" to relativeMouse, "absoluteMouse" to absoluteMouse))
+                emit("ready", mapOf("canControl" to canControl, "relativeMouse" to relativeMouse, "absoluteMouse" to absoluteMouse, "systemActions" to systemActions))
             }
         }
 
@@ -247,6 +278,7 @@ internal class DesktopVideoBridge(
                 while (firstPacket.flags == DesktopVideoProtocol.HEARTBEAT) {
                     firstPacket = DesktopVideoProtocol.read(input) ?: throw EOFException("电脑已停止桌面共享")
                 }
+                stage = "创建视频解码Surface"
                 texture.setSize(firstPacket.width, firstPacket.height)
                 val surface = texture.surface
                 val video = DesktopVideoDecoder(surface, { width, height ->
@@ -257,8 +289,10 @@ internal class DesktopVideoBridge(
                 canControl = reply.optBoolean("canControl", false)
                 relativeMouse = reply.optBoolean("relativeMouse", false)
                 absoluteMouse = reply.optBoolean("absoluteMouse", false)
+                systemActions = canControl && reply.optBoolean("systemActions", false)
                 established = true
                 received.incrementAndGet()
+                stage = "初始化视频解码"
                 video.submit(firstPacket) { !stopped.get() }
                 if (canControl) inputWriter.execute {
                     try {
@@ -289,6 +323,7 @@ internal class DesktopVideoBridge(
                         catch (_: Exception) { fail("桌面连接保活失败") }
                     }
                 }, 0, 1, TimeUnit.SECONDS)
+                stage = "接收电脑桌面"
                 while (!stopped.get()) {
                     val packet = DesktopVideoProtocol.read(input) ?: throw EOFException("电脑已停止桌面共享")
                     if (packet.flags == DesktopVideoProtocol.HEARTBEAT) continue
@@ -306,10 +341,16 @@ internal class DesktopVideoBridge(
                 videoDecoder = null
                 try { decoder?.close() } catch (_: Exception) { }
                 main.post {
-                    texture.setCallback(null)
-                    texture.release()
-                    if (active === this) active = null
-                    sink?.success(mapOf("sessionId" to id, "state" to "stopped"))
+                    try {
+                        texture.setCallback(null)
+                        texture.release()
+                    } catch (error: Exception) {
+                        android.util.Log.e("HingeDesktopVideo", "释放桌面显示Surface失败", error)
+                    } finally {
+                        if (active === this) active = null
+                        released.complete(null)
+                        sink?.success(mapOf("sessionId" to id, "state" to "stopped"))
+                    }
                 }
             }
         }

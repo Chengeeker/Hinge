@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
     <Page.Resources>
-        <Style x:Key="HingeM3MaterialOptionItemStyle" TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
+        <Style x:Key="HingeM3MaterialOptionItemStyle" TargetType="ComboBoxItem" BasedOn="{StaticResource HingeM3ComboBoxItemStyle}">
             <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
             <Setter Property="Padding" Value="16,10" />
             <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeSmall}" />

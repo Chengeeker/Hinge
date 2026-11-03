@@ -152,21 +152,18 @@ class _SmsRelaySettingsScreenState extends State<SmsRelaySettingsScreen>
                   subtitle: '监听新到的 SMS 和验证码短信',
                   status: _permissionText(_smsPermission),
                 ),
-                const Divider(height: 1),
                 _permissionTile(
                   icon: Symbols.mark_email_read_rounded,
                   title: '访问短信/彩信',
                   subtitle: '读取新短信内容，并兼容部分验证码广播限制',
                   status: _permissionText(_readSmsPermission),
                 ),
-                const Divider(height: 1),
                 _permissionTile(
                   icon: Symbols.perm_media_rounded,
                   title: '接收彩信',
                   subtitle: _mmsPermission ? '可以提示新到彩信' : '部分系统会限制第三方应用接收彩信广播',
                   status: _permissionText(_mmsPermission),
                 ),
-                const Divider(height: 1),
                 ListTile(
                   leading: Icon(
                     Symbols.settings_rounded,
@@ -176,7 +173,6 @@ class _SmsRelaySettingsScreenState extends State<SmsRelaySettingsScreen>
                   trailing: const Icon(Symbols.chevron_right_rounded),
                   onTap: widget.dataService.openAppSettings,
                 ),
-                const Divider(height: 1),
                 ListTile(
                   leading: SizedBox(
                     width: 40,

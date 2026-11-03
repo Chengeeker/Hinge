@@ -22,6 +22,11 @@ public sealed partial class TransferSettingsPage : Page
     public Button WirelessAdbPair => WirelessAdbPairButton;
     public Button WirelessAdbConnect => WirelessAdbConnectButton;
     public Button WirelessAdbPullLogs => WirelessAdbPullLogsButton;
+    public TextBox WirelessAdbCommand => WirelessAdbCommandTextBox;
+    public Button WirelessAdbCommandRun => WirelessAdbCommandRunButton;
+    public Button WirelessAdbCommandStop => WirelessAdbCommandStopButton;
+    public TextBlock WirelessAdbCommandStatus => WirelessAdbCommandStatusText;
+    public TextBox WirelessAdbCommandOutput => WirelessAdbCommandOutputTextBox;
     public TextBlock WirelessAdbStatus => WirelessAdbStatusText;
     public TextBlock WirelessAdbClipboardStatus => WirelessAdbClipboardStatusText;
     public TextBlock Status => TransferSettingsStatusText;

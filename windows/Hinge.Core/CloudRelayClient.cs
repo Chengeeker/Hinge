@@ -368,7 +368,7 @@ public sealed class CloudRelayTransferService
         string transferId = Guid.NewGuid().ToString();
         string senderRelay = CloudRelayCrypto.ComputeRelayDeviceId(settings.RelayEncryptionKey, localHingeDeviceId);
         string receiverRelay = CloudRelayCrypto.ComputeRelayDeviceId(settings.RelayEncryptionKey, peerHingeDeviceId);
-        int partCount = Math.Max(1, checked((int)((info.Length + CloudRelayConstants.PartSize - 1) / CloudRelayConstants.PartSize)));
+        int partCount = CloudRelayConstants.GetPartCount(info.Length);
         long createdAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         long expiresAt = createdAt + CloudRelayConstants.DefaultTtlHours * 3600L;
         string sha256 = await ComputeSha256Async(filePath, cancellationToken);

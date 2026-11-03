@@ -10,6 +10,13 @@ CloudRelayProgress progress(int percentage) => CloudRelayProgress(
 );
 
 void main() {
+  test('rejects files beyond the R2 multipart limit before hashing or upload', () {
+    final maximum = cloudRelayPartSize * cloudRelayMaxPartCount;
+    expect(cloudRelayPartCount(0), 1);
+    expect(cloudRelayPartCount(maximum), 10000);
+    expect(() => cloudRelayPartCount(maximum + 1), throwsArgumentError);
+    expect(() => cloudRelayPartCount(-1), throwsArgumentError);
+  });
   test('progress stays monotonic when callbacks arrive out of order', () {
     final guard = CloudRelayProgressGuard();
 

@@ -19,6 +19,7 @@ public sealed class DesktopMediaServer : IAsyncDisposable
     private readonly Func<CancellationToken, IAsyncEnumerable<DesktopVideoPacket>> _source;
     private readonly string _pinsPath;
     private readonly Func<string, RemoteInputManager.AuthenticatedControlLease?>? _beginControl;
+    private readonly Action<DesktopSystemAction>? _systemAction;
     private readonly Dictionary<string, string> _pins;
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _stop = new();
@@ -35,7 +36,8 @@ public sealed class DesktopMediaServer : IAsyncDisposable
     public DesktopMediaServer(X509Certificate2 certificate, Func<string, bool> isConnectedTrustedPeer,
         Func<DesktopPairingRequest, CancellationToken, Task<bool>> approve,
         Func<CancellationToken, IAsyncEnumerable<DesktopVideoPacket>> source, string pinsPath,
-        Func<string, RemoteInputManager.AuthenticatedControlLease?>? beginControl = null)
+        Func<string, RemoteInputManager.AuthenticatedControlLease?>? beginControl = null,
+        Action<DesktopSystemAction>? systemAction = null)
     {
         if (!certificate.HasPrivateKey) throw new ArgumentException("Desktop server certificate needs a private key.");
         _certificate = certificate;
@@ -44,6 +46,7 @@ public sealed class DesktopMediaServer : IAsyncDisposable
         _source = source;
         _pinsPath = pinsPath;
         _beginControl = beginControl;
+        _systemAction = systemAction;
         if (File.Exists(pinsPath) && new FileInfo(pinsPath).Length > 1024 * 1024)
             throw new InvalidDataException("Desktop peer trust file exceeds limit.");
         _pins = File.Exists(pinsPath)
@@ -156,7 +159,8 @@ public sealed class DesktopMediaServer : IAsyncDisposable
                 using var control = _beginControl?.Invoke(id);
                 bool mediaHeartbeat = hello.RootElement.TryGetProperty("mediaHeartbeat", out var heartbeatProperty) && heartbeatProperty.GetBoolean();
                 await WriteJsonAsync(tls, new { state = "ready", version = 1, canControl = control != null,
-                    relativeMouse = control != null, absoluteMouse = control != null, mediaHeartbeat }, session.Token);
+                    relativeMouse = control != null, absoluteMouse = control != null,
+                    systemActions = control != null && _systemAction != null, mediaHeartbeat }, session.Token);
                 Volatile.Write(ref _activeDevice, id); StatusChanged?.Invoke(this, EventArgs.Empty);
                 Task video = PumpAsync(tls, mediaHeartbeat, session.Token);
                 Task heartbeat = WatchViewerAsync(tls, id, control, session.Token);
@@ -165,10 +169,10 @@ public sealed class DesktopMediaServer : IAsyncDisposable
                 {
                     session.Cancel();
                     try { await Task.WhenAll(video, heartbeat); }
-                    catch (Exception exception) when (exception is OperationCanceledException or IOException or AuthenticationException or TimeoutException) { }
+                    catch (Exception exception) when (exception is OperationCanceledException or IOException or InvalidDataException or AuthenticationException or TimeoutException) { }
                 }
             }
-            catch (Exception exception) when (exception is IOException or SocketException or AuthenticationException or
+            catch (Exception exception) when (exception is IOException or InvalidDataException or SocketException or AuthenticationException or
                 OperationCanceledException or JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException or FormatException or TimeoutException)
             {
                 if (!_stop.IsCancellationRequested && exception is not OperationCanceledException)
@@ -244,6 +248,18 @@ public sealed class DesktopMediaServer : IAsyncDisposable
                 if (bytes.Length is < 16 or > 4096 || !RemoteInputEvent.TryParse(bytes, out var input) || input == null)
                     throw new InvalidDataException("Invalid desktop input payload.");
                 if (input.ActionType == RemoteActionType.ControlStop) return;
+                if (input.ActionType == RemoteActionType.DesktopSystemAction)
+                {
+                    if (control == null || _systemAction == null ||
+                        !control.Send(new RemoteInputEvent { ActionType = RemoteActionType.ControlKeepAlive }))
+                        throw new AuthenticationException("Desktop system action permission ended.");
+                    if (bytes.Length != RemoteInputEvent.HeaderSize || input.Flags != 0 ||
+                        input.DeltaX != 0 || input.DeltaY != 0 || input.WheelOrData != 0 ||
+                        !Enum.IsDefined((DesktopSystemAction)input.ButtonOrKey))
+                        throw new InvalidDataException("Invalid desktop system action.");
+                    _systemAction((DesktopSystemAction)input.ButtonOrKey);
+                    continue;
+                }
                 if (control == null || !control.Send(input)) throw new AuthenticationException("Desktop input permission ended.");
             }
             else if (action == "keepAlive")

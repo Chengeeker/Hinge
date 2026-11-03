@@ -11,6 +11,7 @@ enum RemoteActionType {
   keyDown(0x10),
   keyUp(0x11),
   textInput(0x12),
+  desktopSystemAction(0x13),
   controlStart(0x20),
   controlStop(0x21),
   controlAccepted(0x22),

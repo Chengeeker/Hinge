@@ -209,8 +209,8 @@
                                             Content="提取 Hinge 日志" />
                                     </StackPanel>
                                 </Grid>
-                                <Expander Header="高级设置（目标 IP 和端口）" IsExpanded="False">
-                                    <StackPanel Spacing="10" Padding="0,8,0,0">
+                                <StackPanel Spacing="10" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="目标 IP 和端口" Style="{StaticResource HingeM3TitleMediumStyle}" />
                                         <TextBlock Text="通常只需输入配对码。多台手机或网络不支持 mDNS 时，可填写手机 IP 与系统显示的端口。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                                         <TextBox
                                             x:Name="WirelessAdbHostTextBox"
@@ -236,8 +236,7 @@
                                                 Grid.Column="1"
                                                 PlaceholderText="连接端口" />
                                         </Grid>
-                                    </StackPanel>
-                                </Expander>
+                                </StackPanel>
                                 <TextBlock
                                     x:Name="WirelessAdbClipboardStatusText"
                                     AutomationProperties.Name="无线 ADB 剪贴板同步状态"
@@ -254,6 +253,16 @@
                                     Message="{Binding Text, ElementName=WirelessAdbStatusDetailsText}"
                                     Margin="0,2,0,0" />
                                 <TextBlock x:Name="WirelessAdbStatusDetailsText" Visibility="Collapsed" />
+                                <Border Height="1" Background="{ThemeResource HingeM3OutlineVariantBrush}" Opacity="0.65" />
+                                <TextBlock Text="ADB 指令" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                                <TextBlock Text="在当前已配对手机上运行，例如 adb shell getprop ro.product.model。无需填写设备编号；指令和输出不会保存。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                                <TextBox x:Name="WirelessAdbCommandTextBox" AutomationProperties.Name="ADB 指令" MaxLength="8192" PlaceholderText="adb shell getprop ro.product.model" />
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Button x:Name="WirelessAdbCommandRunButton" Content="运行" Style="{StaticResource HingeM3FilledButtonStyle}" />
+                                    <Button x:Name="WirelessAdbCommandStopButton" Content="停止" IsEnabled="False" />
+                                </StackPanel>
+                                <TextBlock x:Name="WirelessAdbCommandStatusText" Text="支持单次指令；运行超过 60 秒自动停止。不支持交互输入。" Style="{StaticResource HingeM3CaptionStyle}" TextWrapping="Wrap" />
+                                <TextBox x:Name="WirelessAdbCommandOutputTextBox" AutomationProperties.Name="ADB 指令输出" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" MaxHeight="320" PlaceholderText="运行结果会显示在这里，可选中复制。" />
                         </StackPanel>
                     </Grid>
                 </Border>

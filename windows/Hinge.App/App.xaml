@@ -15,7 +15,7 @@
 
             <!-- Shared M3 page primitives. -->
             <Thickness x:Key="HingePageMargin">24,24,24,24</Thickness>
-            <Thickness x:Key="HingeCardPadding">20</Thickness>
+            <Thickness x:Key="HingeCardPadding">16</Thickness>
             <x:Double x:Key="HingeSectionSpacing">16</x:Double>
             <Style x:Key="HingePageStackStyle" TargetType="StackPanel">
                 <Setter Property="Margin" Value="{StaticResource HingePageMargin}" />
@@ -29,8 +29,14 @@
             </Style>
             <Style x:Key="HingeCardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerLowBrush}" />
-                <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeLarge}" />
+                <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeExtraLarge}" />
                 <Setter Property="Padding" Value="{StaticResource HingeCardPadding}" />
+            </Style>
+            <Style x:Key="HingeContentCardStyle" TargetType="Border" BasedOn="{StaticResource HingeCardStyle}">
+                <Setter Property="Background" Value="{ThemeResource HingeM3ContentCardBrush}" />
+                <Setter Property="CornerRadius" Value="22" />
+                <Setter Property="BorderBrush" Value="{ThemeResource HingeM3CardOutlineBrush}" />
+                <Setter Property="BorderThickness" Value="0.8" />
             </Style>
             <Style x:Key="HingePageTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3HeadlineSmallStyle}" />
             <Style x:Key="HingePageDescriptionStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3BodyVariantStyle}" />
@@ -51,6 +57,11 @@
             <Style TargetType="TextBox" BasedOn="{StaticResource HingeM3TextFieldStyle}" />
             <Style TargetType="PasswordBox" BasedOn="{StaticResource HingeM3PasswordFieldStyle}" />
             <Style TargetType="ComboBox" BasedOn="{StaticResource HingeM3ComboBoxStyle}" />
+            <Style TargetType="ComboBoxItem" BasedOn="{StaticResource HingeM3ComboBoxItemStyle}" />
+            <Style TargetType="local:HandCursorDatePicker" BasedOn="{StaticResource HingeM3DatePickerStyle}" />
+            <Style TargetType="local:HandCursorTimePicker" BasedOn="{StaticResource HingeM3TimePickerStyle}" />
+            <Style TargetType="local:HandCursorCalendarDatePicker" BasedOn="{StaticResource HingeM3CalendarDatePickerStyle}" />
+            <Style TargetType="local:HandCursorCheckBox" BasedOn="{StaticResource DefaultCheckBoxStyle}" />
             <Style TargetType="ListViewItem" BasedOn="{StaticResource HingeM3ListViewItemStyle}" />
             <Style TargetType="GridViewItem" BasedOn="{StaticResource HingeM3GridViewItemStyle}" />
             <Style TargetType="local:HandCursorListViewItem" BasedOn="{StaticResource HingeM3ListViewItemStyle}" />

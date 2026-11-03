@@ -212,7 +212,12 @@ public sealed partial class MainWindow
             var server = new DesktopMediaServer(_desktopCertificate, IsDesktopPeerAllowed, ApproveDesktopPeerAsync,
                 token => source.CaptureAsync(videoSettings, token),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hinge", "desktop-peer-pins.json"),
-                id => _remoteInputManager.BeginAuthenticatedControl(id, Win32InputInjector.ForDesktop(videoSettings.MonitorDeviceName)));
+                id => _remoteInputManager.BeginAuthenticatedControl(id, Win32InputInjector.ForDesktop(videoSettings.MonitorDeviceName)),
+                action =>
+                {
+                    try { DesktopSystemActions.Execute(action); }
+                    catch (Exception error) { throw new IOException("系统操作未能执行：" + error.Message, error); }
+                });
             source.EncoderSelected += (_, message) => DispatcherQueue.TryEnqueue(() =>
             {
                 if (_desktopMediaServer != server) return;

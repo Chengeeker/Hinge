@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -16,8 +17,14 @@ class DesktopVideoView extends StatefulWidget {
   final SessionConnection connection;
   final bool zoomEnabled;
   final bool showStats;
+  final bool allowRecovery;
+  final double viewScale;
+  final int viewRevision;
+  final ValueChanged<bool>? onSystemActionsSupported;
+  final ValueChanged<Size>? onVideoSizeChanged;
   final String? inputLabel;
   final bool inputEnabled, directTouch, dragging;
+  final ValueListenable<bool>? mouseButtonsHeld;
   final double sensitivity;
   final ValueChanged<bool>? onAbsoluteSupported, onDrag, onClick;
   final ValueChanged<Offset>? onAbsolute, onRelative;
@@ -29,10 +36,16 @@ class DesktopVideoView extends StatefulWidget {
     required this.connection,
     required this.zoomEnabled,
     this.showStats = true,
+    this.allowRecovery = true,
+    this.viewScale = 1,
+    this.viewRevision = 0,
+    this.onSystemActionsSupported,
+    this.onVideoSizeChanged,
     this.inputLabel,
     this.inputEnabled = false,
     this.directTouch = false,
     this.dragging = false,
+    this.mouseButtonsHeld,
     this.sensitivity = 3,
     this.onAbsoluteSupported,
     this.onAbsolute,
@@ -85,7 +98,8 @@ class _DesktopVideoViewState extends State<DesktopVideoView>
 
   void _scheduleRecovery() {
     _stableTimer?.cancel();
-    if (!_foreground ||
+    if (!widget.allowRecovery ||
+        !_foreground ||
         _retryTimer != null ||
         _retryCount >= 3 ||
         widget.connection.state != SessionState.connected) {
@@ -198,6 +212,20 @@ class _DesktopVideoViewState extends State<DesktopVideoView>
         _failed('电脑未回复，请确认两端已更新并开启桌面共享');
         if (recovering) _scheduleRecovery();
       }
+    } on PlatformException catch (error) {
+      if (mounted && generation == _generation) {
+        final message = error.message;
+        _failed(
+          message == null || message.trim().isEmpty
+              ? '桌面视频组件启动失败，请重新连接'
+              : message,
+        );
+        final details = error.details;
+        if (details is Map && details['retryable'] == true) {
+          _resumeDesktop = true;
+          _scheduleRecovery();
+        }
+      }
     } on Object catch (error) {
       if (mounted && generation == _generation) _failed(error.toString());
     } finally {
@@ -284,6 +312,9 @@ class _DesktopVideoViewState extends State<DesktopVideoView>
         unawaited(_verify(event['code'] as String, _sessionId!));
       case 'ready':
         widget.onAbsoluteSupported?.call(event['absoluteMouse'] == true);
+        widget.onSystemActionsSupported?.call(
+          event['systemActions'] == true && event['canControl'] == true,
+        );
         _resumeDesktop = true;
         widget.onControlChanged?.call(
           _sessionId,
@@ -303,7 +334,12 @@ class _DesktopVideoViewState extends State<DesktopVideoView>
         });
       case 'format':
         final width = event['width'] as int, height = event['height'] as int;
-        if (width > 0 && height > 0) setState(() => _aspect = width / height);
+        if (width > 0 && height > 0) {
+          widget.onVideoSizeChanged?.call(
+            Size(width.toDouble(), height.toDouble()),
+          );
+          setState(() => _aspect = width / height);
+        }
       case 'stats':
         final time = event['timeMs'] as int,
             presented = event['presented'] as int;
@@ -478,7 +514,10 @@ class _DesktopVideoViewState extends State<DesktopVideoView>
             direct: widget.directTouch,
             zoomOnly: widget.zoomEnabled,
             dragging: widget.dragging,
+            mouseButtonsHeld: widget.mouseButtonsHeld,
             sensitivity: widget.sensitivity,
+            viewScale: widget.viewScale,
+            viewRevision: widget.viewRevision,
             onAbsolute: (p) => widget.onAbsolute?.call(p),
             onRelative: (p) => widget.onRelative?.call(p),
             onDrag: (v) => widget.onDrag?.call(v),

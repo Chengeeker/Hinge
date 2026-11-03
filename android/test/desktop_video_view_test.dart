@@ -175,6 +175,117 @@ void main() {
   });
 
   testWidgets(
+    'startup Surface failures retry with a limit and keep useful error text',
+    (tester) async {
+      final peer = _Peer(true);
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('hinge/desktop_video'),
+        (call) async {
+          calls.add(call);
+          if (call.method == 'start') {
+            throw PlatformException(
+              code: 'desktop_video',
+              message: '创建桌面显示Surface：IllegalStateException',
+              details: {'retryable': true},
+            );
+          }
+          return null;
+        },
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DesktopVideoView(
+            connection: peer,
+            zoomEnabled: false,
+            onReadyChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (final delay in [500, 1500, 4000]) {
+        await tester.pump(Duration(milliseconds: delay));
+        await tester.pumpAndSettle();
+      }
+      expect(calls.where((c) => c.method == 'start').length, 4);
+      expect(find.text('创建桌面显示Surface：IllegalStateException'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 20));
+      expect(calls.where((c) => c.method == 'start').length, 4);
+      await tester.pumpWidget(const SizedBox());
+      await peer.close();
+    },
+  );
+  testWidgets(
+    'null startup errors remain readable without retrying unknown failures',
+    (tester) async {
+      final peer = _Peer(true);
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('hinge/desktop_video'),
+        (call) async {
+          calls.add(call);
+          if (call.method == 'start') {
+            throw PlatformException(code: 'desktop_video');
+          }
+          return null;
+        },
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DesktopVideoView(
+            connection: peer,
+            zoomEnabled: false,
+            onReadyChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 20));
+      expect(calls.where((c) => c.method == 'start').length, 1);
+      expect(find.text('桌面视频组件启动失败，请重新连接'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await peer.close();
+    },
+  );
+  testWidgets('recovery waits for native decoder and Surface teardown', (
+    tester,
+  ) async {
+    final peer = _Peer(true);
+    final released = Completer<void>();
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('hinge/desktop_video'),
+      (call) async {
+        calls.add(call);
+        if (call.method == 'start') return {'sessionId': 7, 'textureId': 123};
+        if (call.method == 'stop') await released.future;
+        return null;
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DesktopVideoView(
+          connection: peer,
+          zoomEnabled: false,
+          onReadyChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    event({'state': 'ready'});
+    await tester.pump();
+    event({'state': 'error', 'message': 'Surface lost', 'retryable': true});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(calls.where((c) => c.method == 'stop').length, 1);
+    expect(calls.where((c) => c.method == 'start').length, 1);
+    released.complete();
+    await tester.pumpAndSettle();
+    expect(calls.where((c) => c.method == 'start').length, 2);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    await peer.close();
+  });
+
+  testWidgets(
     'network recovery is bounded even if every retry briefly becomes ready',
     (tester) async {
       final peer = _Peer(true);

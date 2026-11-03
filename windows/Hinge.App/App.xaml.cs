@@ -80,6 +80,9 @@ public partial class App : Application
             throw;
         }
         LogLifecycle("main-window-created");
+        LogLifecycle($"popup-cursor-native-monitor active={WinUiPopupCursor.StartMonitoringCurrentThread(LogLifecycle)}");
+        _window.Closed += (_, _) => WinUiPopupCursor.StopMonitoring();
+        LogLifecycle($"popup-class-cursor-initialized patched={WinUiPopupCursor.ApplyToCurrentThread()}");
         if (_window is MainWindow mainWindow && mainWindow.HandleActivationArguments(launchArguments))
         {
             mainWindow.StartSilentlyToTray();

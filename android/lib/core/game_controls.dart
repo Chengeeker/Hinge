@@ -133,6 +133,29 @@ class GamePreset {
   }
   static String newId() =>
       '${DateTime.now().microsecondsSinceEpoch}-${math.Random.secure().nextInt(1 << 30)}';
+  static const desktopId = 'hinge-desktop-basic';
+  static GamePreset desktop() => GamePreset(desktopId, '桌面精简布局', [
+    for (final (label, key, x, y) in [
+      ('Esc', 0x1B, .06, .18),
+      ('Tab', 0x09, .06, .40),
+      ('Ctrl', 0x11, .06, .62),
+      ('左键', -1, .06, .84),
+      ('退格', 0x08, .94, .18),
+      ('Enter', 0x0D, .94, .40),
+      ('Alt', 0x12, .94, .62),
+      ('右键', -2, .94, .84),
+    ])
+      GameControl(
+        id: newId(),
+        label: label,
+        binding: key,
+        x: x,
+        y: y,
+        size: .14,
+        aspect: 1.2,
+        shape: 'rounded',
+      ),
+  ]);
   static GamePreset basic() {
     GameControl button(
       String label,
@@ -230,16 +253,40 @@ class GamePresetStore {
   static const channel = MethodChannel('hinge/game_controls');
   static final ValueNotifier<int> syncRevision = ValueNotifier(0);
   List<GamePreset> presets = [];
-  String? selected;
-  GamePresetStore();
+  final bool desktop;
+  String? _gameSelected, _desktopSelected;
+  String? get selected => desktop ? _desktopSelected : _gameSelected;
+  set selected(String? value) {
+    if (desktop) {
+      _desktopSelected = value;
+    } else {
+      _gameSelected = value;
+    }
+  }
+
+  GamePresetStore({this.desktop = false});
   Future<void> load() async {
     final raw = await channel.invokeMethod<String>('load');
     if (raw == null) {
       presets = [GamePreset.basic()];
-      selected = presets.first.id;
-      return;
+      _gameSelected = presets.first.id;
+    } else {
+      _decode(raw);
     }
-    _decode(raw);
+    if (desktop) {
+      _desktopSelected = await channel.invokeMethod<String>(
+        'loadDesktopSelection',
+      );
+      if (!presets.any((p) => p.id == GamePreset.desktopId) &&
+          presets.length < 32) {
+        presets.add(GamePreset.desktop());
+      }
+      if (!presets.any((p) => p.id == _desktopSelected)) {
+        _desktopSelected = presets.any((p) => p.id == GamePreset.desktopId)
+            ? GamePreset.desktopId
+            : presets.first.id;
+      }
+    }
   }
 
   factory GamePresetStore.fromJsonString(String raw) {
@@ -264,7 +311,7 @@ class GamePresetStore {
       throw const FormatException('重复预设');
     }
     final savedSelection = json['selected'] as String?;
-    selected = presets.any((preset) => preset.id == savedSelection)
+    _gameSelected = presets.any((preset) => preset.id == savedSelection)
         ? savedSelection
         : presets.first.id;
   }
@@ -273,7 +320,7 @@ class GamePresetStore {
       presets.firstWhere((p) => p.id == selected, orElse: () => presets.first);
   String toJsonString() => jsonEncode({
     'version': 1,
-    'selected': selected,
+    'selected': _gameSelected,
     'presets': presets.map((p) => p.toJson()).toList(),
   });
 
@@ -281,7 +328,17 @@ class GamePresetStore {
     if (presets.isEmpty || presets.length > 32) {
       throw const FormatException('最多保存32套预设');
     }
-    return _saveJson(toJsonString());
+    final json = toJsonString();
+    if (desktop) {
+      if (utf8.encode(json).length > 1024 * 1024) {
+        throw const FormatException('预设数据过大');
+      }
+      return channel.invokeMethod<void>('saveDesktop', {
+        'json': json,
+        'selected': selected,
+      });
+    }
+    return _saveJson(json);
   }
 
   Future<void> replaceWithJson(String raw) async {

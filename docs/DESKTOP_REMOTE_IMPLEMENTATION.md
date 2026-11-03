@@ -1,28 +1,26 @@
 # 手机查看并控制 Windows 桌面实施检查点
 
-更新时间：2026-10-29（北京时间）。本文件是持续开发任务的工作检查点；项目规范仍以 `D:\App\开发文档\Hinge.md` 为准。
+更新时间：2026-11-04（北京时间）。本文件记录实现检查点与历史诊断；当前验收步骤见[候选验收](DESKTOP_REMOTE_ACCEPTANCE.md)。
 
-## 用户授权与运行约束
+## 开发与验收边界
 
-- 目标：手机显示电脑桌面并操控，低延迟、模拟鼠标、完整手势和清楚的两端设置/运行状态。现有触控板/游戏模式必须保留。
-- 用户睡觉期间禁止 ADB、手机唤醒、连接、安装或操作。离线编译不需要手机；真机验收等用户回来。
-- 开始及开发阶段边界调用账号 usage limits；5 小时剩余 <=5% 时保存进度后停止，刷新再继续。额度是账号共享百分比，不能等同于时间/精确 token。不要使用免费额度重置券。
-- 2026-10-29 00:00 首次查询剩余44%，刷新 01:16:35；随后查询剩余41%。自动续作 heartbeat id `hinge`，每30分钟检查并推进同一聊天。
-- 未经请求不推送/发布 GitHub、不安装候选、不更改系统防火墙/证书/安全策略。APK 主包、arm64-v8a；Windows 构建安装器。保留回退包。
+- 手机显示电脑桌面并操控，低延迟、模拟鼠标、手势和清楚的两端设置/运行状态；保留独立触控板和游戏模式。
+- 候选仅进行离线构建与必要测试，真实视频、触控和无线网络表现需真机验收，不以Mock输入或黑色测试纹理代替。
+- Android沿用主包及正式签名，仅构建arm64-v8a；Windows保留安装器与回退方式。不改变系统安全策略。
 
-## 已完成组件（还不是完整远控）
+## 初始组件阶段（历史记录）
 
 1. `windows/Hinge.Core/DesktopVideoProtocol.cs`：独立媒体流 HDV1、32字节大端头、Annex B 完整访问单元；H264/H265标识、配置/关键帧标记、序号、微秒PTS、宽高。尺寸偶数2..8192，帧体1..4MiB，验证后再分配，截断报错。读写可取消，写入由单一发送任务串行拥有。
 2. `android/.../DesktopVideoProtocol.kt`：相同头部/限长解析；不经 Flutter 传递视频字节。
 3. `android/.../DesktopVideoDecoder.kt`：MediaCodec Surface 解码组件；Android 11+ 请求低延迟；分开统计提交/解码/OnFrameRendered回调。分辨率/codec变化重建解码器；不承诺解码器实际硬件加速或光子级显示延迟。组件尚未挂入 MainActivity 和 Dart 页面。
 4. C#两项定向测试通过：2字节拆包流往返/EOF、恶意长度与截断拒绝；`tmp/desktop-video-tests.log`，0警告0错误。Android `:app:compileReleaseKotlin`成功（1m5s），日志 `tmp/desktop-video-kotlin.log`；现有文件保留既有弃用警告，本轮新文件未报编译错误。没有操作手机或交付未接通的新安装包。
 
-## 下一个可执行阶段
+## 初期开发顺序（历史记录）
 
 1. 完成 Windows 采集/编码发送器。优先系统 Windows.Graphics.Capture / DXGI + Media Foundation H.264 硬编，或检查现有 LGPL FFmpeg 9.0.2 DLL 的可复用编码能力；不要复制 UU GPL 代码，也不要默认新加巨型外部运行时。先构建可运行的本机采集编码验证，再做端到端接线。没有检测成功前不声称NVENC或硬件编码。
 2. 专用媒体连接与身份认证：视频不能走现有大帧业务队列。Windows 用户明确开启桌面共享/授权，拒绝默认暴露屏幕；复用远控会话所有权，断线/禁用/超时及时释放。现有信任ID可伪造，不能把经明文控制通道发出的TLS指纹称为防MITM认证；必须实现真正绑定的首次确认与持久凭证，避免每次复制密钥。不降低已有显式加密配置。
 3. Native Texture/Surface接线和TLS接收任务，失败/取消/切后台可靠清理；后台不继续泄漏电脑画面。读取/解码/呈现分开统计；限制缓冲，发生拥塞不能随意丢弃P帧后继续解码，要请求关键帧并重新同步。
-4. Flutter桌面页面：设置里的原“手机远控电脑”入口，桌面/触控板选择，横竖屏、适应/原比例、缩放/平移、虚拟鼠标和左右键。单指移动/点击、双指滚动/右键、双击按住拖拽，手势互斥；多指与游戏控件不会卡键。共享输入发送器，不创建互相抢占的第二个控制会话。
+4. Flutter桌面页面：设置里的原“手机远控电脑”入口，桌面/触控板选择，横竖屏、适应/原比例、缩放/平移、虚拟鼠标和左右键。单指移动/点击、双指滚动/右键、停住长按后移动拖拽，手势互斥；多指与游戏控件不会卡键。共享输入发送器，不创建互相抢占的第二个控制会话。
 5. 编码/网络参数默认60fps、可调清晰度/码率，先保证H264路径。H265仅双方实际支持再启用。不要把接收FPS当显示FPS，不以追求120数字增加队列延迟。
 6. Windows设置清晰显示共享状态、观看设备、停止按钮；多显示器选择与旋转/缩放坐标映射；鼠标相对/绝对模式明确。避免UI线程做采集/编码/网络等待。
 7. 必要测试包括协议限长/分片、认证重放拒绝、连接所有权与取消、画面尺寸变化、坐标letterbox/缩放、手势互斥和释放；构建Windows安装器与ARM64主APK，检验签名/ABI/载荷。真实视频时延和手势体验等用户可用时验收，不能用模拟测试冒充。
@@ -33,7 +31,7 @@
 - 修复：用户显式开启后把偏好写入 `HKCU\Software\Hinge`，下次启动仅在此前明确开启时恢复共享；默认仍关闭。显式关闭、停止按钮和清除设备身份都会保存关闭。启动恢复失败时保留开启偏好并显示错误，关闭后重新开启可重试。
 - 桌面视频参数沿用现有 JSON 格式，注册表作为稳定主存储，`LocalSettings` 只作兼容镜像；首次读取旧 LocalSettings 时迁移到注册表。
 - 安全边界：自动恢复仅重启本机桌面媒体服务，仍要求已配对且当前 Hinge 会话已连接的 Android 设备通过现有 TLS 身份验证；未曾开启的用户不会开放共享。
-- 离线构建与包/签名/回退核验结果追加在 `D:\\App\\开发文档\\Hinge.md` #419。没有执行跨端实机验收。
+- 离线构建与包/签名/回退核验结果已记录。没有执行跨端实机验收。
 
 ## 本机环境错误处理
 
@@ -52,7 +50,7 @@
 - 实际合成测试：NVIDIA H264硬编150帧/2.5秒，PTS59.97FPS/最大18.09ms；软件150帧/60.0FPS/最大18.08ms；两条均经系统H264解码器完整解出150帧。不是手机实测。原生使用高精度waitable timer，避免Sleep1造成约32FPS。CPU兼容颜色转换、缩放和简化实际坐标光标仍在，不是GPU零复制。
 - 4项.NET定向测试通过：分帧/限长、身份码绑定、TLS首次确认前无画面/确认后传帧/同证书复用不重配/换证书拒绝。Flutter桌面页2项通过，原触控板3项通过，Dart目标analyze无问题。原生MF软件/硬件输出验证脚本位于scripts/test_desktop_video.py。Schannel不支持EphemeralKeySet，已改UserKeySet导入（不要回退）；PFX仍用户保护加密存储，不改系统信任根。视频输出统计来源OnFrameRendered，UI已改称“视频输出”，不是屏幕物理刷新率。
 - 末次Windows完整发布成功，838项ZIP：161448052 bytes SHA256 53EE85C83DDC47DD8069E495E8C71A9C0C8D8787A21B00E79691AE3EE92C77CE；Setup 229833900 bytes SHA256 789005E023B5326991034C11E934FD62B45754F51254C2726DB626931528F47C；内嵌ZIP限长哈希匹配独立ZIP，包内原生helper匹配编译输出。helper传parent-pid并监测父进程退出，避免强制更新主程序后残留采集进程占用EXE。
-- 末次Android主线ARM64 APK：22163351 bytes SHA256 7D97BE66A5270ABDCF6C108FFAD126C49B0952588075D9F32E5FA976EA904623；v2/v3签名、正式证书、16KiB对齐与仅arm64-v8a均检查通过。仍2.2.0+126本地候选，未安装/启动/推送/发布。修改前包在publish/rollback/pre-desktop-video-packaging-20261029。只证明离线构建与本机合成链路，用户睡觉期间没用ADB/手机。
+- 末次Android主线ARM64 APK：22163351 bytes SHA256 7D97BE66A5270ABDCF6C108FFAD126C49B0952588075D9F32E5FA976EA904623；v2/v3签名、正式证书、16KiB对齐与仅arm64-v8a均检查通过。仍2.2.0+126本地候选，未安装/启动/推送/发布。修改前包在publish/rollback/pre-desktop-video-packaging-20261029。
 
 ### 刷新后继续的优先事项
 
@@ -60,7 +58,7 @@
 2. 目前桌面鼠标仍复用旧RemoteInputSender，通过业务TCP与可选旧AES密钥流程，独立TLS媒体并没有自动加密控制指令。必须继续把桌面模式输入接到已认证TLS的上行独立通道，确保不被文件流阻塞、无需复制旧密钥，并复用RemoteInputManager的单一所有权/按键状态释放。旧触控板/游戏模式保持兼容；不能把当前整个远控称为端到端全加密。
 3. 补自定义fps/码率/分辨率和实际编码器状态，支持monitor选择/旋转/会话恢复；当前原生rotation显式拒绝、默认monitor0。CPU转换是性能下限，接着实现GPU视频处理/颜色转换再验证；目前只有H264实际路径，不能宣称H265可用。
 4. 原生循环父进程监测刚接线、需做不录屏的进程退出测试；无手机下验证GPU/capture初始化可用性时不落盘真实画面。设备真机仍等用户回来，不ADB连接/唤醒/安装。
-5. 最终重建主APK/Windows安装包并同步校验值；不要重复仅规划或把当前候选宣称高完成度最终验收。未完成目标时维持heartbeat继续，达到5%停止线保存必要进度，刷新再做。
+5. 最终重建主APK/Windows安装包并同步校验值；不要重复仅规划或把当前候选宣称高完成度最终验收。
 
 ## 2026-10-29 TLS输入检查点（优先于上面的“刷新后”待办）
 
@@ -68,7 +66,7 @@
 
 描述请求/页面退出订阅、停止清Texture/核对对话框与迟到确认已加回归。Windows本地拒绝立即结束等待；Android配对阶段并行等待UI选择/服务器结果。现有测试：.NET相关9项+本地拒绝1项，Flutter8项，目标Dart analyze无问题。保存回退包pre-desktop-tls-input-20261029。
 
-下一轮优先做：GPU颜色转换/缩放、显示器/旋转与编码fps/码率参数；配对pin持久加载/强制复核测试；静止桌面下的媒体下行保活与明确断线超时（当前native读取可等待无帧，不能简单超时误断静态屏），自动重连/恢复状态；实际光标形状与源输入位置映射；原生父进程退出不录屏测试。保持真实设备/物理呈现验收待用户回来，不ADB。此任务未完成，不暂停heartbeat、不宣称最终高完成度交付。
+下一轮优先做：GPU颜色转换/缩放、显示器/旋转与编码fps/码率参数；配对pin持久加载/强制复核测试；静止桌面下的媒体下行保活与明确断线超时（当前native读取可等待无帧，不能简单超时误断静态屏），自动重连/恢复状态；实际光标形状与源输入位置映射；原生父进程退出不录屏测试。保持真实设备/物理呈现验收待用户回来，不ADB。
 - 本阶段最终分发验证：Windows完整Release安装器/ZIP构建成功（不是仅dotnet build）；ZIP 838项完整读取，Hinge.dll、Hinge.Core.dll和原生采集helper与本次发布输出逐项SHA256一致，安装器内嵌载荷长度及哈希和独立ZIP一致。身份MSIX签名有效；Setup外层仍NotSigned。
 - Windows Setup 229835430 bytes，SHA256 36E536CC36F5FB16D3B80672A4223B9BE9EA8DE43C27F92F4C3139F585EB1DD8；便携ZIP 161449582 bytes，SHA256 5B573366D6381E7D8BD7826E2C2CD415C35607D07C33F659983762BBC18E700A。
 - Android Release主APK 22163351 bytes，SHA256 5EA11786A4DA932BCA5A1AE6CFBE796EF80E84403F02AB86A502ABDDC39A0DAD；仅arm64-v8a、v2/v3签名、正式证书SHA256 3eb0f6708904f8ef916c6a2572e394ba981ee25d64861344cf1921ca7ea17975及16KiB对齐均通过。APK总体字节数与前包相同，但已比对classes.dex及libapp.so内容均变化，不能只凭文件大小判断构建陈旧。
@@ -84,11 +82,11 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 安装器进一步处理采集helper的更新占用：只对目标安装目录中精确匹配的Hinge.DesktopVideo.exe等待父进程清理，仍未退出才定向终止；读取路径/退出竞态安全处理。保留StopRunningApp原有“不能杀整个进程树，否则QQ/Weixin等用户应用被误关”的保护，不按仅进程名或目录前缀扩大终止范围。路径白名单7项测试通过；未实际运行安装器或关闭用户应用。
 - 最终Windows安装器 229843043 bytes，SHA256 0E99B929C82AAA4997D3BBA4A0EB034BFFC87F3BFEA605BD5F9DBBF16404AB51；ZIP 161456815 bytes/838项，SHA256 E71C218D1507A630FEE72870DEBA4298EA8759E6D84C7ECAB1F4073C92591CCF。ZIP可完整读取、Hinge/Core/Native helper与本次输出一致、内嵌载荷校验匹配、身份MSIX签名有效；Setup外层仍未签名。
 - Android主APK 22163351 bytes，SHA256 3AAE6A39AC71D07F7E861FC5176401FF81D9DF989FFDC047E763FBDC8D752D44，仅arm64-v8a；v2/v3签名、正式证书及16KiB对齐通过。Release日志见tmp/desktop-release-windows.log、tmp/desktop-release-android.log。无安装/推送/真实手机操作。
-- GPU与媒体保活已具备离线证据，但旋转显示器、自定义画质参数、自动恢复与手机真实显示体验仍未完成；保留heartbeat继续。下一步自动恢复应区分身份拒绝与网络故障，前后台分离，稳定运行后再清重试计数，避免每次ready重置导致永续重连；旧Hinge连接对象更换时不能盲目复用。详细诊断留在本机，不把路径或私密信息塞入未认证0x0084描述响应。
+下一步自动恢复应区分身份拒绝与网络故障，前后台分离，稳定运行后再清重试计数，避免每次ready重置导致永续重连；旧Hinge连接对象更换时不能盲目复用。详细诊断留在本机，不把路径或私密信息塞入未认证0x0084描述响应。
 
 ## 2026-10-29 恢复和画质检查点： 桌面远控有限恢复与电脑端画质设置（2026-10-29）
 
-- 本轮开始5小时剩余51%，阶段复查48%，未用重置券；遵守用户睡觉期间禁止ADB/手机连接、唤醒、安装与操作。继续离线开发，未安装Windows候选、未推送发布。
+继续离线开发，未安装Windows候选、未推送发布。
 - Android桌面连接新增500/1500/4000ms三次有限重试；稳定ready满10秒才清除次数，短暂ready不清次数，避免采集失败时永续重连。仅已确认身份的网络EOF/Socket/超时或已建立TLS的上行网络故障可重试；身份/配对拒绝、协议/解码失败、输入队列拥塞不自动重试，不自动清pin，也不回退明文。
 - Native单次失败标记避免输入writer/保活/读循环同时报错；保活写失败不再静默stop。退出后台取消重试/断流，回前台只恢复之前已经成功观看或待恢复的会话。保留native onStop先于Flutter paused的恢复意图；替换Hinge SessionConnection时解绑旧订阅，取消旧描述与原生会话。普通Hinge会话完全断开仍明确提示，不能盲目复用旧连接对象。
 - Windows“设置→手机远控电脑→允许手机查看电脑桌面”原卡片加入帧率15–120、最长边640–3840、码率1–50Mbps滑块，默认60/1920/8；单条LocalSettings JSON保存、加载校验异常回默认，明确按保存应用。共享开启时保存会结束当前观看并重启共享，不在每次拖滑块时重建编码器。状态文案采用实际配置。仍H264优先硬编及自动软件兼容路径，不新增未经验证的H265选项。
@@ -99,11 +97,11 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 本阶段最终构建与校验：Windows安装器229845779 bytes，SHA256 CA16F770626FD01D633EEDBC315E9BE1950B9A5A571D8FF99B8AD7BE62EFA214；ZIP161459551 bytes/838项，SHA256 B89778F0660F5A2B67574D664A7113D689E1A29D430AB465DE5597C713A4E56E。完整ZIP读取、包内主DLL/Core/native helper与最终构建输出、Setup内嵌ZIP长度/哈希均一致；身份MSIX签名Valid，外层Setup仍NotSigned。最后编译输出时间晚于本轮最终源码修改。
 - Android主APK22163351 bytes，SHA256 217B8EC0E040840058B66968784AC08FF98825CACEB0302C90800ABECBD37DE8；仍com.hinge.office 2.2.0+126，仅arm64-v8a、v2/v3签名、原正式证书及16KiB对齐通过。classes.dex/libapp.so都与回退包不同，最新APK时间晚于最终Dart修改。当前候选未安装。
 - 最终定向.NET桌面媒体/输入lease/画质14项通过；Flutter桌面/输入9项通过。Release与验证日志：tmp/desktop-quality-release-windows.log、desktop-recovery-release-android.log、desktop-quality-integration-tests.log、desktop-recovery-tests.log；分发证据tmp/desktop-quality-recovery-artifacts.json。仅电脑回环/MockInputInjector，不注入用户实际鼠标键盘，不操作手机。
-- 阶段末5小时剩余43%、周剩余60%；仍高于停止线，保持heartbeat继续。下一轮先读本检查点，接实际显示器枚举/选择和旋转转换，随后补实际编码器状态/必要离线测试。不要重复构建已验证同一源码、不要因省略实机限制而宣称已达UU体验。
+下一轮先读本检查点，接实际显示器枚举/选择和旋转转换，随后补实际编码器状态/必要离线测试。不要重复构建已验证同一源码、不要因省略实机限制而宣称已达UU体验。
 
 ## 2026-10-29 显示器旋转检查点： 显示器选择与旋转采集（2026-10-29）
 
-- 本轮起始5小时剩余43%，阶段复查37%，未使用重置券。未使用ADB/手机、未安装或发布；仅电脑端只读枚举、合成测试和离线构建。
+未使用ADB/手机、未安装或发布；仅电脑端只读枚举、合成测试和离线构建。
 - 原生helper新增--list-monitors，只枚举DXGI当前AttachedToDesktop输出，不创建采集/编码器。和采集共用枚举顺序，最多16个。Windows设置原共享卡片新增显示器选择和刷新；沿用正文TextBlock和不透明M3下拉背景，避免旧Acrylic文字模糊回归。列表读取3秒截止、8192字符上限，退出/超限只清理自己启动的helper。
 - 保存配置新增MonitorDeviceName，采集按Windows逻辑设备名精确匹配，不存在就报错；旧配置无设备名时仍按旧索引兼容。该名称是Windows逻辑显示器标识，并非永久EDID物理身份；更换显卡/扩展坞拓扑后应刷新确认。选项缺失不会自动选第一屏保存，也不静默回退其他屏幕。
 - 新增DesktopGeometry的直立画面→采集纹理映射，GPU VideoProcessor处理0/90/180/270度，先检查旋转能力，不支持时保留CPU映射回退。输出尺寸按直立方向计算、校验实际桌面坐标尺寸；鼠标箭头位置按直立桌面尺寸缩放，首帧GDI已经直立，不重复旋转。未修改用户电脑的显示方向或系统设置。
@@ -111,13 +109,13 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - .NET显示器列表/配置16项定向测试通过：格式、顺序、旋转尺寸、重复/错号/超长/非法字段拒绝、配置兼容及边界。当前电脑枚举1屏2560x1440；按明确设备名只读采集探测GPU+NVIDIA MFT成功，静态首帧submitted=1 encoded=1，stdout全部丢弃Stream.Null，没有保存或查看真实桌面画面，没有输入注入。
 - 本轮修改仅Windows，复用上轮已验证的ARM64主APK，不无意义重建未改的Android。最终Windows完整Release安装器229854441 bytes SHA256 0B236EC70E8708B77ABC1C5DE0537DCDF23579976301AAF9788F74391C68ABF6；ZIP161468213 bytes/838项 SHA256 63463E3F845FB6F0AAC68FE47ACCBAB7A9607C3DD4F03FAEA918537996BB318E。内嵌ZIP长度/哈希、完整ZIP读取、主/Core/native与输出一致；身份MSIX签名Valid，Setup外层仍NotSigned。回退包publish/rollback/pre-desktop-monitors-rotation-20261029。
 - ARM64 APK仍22163351 bytes SHA256 217B8EC0E040840058B66968784AC08FF98825CACEB0302C90800ABECBD37DE8。证据tmp/desktop-monitors-rotation-artifacts.json；日志desktop-monitors-release-windows.log、desktop-monitor-tests.log、desktop-rotation-verification.log、desktop-selected-monitor-probe.log。未做WinUI实际点击/手机真机测试。
-- 下一阶段重要待办：当前桌面输入仍是系统相对鼠标，可跨显示器；应为桌面会话增加所选屏幕内的指针定位/边界与点击保护，防止观看副屏却操作到画面外。不能直接ClipCursor全局锁住用户鼠标，应仅约束远控事件，并保留独立触控板/游戏原有相对模式。随后完善实际编码器状态显示与必要离线回归；旋转物理屏/真机低延迟体验仍待用户回来。任务未全部完成，heartbeat继续。
+- 下一阶段重要待办：当前桌面输入仍是系统相对鼠标，可跨显示器；应为桌面会话增加所选屏幕内的指针定位/边界与点击保护，防止观看副屏却操作到画面外。不能直接ClipCursor全局锁住用户鼠标，应仅约束远控事件，并保留独立触控板/游戏原有相对模式。随后完善实际编码器状态显示与必要离线回归；旋转物理屏/真机低延迟体验仍待用户回来。
 - 官方接口依据：https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api 、https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11videocontext-videoprocessorsetstreamrotation 。独立实现映射与合成测试，未并入UU GPL源码。
-- 本阶段结束5小时剩余35%、周剩余59%，高于5%停止线；继续保留自动续作，不使用重置券。
+
 
 ## 2026-10-29 鼠标范围检查点： 桌面会话鼠标范围与实际编码器状态（2026-10-29）
 
-- 本轮开始5小时剩余34%；阶段查询有一次工具暂时不可读，随后恢复为剩余26%。未用重置券。仍禁止ADB/手机操作，未安装或推送。
+未用重置券。仍禁止ADB/手机操作，未安装或推送。
 - RemoteInputManager认证lease新增可选独立injector，旧单参数调用及独立触控板/游戏保持原有实现。桌面事件、禁用/断线/过期释放均发送到同一lease的injector；旧lease不能影响新lease。没有全局ClipCursor，也没有限制电脑本人的物理鼠标。
 - Win32InputInjector.ForDesktop在认证控制开始时按所选Windows设备名解析HMONITOR，读实际物理桌面边界；每个远程定位事件再核对设备名和边界，拔屏或分辨率/布局变化报错结束会话，抬键/抬鼠标不依赖显示器仍存在。开启共享时也冻结实际逻辑设备名，避免纯索引因枚举变化切错屏。
 - 桌面模式的相对触控位移转换为所选屏幕内的绝对指针事件：原光标在屏幕外时从所选屏中心开始，移动按屏幕边界限制；点击/滚动前将定位与操作组成同一SendInput批次，避免定位和点击之间被其他输入插入。虚拟桌面支持负坐标、竖屏、多屏原点与像素中心归一化，避免屏边取整把点击落到相邻显示器。主程序manifest已确认PerMonitorV2。
@@ -128,11 +126,11 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 本轮Windows-only，Android仍使用上轮已验证ARM64主APK22163351 bytes SHA256 217B8EC0E040840058B66968784AC08FF98825CACEB0302C90800ABECBD37DE8。分发证据tmp/desktop-pointer-artifacts.json；Release和测试日志desktop-pointer-release-windows.log、desktop-pointer-integration-tests.log。
 - 未安装或点击新UI、未真实注入鼠标，物理多屏/旋转屏/手机手感仍未验收。下轮优先复查Android低延迟呈现与输入生命周期、必要统计/失败有界处理，准备明确可执行真机验收项；当前光标仍简化箭头，游戏模式尚未叠加到桌面视频视图，不得把这些描述为已完成。真实设备验收等用户醒来，不以假定失败要求用户提供USB。任务继续，未达到全部完成暂停条件。
 - Win32接口依据：https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-mouseinput 、https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput 。没有更改UIPI、权限、安全桌面或系统安全策略；普通权限能否操作目标应用仍受Windows权限约束。
-- 本阶段结束5小时剩余22%、周剩余57%，仍高于停止线；自动续作保持开启，继续离线实现，达到<=5%再保存并等待刷新。
+
 
 ## 2026-10-29 Android进度检查点： Android解码阻塞、输出统计与迟到输入回调（2026-10-29）
 
-- 本轮起始5小时剩余21%，阶段复查16%、14%、12%；未用重置券，不使用ADB、不连接/唤醒/安装/操作手机。仅离线构建与模拟回归。
+仅离线构建与模拟回归。
 - 修复TouchpadScreen桌面输入Future的迟到回调：拒绝/异常只影响发起时相同sessionId，旧连接的错误不能结束已经重连的新控制。新增两项Widget回归分别覆盖迟到false和PlatformException，均通过。测试需等待ready引发的父子布局更新完成再点按钮；初次少等一次frame导致没有发送事件，不记录为产品输入故障。
 - MediaCodec解码输入连续等待超过250ms主动终止本次会话，存在待解码帧且连续1秒取不到输出才报错；静态桌面pending=0不超时，已经有可用输出时先处理输出不误判。失败由native现有单次fail路径关闭socket并释放Windows控制，不无限积压旧画面或自动无限重连。这两个阈值是当前实现的保护值，仍需真机校准，不等于实测时延保证。
 - 新增不依赖Android API的DesktopDecodeState，实际解码器使用其进度计数/截止与裁剪范围检查。Release编译后的实际Kotlin类用JDK17和已缓存Kotlin标准库执行src/test/java/.../DesktopDecodeStateCheck.java（java -ea），验证输入250ms边界、输出1000ms边界、空闲/重置不误断、pending计数与裁剪边界。可重跑scripts/test_desktop_decode_state.ps1，不新增JUnit/Robolectric或模拟手机。
@@ -141,25 +139,25 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 14项Flutter桌面/输入/触控板回归通过；目标Dart analyze无问题。Android主线ARM64 Release构建成功，原生Kotlin通过编译；纯JVM进度/几何检查通过。没有MediaCodec真机单元测试，不把上述纯状态测试当成视频硬件验收。
 - 最终主APK22163351 bytes SHA256 D02E88D3ED6903C21965D1E5EB5616B0B4F312FAC8AB8212E9BDF48BA34CD080；正式证书SHA256 3eb0f6708904f8ef916c6a2572e394ba981ee25d64861344cf1921ca7ea17975，v2/v3签名、仅arm64-v8a、16KiB对齐与ZIP完整读取通过。APK时间晚于最终生产源码。前包位于publish/rollback/pre-desktop-android-progress-20261029。
 - Windows源码本轮未改，保留已验证最新安装器229858353 bytes SHA256 6CFD04C374D31E8324CB70109AE4960D46E374459ACE6214CF26441330E4C4BC、ZIP161472125 bytes SHA256 42A0E63209538E6B56C6BE4C0187D97563C575603E25E9AFDED1F0889AC1A32B；复核内嵌载荷和Hinge/Core/Platform/native输出一致。证据tmp/desktop-android-progress-artifacts.json，日志desktop-android-progress-release.log、desktop-android-stall-tests.log、desktop-decode-state-check.log、desktop-android-progress-signature.log、desktop-android-progress-alignment.log。
-- 下一轮：检查首帧光标显示和目前简化箭头、桌面视频与游戏覆盖的适配范围，以及准备实机验收。原生首帧GDI路径目前不画箭头，鼠标移动后的DXGI帧才显示；应复用同一绘制函数补齐。真实旋转屏/手机延迟、权限提示、触控/缩放/恢复等仍待用户回来，不擅自使用手机。达到5%停止线保存进度等待刷新，未完成不暂停自动化。
-- 本阶段结束5小时剩余10%、周剩余55%；高于停止线，下一轮只选择可在剩余额度内完整验证的小项，任何阶段<=5%立即保存检查点停止开发，刷新后续作。
+- 下一轮：检查首帧光标显示和目前简化箭头、桌面视频与游戏覆盖的适配范围，以及准备实机验收。原生首帧GDI路径目前不画箭头，鼠标移动后的DXGI帧才显示；应复用同一绘制函数补齐。真实旋转屏/手机延迟、权限提示、触控/缩放/恢复等仍待用户回来，不擅自使用手机。
+
 
 ## 2026-10-29 首帧光标检查点： 首帧鼠标标记与边界绘制（2026-10-29）
 
-- 本轮起始5小时剩余9%，阶段复查7%，未用重置券、不操作手机/ADB。选择小项完成，未扩张到新的大功能。
+选择小项完成，未扩张到新的大功能。
 - 将原有NV12简化箭头绘制集中到DesktopGeometry.DrawDesktopPointer，初始GDI快照与后续DXGI帧共用DrawCursor，避免首次静止桌面无光标、必须移动后才出现。只在系统光标显示且实际位于所选屏幕内绘制，避免相邻屏光标的箭头尾部误出现在当前画面。
 - NV12画布尺寸、偶数宽高、最大尺寸和完整缓冲区大小检查；屏外极值提前返回，屏边裁剪防止越界。新增--verify-pointer仅操作合成缓冲区，不读取桌面/系统光标；2x2、12x12、128x128的尖端、右下边缘、屏外极值、非法画布拒绝检查通过。构建日志tmp/desktop-pointer-firstframe-build.log，自检tmp/desktop-pointer-marker-check.log。
 - 仍为简化箭头，未实现系统I-beam/手形/自定义光标形状，不能描述为原生全光标还原。未录制或查看真实桌面，未注入鼠标按键，也未安装候选。
 - 前Windows包保存在publish/rollback/pre-desktop-firstframe-cursor-20261029（SHA256SUMS.txt）。Windows完整Release构建正在进行，日志tmp/desktop-firstframe-release-windows.log；完成后校验载荷并记录新哈希。Android本轮无改动，保留上轮ARM64主APK D02E88D3ED6903C21965D1E5EB5616B0B4F312FAC8AB8212E9BDF48BA34CD080。
-- 下一轮先检查额度，<=5%仅保存并等待刷新，不能继续开发或消耗重置券。刷新后继续桌面视频/游戏模式适配范围、实际光标形状及明确实机验收准备。用户未醒来前手机仍禁止使用，任务未全验收不暂停自动化。
+刷新后继续桌面视频/游戏模式适配范围、实际光标形状及明确实机验收准备。
 - 本阶段最终Windows安装器229859530 bytes SHA256 E291730FC5945A79B146D39C786A4A9307B8D3D1AD29B9D7C45332E1D35E4E00；ZIP161473302 bytes/838项 SHA256 DDD8C369BEE7CD12B16AB97DB7E0D6358CA590FA514432EF1B205FC2EDBFBAAF。完整ZIP读取、Hinge/Core/Platform/native匹配、Setup内嵌载荷一致；身份MSIX Valid，Setup外层NotSigned。包内helper再次执行--verify-pointer通过，文件时间晚于最后生产源码。证据tmp/desktop-firstframe-artifacts.json。
 - 新增docs/DESKTOP_REMOTE_ACCEPTANCE.md，列两端设置入口、首次核对、鼠标/手势/缩放、屏幕选择、连续运动和恢复停止的真机预期，明确H264桌面方向与原手机投屏编码选项不同、真实FPS/延迟尚未验收。不是要求夜间操作手机。
-- 阶段末查询5小时剩余6%、周剩余55%；不再新增大项，下一轮继续先查停止线。任务尚未完成，保持自动续作，不用重置券。
-- 停止线检查：5小时已用95%、剩余5%，已停止开发；当前源码/包/测试和待办均保存，未留下构建进程。预计本窗口刷新 2026-10-29 06:26:32 +08:00。保持heartbeat仅检查额度，刷新后从本检查点继续，不使用重置券，不操作手机。
+任务尚未完成，保持自动续作，不用重置券。
+预计本窗口刷新 2026-10-29 06:26:32 +08:00。
 
 ## 2026-10-29 游戏覆盖检查点： 桌面视频游戏覆盖与相对鼠标协商（2026-10-29）
 
-- 5小时额度已刷新，本轮起始剩余100%、周剩余53%；阶段检查剩余84%。未使用重置券，继续遵守禁止ADB/手机连接、唤醒、安装、操作；仅离线实现与模拟/电脑端构建。
+未使用重置券，继续遵守禁止ADB/手机连接、唤醒、安装、操作；仅离线实现与模拟/电脑端构建。
 - Android电脑桌面页横竖屏均提供游戏模式入口。透明GameModeScreen叠在同一DesktopVideoView/Texture上，进入/退出不新建Native会话；复用RemoteInputSender的同一TLS控制通道、原预设管理、方向轮盘、多指按键/双指拖拽、触控反馈、图片/文字布局编辑及电脑同步。普通触控层在游戏下方IgnorePointer，避免同一次操作同时触发两套手势。游戏时隐藏视频统计徽标，提示文字增加白色阴影以适应视频背景。
 - GameModeScreen支持嵌入退出回调，退出按钮/系统返回仅关闭覆盖；编辑中返回保留原放弃确认逻辑。退出前释放键鼠；能力丢失、控制失效、后台切换仍释放。恢复用户进入前的手动横/竖屏设置，修正原先手动竖屏进入游戏退出后总恢复横屏的分支。
 - 游戏视角不能套用普通桌面绝对指针/屏边限制，否则会影响游戏鼠标捕获。新增MouseMove专用RemoteInputEvent.Flags 0x0004相对位移请求；认证lease仅在该动作/标记下调用MoveRelativeMouse，其余移动继续受所选屏范围限制。Win32只检查显示器身份/布局仍有效，不ClipCursor、不更改系统安全策略。点击和释放规则保留；旧独立触控板/游戏仍相对移动，兼容原通道。
@@ -168,12 +166,12 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - Windows主线完整安装器229859929 bytes SHA256 DA9B2A6B1CE26D876CF3EC61A86139BE901A0BCF910F7A479726693FF4299AA5；ZIP161473701 bytes/838项 SHA256 96C1B1CA0831E2A000C245630FA45739EBA4C4CF12E937653C2FA157ADB2E7D2。完整ZIP读取、Hinge/Core/Platform/native一致、Setup内嵌载荷长度/哈希通过；身份MSIX Valid，Setup外层仍NotSigned。
 - 主APK22163351 bytes SHA256 853C084E32029E54B12621A86A05FB659C01A061868526E28ED63DF2B092F89D，原正式证书、v2/v3、仅arm64-v8a、16KiB对齐均通过。仍2.2.0+126/Windows2.2.0.0本地候选。三件前包在publish/rollback/pre-desktop-game-overlay-20261029，未安装/提交/推送/发布。
 - 证据tmp/desktop-game-artifacts.json，日志desktop-game-release-windows.log、desktop-game-release-android.log、desktop-game-all-tests.log、desktop-game-input-tests.log、desktop-game-overlay-tests.log、desktop-game-decode-check.log。验收清单docs/DESKTOP_REMOTE_ACCEPTANCE.md已更新游戏步骤与真实兼容性边界。
-- 下一步优先实际光标形状（当前仍简化箭头）及离线代码审查/验收准备。视频游戏覆盖离线接线已完成，不等于实际游戏/厂商解码/无线低延迟已验收；不得绕过Windows UIPI、游戏反作弊或安全策略。手机仍须等用户明确可用后才测试；未全验收保持heartbeat继续。
-- 本阶段结束5小时剩余80%、周剩余50%；额度充足，自动续作继续，不使用重置券。下一轮从本检查点继续，保留所有原有改动/回退包，不重复构建相同源码或擅自发布。
+- 下一步优先实际光标形状（当前仍简化箭头）及离线代码审查/验收准备。视频游戏覆盖离线接线已完成，不等于实际游戏/厂商解码/无线低延迟已验收；不得绕过Windows UIPI、游戏反作弊或安全策略。
+下一轮从本检查点继续，保留所有原有改动/回退包，不重复构建相同源码或擅自发布。
 
 ## 2026-10-29 系统光标检查点： 系统光标形状、热点与小区域合成（2026-10-29）
 
-- 额度工具前两次暂不可读，第三次恢复；起始有效值5小时剩余78%，阶段末72%、周剩余49%。不使用重置券，不连接/操作手机，也没有录制/查看真实桌面或注入输入。
+不使用重置券，不连接/操作手机，也没有录制/查看真实桌面或注入输入。
 - Windows原生新增DesktopCursor，GetIconInfo读取当前系统光标尺寸/热点，DrawIconEx在光标尺寸的离屏DIB中处理32bit透明与单色AND/XOR图像，合成回NV12。文本I-beam/手形/缩放/忙碌/交叉等形状不再统一画简化箭头；首次GDI与后续DXGI都共用此路径，失败或超出512像素形状上限回退原箭头。
 - 只转换光标小区域的NV12↔RGB，透明像素对原画面逐字节保持；色度按2x2更新。复用DC/DIB和暂存数组，GetIconInfo位图及时DeleteObject，借用系统HCURSOR不销毁；位置按真实热点及视频缩放映射，屏边和极值提前裁剪。原生每帧不增加整屏BGRA回读。
 - DXGI帧按独立指针可见性元数据决定是否额外绘制；已有嵌入光标的图像不再次覆盖，位置更新为0时沿用上次元数据。GDI静态首帧仍单独绘制。实际多驱动/旋转屏/不同DPI仍待真机验证，不能把内置资源测试当作这些硬件已验收。
@@ -183,11 +181,11 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 最终Windows安装器229864064 bytes SHA256 DB05587B6719309424AFCAE890286813AEF48E6C7773870CA8941F802F7763DA；ZIP161477836 bytes/838项 SHA256 9BA6D1CFFF9B109969D162C40BCBEB4ED4B8F17BCDAE0B416754DEA72193C309。完整ZIP读取、Hinge/Core/Platform/native匹配、Setup内嵌载荷一致；身份MSIX Valid，Setup外层NotSigned。前包publish/rollback/pre-desktop-system-cursor-20261029。
 - Android主APK仍22163351 bytes SHA256 853C084E32029E54B12621A86A05FB659C01A061868526E28ED63DF2B092F89D。证据tmp/desktop-system-cursor-artifacts.json；日志desktop-system-cursor-release-windows.log、desktop-system-cursor-check.log、desktop-system-cursor-gpu-check.log。真机验收清单已同步光标形状/热点/双光标检查。
 - 接口依据：https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-drawiconex 、https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-iconinfo 、https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api 。没有复制UU GPL代码，没有改变安全策略或系统光标设置。
-- 下一阶段：复查真实帧呈现与低延迟统计边界，必要时区分native视频输出与Flutter应用绘制节拍，避免又用接收/解码数字当肉眼实际帧率；继续离线代码审查和验收准备。当前手机仍禁止使用，不能声称已达UU真实效果；保持自动续作，<=5%保存停止，用户明确可用后再做真机验收。
+- 下一阶段：复查真实帧呈现与低延迟统计边界，必要时区分native视频输出与Flutter应用绘制节拍，避免又用接收/解码数字当肉眼实际帧率；继续离线代码审查和验收准备。
 
 ## 2026-10-29 纹理取帧检查点： 真实纹理取帧统计与界面计时边界（2026-10-29）
 
-- 本轮开始5小时剩余70%，阶段末46%、周剩余45%；未使用重置券，未连接/唤醒/安装/操作手机，继续离线实现和测试。
+
 - 关键复核：当前Flutter引擎5d531788691ec3404cac0cee66ead4007b177363的纹理更新调用ScheduleFrame(false)，走DrawLastLayerTrees；该路径没有普通DoDraw的OnFrameRasterized通知。不能把SchedulerBinding FrameTiming计数当成全部纹理绘制FPS，更不能把它的低值直接判成视频卡顿。初始实现已在本轮交付前纠正，去掉应用绘制FPS/应用最大间隔；保留的FrameTiming只统计“界面重建P95”。
 - 使用当前SDK的SurfaceTextureEntry.setOnFrameConsumedListener，在引擎updateTexImage之后读取SurfaceTexture.timestamp，按实际新图像时间戳去重，统计“纹理取帧FPS”和最大取帧间隔。不会把同一图像的多次UI重绘算成新视频帧；不替换引擎自己的OnFrameAvailableListener。回调只读取时间戳和更新原子计数，每秒通过已有stats上报，不传视频像素到Dart，也不强制刷新界面凑FPS。时间戳读取失败仅将该项标为待采样，不终止视频；结束时解绑listener。
 - 同时记录MediaCodec OnFrameRendered实际nanoTime的最大视频输出间隔，重复/倒序/无效时间不推进基准，重建解码器重置；旧decoder的迟到回调按实例身份忽略。增加系统报告的当前display Hz，仅查询，不强制更改显示模式。所有这些都是管线/模式统计，仍不能宣称物理scanout或真实端到端延迟。
@@ -196,12 +194,12 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 定向验证：Flutter统计/桌面/输入/触控板/游戏25项全部通过，目标Dart analyze无问题。JVM自检扩展实际编译的DesktopDecodeState/DesktopTextureStatistics，验证视频间隔的重复/倒序/重置、新图像去重、重复重绘不计数、无效时间戳与恢复、最大间隔原子读取，原解码截止/裁剪检查继续通过。没有MediaCodec/Texture真机验收；测试的“视频60/纹理45”仅为模拟数据，不能拿来宣称实际测得。
 - ARM64主线Release成功，最终APK22228887 bytes SHA256 1A5D9C609833DBF3972A8A6FBBF616AEDFE5177752295473944A41C89251ACF3；正式证书、v2/v3签名、仅arm64-v8a、16KiB对齐、ZIP完整读取通过，APK时间晚于最后生产源码。前包publish/rollback/pre-desktop-frame-cadence-20261029。
 - Windows本轮未改，保留安装器229864064 bytes SHA256 DB05587B6719309424AFCAE890286813AEF48E6C7773870CA8941F802F7763DA，ZIP161477836 bytes/838项 SHA256 9BA6D1CFFF9B109969D162C40BCBEB4ED4B8F17BCDAE0B416754DEA72193C309；载荷/输出重新比对通过。证据tmp/desktop-cadence-artifacts.json，日志desktop-frame-cadence-release-android.log、desktop-cadence-all-tests.log、desktop-frame-cadence-analyze.log、desktop-cadence-jvm-check.log、desktop-cadence-apk-signature.log、desktop-cadence-apk-alignment.log。
-- 重要源证据：D:\flutter_sdk\engine\src\flutter\shell\common\shell.cc OnPlatformViewMarkTextureFrameAvailable；rasterizer.cc DrawLastLayerTrees/DoDraw；Android SurfaceTextureWrapper.java updateTexImage、FlutterRenderer.java SurfaceTextureRegistryEntry、TextureRegistry.java OnFrameConsumedListener。对应不可变源码 https://github.com/flutter/flutter/tree/5d531788691ec3404cac0cee66ead4007b177363/engine/src/flutter 。不要以后再次用FrameTiming漏掉纹理快速重绘，或给SurfaceTexture另设OnFrameAvailableListener把引擎回调覆盖。
-- 下一轮先做整体离线生命周期/安全边界审查和必要回归；不要为消耗额度随意增加设置或在没有实机数据时强行修改系统刷新率。真正的无线端到端延迟、厂商纹理回调准确性、物理多屏/游戏兼容性仍待用户明确手机可用后验收。保持自动续作，<=5%保存停止，不发布/推送。
+- 重要源证据：Flutter engine/src/flutter/shell/common/shell.cc OnPlatformViewMarkTextureFrameAvailable；rasterizer.cc DrawLastLayerTrees/DoDraw；Android SurfaceTextureWrapper.java updateTexImage、FlutterRenderer.java SurfaceTextureRegistryEntry、TextureRegistry.java OnFrameConsumedListener。对应不可变源码 https://github.com/flutter/flutter/tree/5d531788691ec3404cac0cee66ead4007b177363/engine/src/flutter 。不要以后再次用FrameTiming漏掉纹理快速重绘，或给SurfaceTexture另设OnFrameAvailableListener把引擎回调覆盖。
+真正的无线端到端延迟、厂商纹理回调准确性、物理多屏/游戏兼容性仍待用户明确手机可用后验收。
 
 # 409. 会话重启竞态与首帧截止（2026-10-29）
 
-- 本轮先查5小时额度，有效值从剩余44%降至33%，周剩余43%；中间一次查询失败后已恢复，不使用重置券。持续遵守不连接/唤醒/安装/操作手机，不注入实际输入，不推送发布或改安全策略。
+持续遵守不连接/唤醒/安装/操作手机，不注入实际输入，不推送发布或改安全策略。
 - Dart停止状态在等待native stop前立即清除。所有重启入口（设备替换、手动重连、网络恢复）共用带generation校验的_restart；旧停止Future完成后不能关闭新ready或再启动多余连接。新增延迟stop/快速三次设备替换Widget回归。首帧等待期间进入后台也保留恢复意图，包括native onStop先于Flutter生命周期通知。
 - Windows NativeDesktopVideoSource对从采集进程读到真实视频access unit设置8秒总截止；配置包/heartbeat不能延长截止。首帧后撤销启动超时，静态桌面可以合法无新图像；用户取消仍是取消，不误报启动失败。直接取消正在进行的Stream.ReadAsync，无WaitAsync遗留后台读取。超时沿用finally回收自有helper及诊断读取。InternalsVisibleTo仅为定向测试，不暴露生产设置。
 - Android从TLS ready改为connecting提示，须已有解码视频输出并收到Flutter纹理消费回调后才发送UI ready/控制能力；不依赖厂商OnFrameRendered是否及时回调。8秒首帧截止在main Handler独立执行，不能被MediaCodec初始化或媒体读取线程阻塞；失败关闭网络/控制且不自动反复创建卡住的codec。停止时移除截止；已停止会话的排队connecting/ready/format/stats按身份和stopped过滤，error仍可投递。
@@ -211,21 +209,21 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - Windows主线安装器已成功，229865511 bytes SHA256 E4C6B59EEBA660645FC00B480BF9D2980CFDC3C8A7B962BAE9CE4F9BB27A673B；ZIP161479283 bytes/838项 SHA256 4D3764315065F4990FB360810B608B89F8428E13C9D5A218B097BB92A6E8624F。载荷/生产DLL/helper一致性通过，身份MSIX Valid，外层Setup仍NotSigned。前包publish/rollback/pre-desktop-startup-lifecycle-20261029已保留三件。
 - Android冻结源码主线Release成功，最终APK22228887 bytes SHA256 7D84FF712EE9E56972916997B1ABE35BA8BDCD0496DC7E464669D41157AB50DB。正式证书SHA256 3eb0f6708904f8ef916c6a2572e394ba981ee25d64861344cf1921ca7ea17975、v2/v3、仅arm64-v8a、16KiB对齐、ZIP完整读取均通过。版本仍2.2.0+126/Windows2.2.0.0；候选未安装。
 - 最终证据tmp/desktop-startup-artifacts.json，日志desktop-startup-regression.log（Windows54项）、desktop-startup-all-tests.log（Flutter28项）、desktop-startup-analyze.log、desktop-startup-jvm-check.log、desktop-startup-session-bytecode.log、desktop-startup-release-windows.log、desktop-startup-release-android-frozen.log、desktop-startup-apk-signature.log、desktop-startup-apk-alignment.log。Setup内嵌载荷与ZIP一致，相关DLL/helper和打包输出一致。
-- 下一轮从此处继续；本轮离线生命周期问题已修好，不要重复构建相同源码，也不要为了额度消耗无依据调整码率/系统刷新率或另加选项。先确认是否仍有可通过离线证据解决的具体风险，否则保留候选等待用户明确手机可用后进行docs/DESKTOP_REMOTE_ACCEPTANCE.md中的真机验收。无线端到端延迟、厂商纹理/解码、实际游戏和物理多屏仍未验收，禁止宣称已经达到UU。自动化维持ACTIVE，完整验收前不暂停；额度<=5%时仅保存停止。
+先确认是否仍有可通过离线证据解决的具体风险，否则保留候选等待用户明确手机可用后进行docs/DESKTOP_REMOTE_ACCEPTANCE.md中的真机验收。无线端到端延迟、厂商纹理/解码、实际游戏和物理多屏仍未验收，禁止宣称已经达到UU。
 
 # 410. 高帧率合成验证与拥塞/输入边界复查（2026-10-29）
 
-- 心跳起始5小时剩余31%、周剩余43%，不使用重置券。先读#409最新检查点与历史错误；未连接/唤醒/安装/操作手机，未采集真实桌面、发送真实输入或更改系统安全策略。
-- 离线复查DesktopMediaServer的64KiB发送缓冲/每包2秒写截止、单viewer互斥、reader保活5秒、源迭代器取消清理及AuthenticatedControlLease所有权/3秒释放；Android原生输入128队列、socket停止、Dart sessionId隔离及触控板/游戏指针取消、后台释放路径。没有发现本轮有证据支持的新问题，未为消耗额度另改生产代码或参数。
+先读#409最新检查点与历史错误；未连接/唤醒/安装/操作手机，未采集真实桌面、发送真实输入或更改系统安全策略。
+- 离线复查DesktopMediaServer的64KiB发送缓冲/每包2秒写截止、单viewer互斥、reader保活5秒、源迭代器取消清理及AuthenticatedControlLease所有权/3秒释放；Android原生输入128队列、socket停止、Dart sessionId隔离及触控板/游戏指针取消、后台释放路径。
 - 使用当前安装包对应tmp/Hinge-win-bundle/Hinge.DesktopVideo.exe，运行--test-pattern --fps 120 --bitrate 8000000 --duration-ms 5000，只有自行生成的1280x720移动亮条/亮度画面，二进制stdout直接流写临时文件。NVIDIA H.264 Encoder MFT hardware=1实际选中，submitted=600、encoded=600；Annex B/SPS/PPS/IDR、单调无B帧PTS及有界协议检查通过。PTS节拍119.98 FPS，最大输入PTS间隔9.76ms；Media Foundation读文件完整解码600/600。
 - 严格边界：这只是5秒720p低复杂度合成编码与完整解码测试，未覆盖1920长边/真实桌面采集转换/复杂游戏、无线传输、Android MediaCodec/纹理消费或物理显示。不能写成手机实测120 FPS、实际低延迟数值或UU体验验收，也不能因电脑编码通过就排除手机/网络/显示瓶颈。当前输入PTS节拍不是编码耗时或端到端延迟。
 - 两个候选硬件MFT拒绝输出类型(HRESULT 0xC00D6D76)后按既有枚举选到NVIDIA；最终成功，不是整个编码失败，不能仅凭前两行stderr误判。没有增设编码器或换编码协议。
 - 新证据tmp/desktop-synthetic-120-evidence.json、desktop-synthetic-120-encoder.log、desktop-synthetic-120-cadence.log、desktop-synthetic-120-decoded.log（仅合成数据HDV1在tmp）。源码/安装包未改，因此不重复编译相同APK/安装器；最终交付和回退仍以#409为准，未推送发布。
-- 当前离线必要实现和定向回归已就绪，后续心跳如无可验证的新问题，应安静保留候选，不重复同一测试或空转打包。真实验收须用户明确手机可用后按docs/DESKTOP_REMOTE_ACCEPTANCE.md执行；保持自动化ACTIVE，不因离线通过擅自标完整完成。
+- 当前离线必要实现和定向回归已就绪，后续心跳如无可验证的新问题，应安静保留候选，不重复同一测试或空转打包。
 
 # 411. 用户实测两端EOF：Android Keystore TLS签名授权修复（2026-10-29）
 
-- 用户已自行测试，反馈手机/电脑两端均报错，电脑显示Received an unexpected EOF or 0 bytes from the transport stream；本轮没有通过ADB或其他方式操作手机。现运行D:\Hinge\Hinge.exe；现有lifecycle.log未记录桌面错误阶段，不能仅凭EOF确认具体手机端异常。
+- 用户已自行测试，反馈手机/电脑两端均报错，电脑显示Received an unexpected EOF or 0 bytes from the transport stream；本轮没有通过ADB或其他方式操作手机。现运行已安装的Hinge.exe；现有lifecycle.log未记录桌面错误阶段，不能仅凭EOF确认具体手机端异常。
 - 查到确定的源代码缺陷：DesktopClientIdentity v1密钥仅授权SHA256/SHA512，缺少DIGEST_NONE。Android官方setDigests明确说明TLS通常在栈内先计算摘要，须授权NONE；Conscrypt CryptoUpcalls对EC不可导出私钥使用NONEwithECDSA。该缺陷会导致Keystore拒绝原始签名、握手提前断开，符合用户EOF现象。属于已证实代码缺陷/高度相关推断，尚非取得用户手机堆栈后的根因闭环。
 - Android新身份授权NONE/SHA256/SHA384/SHA512；增加签名预检：用实际私钥NONEwithECDSA签名32字节摘要、实际公钥验签，不能签名则在连接前明确报错。兼容的v1身份继续使用；不兼容v1保留原条目，生成v2而非覆盖原私钥。已有v2始终优先，不因v1后续可用而切回旧身份。签名只在建会话时执行，非每帧；私钥仍AndroidKeyStore不可导出。
 - 不自动清除手机server pins或Windows client pins，不放宽证书校验/TLS版本，不回退明文。此前若确有成功保存的旧客户端pin，v2会触发身份变化拒绝，需要用户通过电脑“设置→手机远控电脑→清除手机桌面身份”显式重置后核对；未成功配对的首次用户无需此步骤。保留旧身份和原pin用于回退，不自动删Keystore数据。
@@ -234,15 +232,15 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - Android最终冻结源码Release成功，APK22228887 bytes SHA256 71157947FBBFD21308A7B01D332E8DB2A5F7D2302C835B43DEF5142BBE8C9C60；正式证书3eb0f6708904f8ef916c6a2572e394ba981ee25d64861344cf1921ca7ea17975、v2/v3、仅arm64-v8a、16KiB对齐及ZIP完整读取通过。javap实际Release身份类包含v2、NONE、SHA384和canSign预检。
 - Windows完整安装器229865613 bytes SHA256 CB5557A96357A30EC0B56F6A45D124FF3E0740CB499AB83F89ABC4225F02498F；ZIP161479385 bytes/838项 SHA256 886D9779ADC41E91C32C41702430CC6220D9296B3E2CD44AA9C198339450EB16；内嵌载荷、生产DLL/helper与打包输出匹配，身份MSIX Valid，外层Setup仍NotSigned。回退包publish/rollback/pre-desktop-tls-signing-20261029。
 - 证据tmp/desktop-tls-signing-artifacts.json；日志desktop-tls-signing-dotnet-tests.log（55项）、desktop-tls-signing-eof-test.log（释放通知补强后单项通过）、desktop-tls-signing-jvm-check.log、desktop-tls-signing-identity-bytecode.log、desktop-tls-signing-release-windows.log、desktop-tls-signing-release-android-final.log、desktop-tls-signing-apk-signature.log、desktop-tls-signing-apk-alignment.log。保持2.2.0+126/Windows2.2.0.0本地候选，未安装/推送/发布。
-- 本轮额度起始5小时剩余28%，末次剩余23%、周剩余41%，不使用重置券；下一步请用户覆盖更新手机APK（电脑包包含分阶段日志），自行发起连接验证。不要未经明确授权操作手机；若仍失败先读新版Windows lifecycle.log和手机分阶段错误，不能继续无证据改TLS设置。自动化仍ACTIVE，<=5%保存停止。
+不要未经明确授权操作手机；若仍失败先读新版Windows lifecycle.log和手机分阶段错误，不能继续无证据改TLS设置。
 - 官方依据：https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder#setDigests(java.lang.String...) ； https://android.googlesource.com/platform/external/conscrypt/+/c061be0/src/main/java/org/conscrypt/CryptoUpcalls.java 。没有复制其实现代码，只使用标准JCA/Android API。
 
 # 412. 用户要求继续EOF修复：旧版客户端仍在运行（2026-10-29）
 
-- 再次查询额度，5小时已用81%/剩余19%，周已用59%；不使用重置券。先复读#411和两份实施文档。用户要求继续修复，但此前同一聊天约束仍不在夜间通过ADB/连接/唤醒/安装/操作手机；本轮未操作用户设备。
-- 本机D:\Hinge\Hinge.exe PID 5260的进程启动时间为09:03:10。本轮修复后Windows安装器生成时间09:17:51，手机APK生成时间09:19:24，所以正在运行的Windows进程明确早于修复后的电脑候选。现有lifecycle.log最后一条09:15:24，仅是托盘隐藏，没有desktop-connection-error；因此当前电脑进程既不能验证新阶段错误记录，也不能代表新候选。
+先复读#411和两份实施文档。用户要求继续修复，但此前同一聊天约束仍不在夜间通过ADB/连接/唤醒/安装/操作手机；本轮未操作用户设备。
+- 本机已安装的Hinge.exe PID 5260的进程启动时间为09:03:10。本轮修复后Windows安装器生成时间09:17:51，手机APK生成时间09:19:24，所以正在运行的Windows进程明确早于修复后的电脑候选。现有lifecycle.log最后一条09:15:24，仅是托盘隐藏，没有desktop-connection-error；因此当前电脑进程既不能验证新阶段错误记录，也不能代表新候选。
 - 修复后的包已核对：Windows Setup SHA256 CB5557A96357A30EC0B56F6A45D124FF3E0740CB499AB83F89ABC4225F02498F；Android ARM64主包SHA256 71157947FBBFD21308A7B01D332E8DB2A5F7D2302C835B43DEF5142BBE8C9C60。包签名、ABI/对齐及Windows载荷匹配已在#411验证。本轮未改源码，因此不重复构建或复跑相同测试。
-- 当前离线证据不足以确认手机TLS握手已通过。最直接的验证是用户自行更新并重新启动电脑Hinge、覆盖安装手机APK后再次连接；此操作不会清除设置。若仍错，先采集两端新阶段错误及电脑lifecycle.log再针对实际失败阶段修复。未要求重新启用已暂停的heartbeat安排。
+- 当前离线证据不足以确认手机TLS握手已通过。最直接的验证是用户自行更新并重新启动电脑Hinge、覆盖安装手机APK后再次连接；此操作不会清除设置。若仍错，先采集两端新阶段错误及电脑lifecycle.log再针对实际失败阶段修复。
 
 # 413. 手机电脑桌面沉浸全屏视图（2026-10-29）
 
@@ -260,7 +258,7 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - 新增回归覆盖离线记录无UDP发现包恢复、重复Connected幂等通知及恢复后发现超时不降级；DeviceRegistry定向8项通过。日志tmp/session-state-regression.log。未将代码缺陷与用户此次真实触发条件宣称为已经现场闭环。
 - Windows正式脚本构建成功，Setup 229865903 bytes，SHA256 B5852F4C1D2422BB24FB2E4AC69A57628D69C4B9EEF717ABED735C04352031D8；ZIP 161479675 bytes/838项，SHA256 E773F4930BA34D82B0D885776814154A9BFE14F683B35CDE0FEB97320C49261D。完整ZIP读取、DLL/helper与打包输出匹配、Setup内嵌载荷一致检查通过。日志tmp/session-state-release-windows.log，证据tmp/session-state-artifacts.json。
 - 按项目要求重构建主线ARM64 APK，版本仍2.2.0+126，SHA256 F3961462D92F0415176521AF6F5ABE89DD36F214D01E4F1CE4446AD622222228；Android源码未改，结果与上一包一致。V2/V3和16KiB对齐通过。修复实际位于Windows，必须安装新版Windows包才能生效。
-- 前Setup/ZIP/APK保留于publish/rollback/pre-session-state-20261029。未安装、未推送发布、未恢复已暂停自动化。下一步用户更新并重启Windows后，观察休眠恢复/网络波动/重复连接时两端状态；若仍出现需同一分钟的两端连接诊断，区分旧UI状态和实际半开TCP。
+- 前Setup/ZIP/APK保留于publish/rollback/pre-session-state-20261029。下一步用户更新并重启Windows后，观察休眠恢复/网络波动/重复连接时两端状态；若仍出现需同一分钟的两端连接诊断，区分旧UI状态和实际半开TCP。
 # 415. 横屏桌面默认沉浸布局与隐藏诊断信息（2026-10-29）
 
 - 用户实机截图表明此前仍进入普通横屏页，系统栏、整行控制、卡片边距和诊断文本同时占用空间。#413仅提供额外全屏按钮，不足以满足横屏默认大画面要求；本轮删除旧桌面横屏工具栏布局。
@@ -279,7 +277,7 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - Android主APK按项目要求重新构建但源码未变：22228887 bytes SHA256 5E3250835DFB5332778CF233ABFF2E88D737A21CD7E316DB7ABC7D50B35A92D3；arm64-v8a、V2/V3、16KiB对齐均通过。回退包publish/rollback/pre-cursor-hidden-fallback-20261029。未连接/操作手机，未推送发布。
 # 417. UU 远程交互调研（2026-10-29）
 
-- 用户要求先检索成熟方案。已完成公开帮助、按键映射/3D视角说明、App Store版本记录与非官方Linux实现对照；详细依据见 D:\App\Hinge\docs\UU_REMOTE_INTERACTION_RESEARCH_20261029.md。
+- 用户要求先检索成熟方案。已完成公开帮助、按键映射/3D视角说明、App Store版本记录与非官方Linux实现对照；详细依据见 [交互研究记录](UU_REMOTE_INTERACTION_RESEARCH_20261029.md)。
 - 重点差距：当前桌面主要是相对鼠标，缺少直接触点定位；缩放依赖手动切换；拖拽/按键状态反馈不足；光标随视频回程；地图操作与锁定鼠标的游戏视角未形成完整模式切换。
 - 优先顺序：输入模式及拖拽反馈 → 缩放/滚动仲裁 → 独立光标同步 → 地图/游戏视角切换 → 观看与键盘外设。保留现有纯触控板双指拖拽和游戏多指行为，防止不同页面互相回归。
 - 公开文档只能确认公开功能，不将宣传延迟/第三方兼容实现当成官方内部架构；iOS记录不等于Android实测。Android外设文档有Ctrl映射描述矛盾，不照抄；旧文的厂商限制不能直接套用用户Android17手机。
@@ -361,3 +359,95 @@ GPU转换已实现并实测：D3D11 VideoProcessor缩放/601 NV12转换，持久
 - Windows实际WinUI/XAML Release构建通过，0警告/0错误；新页XML结构检查通过。Android主线正式Release构建通过；仅arm64-v8a、V2/V3签名、16KiB对齐、包版本检查通过。APK与Windows ZIP完整性、Setup内嵌ZIP哈希一致。报告tmp/remote-hierarchy-artifacts.json；日志tmp/remote-hierarchy-windows-build.log、tmp/remote-hierarchy-android-build.log。
 - 未安装候选、未操作手机、未实机验证界面与点击返回，未推送GitHub或发布。此前缩放黑块仍不属于本轮已验收内容。
 - 产物SHA256：apk D81E632E49CD9D635FCF5A6FE797101513871290FD95402A149EF1D64A06F2D5；setup 733164FEAA02A579F3F4751C9D49F5D0ACFD9B8F67FAB421C3EF8DCD60BCB885；zip 64845A0DA2FB2613323A171FCEC4147D5D9B30FF4348333CDD9222A864B9DF79。
+
+
+## 2026-10-29：Relay补丁后的安装包
+
+当前候选更新为Android 2.5.2+136 / Windows 2.5.2.0。此轮仅增加Relay大文件预检与版本信息，远控视频/输入代码未改变；缩放黑块依然待真机验收。Relay 1.0.2修复说明见独立[服务端API文档](https://github.com/Chengeeker/Hinge-Relay/blob/main/docs/API.md)。两端正式构建、Relay定向测试和包检查通过，未部署Relay、未操作设备或推送发布。
+
+
+## 2026-10-29：Windows ADB指令候选
+
+当前安装包升级Windows2.6.0.0 / Android2.6.0+137。Windows传输与连接页目标端点默认展开，增加单次ADB指令面板；使用当前验证设备及5038隔离server，输出/时间有界并可停止。详见 [使用与边界](WIRELESS_ADB_COMMANDS.md)。远控视频/输入代码没有变化，缩放黑块仍需真机复验。候选未安装或推送发布。
+
+
+## 2026-10-29：Review风格Windows公共样式候选
+
+当时的候选为Windows2.7.0.0 / Android2.7.0+138。Windows公共卡片、设置行、按钮反馈、表面和排版对齐Review；[适配记录](WINDOWS_REVIEW_M3_ALIGNMENT.md)列出范围和检查。远控视频/输入及手机UI未改；此前缩放黑块仍待真机复验。正式包已构建，候选未安装或推送发布。
+
+
+## 2026-10-30：Windows控件与完整主题修正
+
+2.7.1统一创建/取消按钮及常见选择控件的手形光标，收窄简体中文待办日期选择器的月份列，统一选择器字体与布局舍入，并将输入框、下拉菜单、日历选择器和对话框表面绑定到M3浅/深主题角色。首页浅色卡片由纯白改为`surfaceContainerLow`。用户指出早期深色预览仅改了控件框，本次修正隔离探针：整窗根背景和代表页面随主题同步更新，并完成浅/深首页与设置页截图核对。当前界面范围/限制见[Windows Review M3适配记录](WINDOWS_REVIEW_M3_ALIGNMENT.md)；安装后的文字清晰度仍需用户验收。未改图片播放器、远控视频或输入链路，原缩放黑块问题仍待真机复验。
+
+
+## 2026-10-30：2.7.2启动样式修正
+
+当前候选Windows2.7.2.0 / Android2.7.2+140，修复CalendarDatePicker样式不存在的SDK基类引用引起的启动失败。已用实际MainWindow初始化及首页导航的隔离探针复现并验证修复；网络服务未启动。包完整性与正式Android签名/对齐通过，远控链路未改，仍需安装后完整运行和真机验收。
+
+
+## 2026-10-30：2.7.3相册控件修正
+
+当前候选Windows2.7.3.0 / Android2.7.3+141。恢复原生下拉控件类型，修复相册首次布局的派生ComboBox主题URI异常；复验相册/文件管理/个性化浅深页面显示、选择操作和窗口初始化。远控链路没有变化，原实机验收边界保留。
+
+## 2026-11-03：Android电脑桌面顶栏精简
+
+Android 2.7.14+152 的电脑桌面页保留全屏入口，移除与其重复的旋转入口；真实的画面缩放/平移和虚拟键盘保留。游戏模式从电脑桌面顶栏、全屏操作菜单及无效叠层移除，继续只从触控板进入。全屏进出保持同一视频Texture和会话，已有输入/拖拽逻辑不变；定向界面及手势回归通过。Windows本轮没有变更，仍为2.7.13。未操作设备或进行真机验收，之前缩放黑块等实机问题不属于本轮已确认修复的内容。
+
+主线ARM64 APK已构建，版本/正式证书、v2/v3签名、16 KiB对齐及ZIP CRC检查通过；最终定向静态分析无问题。包SHA256：AAAA65FE5F420A774C5CD0700B4F8F9EE58C37016EF2D0F1807D91AE41E5A96E。未安装候选或推送发布。
+
+
+## 2026-11-03：2.8.0桌面工具面板与系统操作
+
+参照用户提供的UU远控截图，整理操作、显示、键盘和系统快捷操作面板，保留双侧工具栏及居中视频；面板覆盖现有画面，不重启视频会话。新增视图缩放预设、常用按键与编辑/系统快捷键，以及需手机确认的锁定、重启、关机请求。能力通过TLS握手的可选`systemActions`字段协商，旧电脑不显示未支持的电源组；服务端严格检查当前控制权限及固定载荷，普通触控板路径不执行系统动作。具体范围见[桌面操作面板](DESKTOP_REMOTE_CONTROLS.md)。
+
+Flutter定向17项、NET媒体/输入与系统操作定向22项通过，最终静态分析无问题；电脑回环测试及输入/电源Mock未操作真实桌面或手机。Windows2.8.0.0正式安装器/ZIP、Android2.8.0+153主线arm64包均构建并完成版本、签名/对齐、ZIP完整性和载荷一致性检查。既有视频流畅度、缩放黑块和实际电源执行仍需真机验收，未推送发布。包校验值见[当前候选记录](DESKTOP_REMOTE_ACCEPTANCE.md)。
+
+
+## 2026-11-03：Android2.8.1横屏工具密度修正
+
+按用户实机截图，横屏工具面板改用局部紧凑主题，三等分的单行快捷按钮、较小的标题/图标/设置行和单行灵敏度；显示、键盘与系统操作子页同步。宽高比例决定横屏布局，保留系统文字缩放及触控范围，竖屏、双侧工具栏、视频与输入行为不改。19项定向回归、1项四页离线预览和静态分析通过。Android2.8.1+154正式arm64包已构建并核对正式签名、16KiB及CRC；Windows继续使用2.8.0。真实手机观感未代测，未安装候选或推送发布。
+
+
+## 2026-11-03：Android2.8.2工具描边精简
+
+仅去掉桌面工具面板中模式分段、键盘快捷键和视图缩放芯片的亮色描边/分隔线，保留选中色块、输入框焦点提示、紧凑布局及行为。必要桌面操作回归和四页离线预览通过，静态分析无问题；Android2.8.2+155主线arm64包已构建并通过正式签名、16KiB及CRC检查。Windows继续2.8.0，未安装候选或推送发布，真实显示由用户验收。
+
+
+## 2026-11-03：Android2.9.0桌面按键映射开关
+
+用户本轮要求增加UU式“启用按键映射”，替代此前只从触控板进入游戏的范围。操作面板开关将同一GameModeScreen/预设存储叠加到桌面画面，复用TLS游戏按键与相对鼠标；不新增视频会话或Windows协议。开启进入横屏，关闭/X/普通返回只关映射；工具打开时暂停并抬键，仅观看/权限撤销/断线关闭映射。支持原预设管理与编辑，关闭再开启保留本桌面页内状态。详情见[操作说明](DESKTOP_REMOTE_CONTROLS.md#按键映射)。
+
+23项定向回归、1项三图离线预览和4文件静态分析通过；覆盖横竖启用、自定义映射/多指/相对视角、暂停/关闭抬键、能力撤销、同一Texture/会话、预设/编辑保留与原独立触控板行为。Android2.9.0+156正式arm64包构建、正式签名/v2/v3、16KiB及CRC检查通过。Windows2.8.0继续使用，无需更新。未安装候选或操作手机/真实游戏，未推送发布；真实画面与输入兼容性待用户验收。
+
+
+## 2026-11-03：Android2.10.0桌面映射方案与启动恢复
+
+操作映射开关下增加切换操控方案、编辑当前方案和其他设置；桌面精简默认8键分两侧，去除嵌入层重复工具与中间常驻教程。独立记住桌面方案，保留共享预设文件版本1及游戏原选择，原自定义布局不重排。触控反馈、鼠标灵敏度与不透明度使用同一映射状态；工具打开/同步前释放按键。细节与容量边界见[桌面操作说明](DESKTOP_REMOTE_CONTROLS.md#按键映射)。
+
+原生启动错误记录阶段/异常类，清理部分创建资源；停止完成后才允许新解码器/Surface启动，创建阶段可恢复错误接入最多三次重试。继续使用SurfaceProducer，身份/权限失败不重试。45项离线测试（含1项五图预览）与8文件分析通过，正式arm64构建及最终包核验另见[验收记录](DESKTOP_REMOTE_ACCEPTANCE.md)。Windows继续2.8.0；未安装候选或操作手机，截图中的偶发黑屏和真实交互仍需用户复验，不宣称已证实唯一GPU根因。
+
+
+## 2026-11-03：Android2.10.1映射鼠标交互与设置标题
+
+2.10.0普通映射错误接管整块画面，只发送游戏相对移动，既不发轻点点击，又在第二指落下立即按左键；映射鼠标键的滑动也未处理。2.10.1将普通桌面映射改为仅按钮命中，空白区复用原DesktopGestureSurface和坐标/缩放；游戏视角改为操作面板中显式开启。映射鼠标按钮支持同指滑动，画面与按钮共用鼠标键持有者，持续按右键不会添加左键或跳坐标，提前松键不补发假点击。灵敏度共享原设置。手势范围见[操作说明](DESKTOP_REMOTE_CONTROLS.md#映射下的鼠标操作android-2101)。
+
+安卓设置页分组小标题对齐卡片内容起点（图标左侧），修正设置首页分组、保活清单及已连接Windows电脑列表；原个性化页和其他卡片内部标题已有正确内边距，不重复加缩进。桌面WinUI未改变。
+
+54项定向回归通过，含鼠标操作序列、多指持键、游戏相对输入显式选择、同一Texture/会话、原有生命周期及设置标题与实际leading图标几何对齐。真实手感/无线视频不在离线验收范围；Android主线arm64构建及包核验见[当前候选记录](DESKTOP_REMOTE_ACCEPTANCE.md)。未安装候选或操作手机/ADB/Computer Use，Windows保持2.8.0。
+
+
+## 2026-11-03：Android2.10.2普通移动不锁左键
+
+用户反馈侧栏拖拽开关使反复滑动变成选区。代码核对还发现直接触控普通移动会自动按左键、第二次点击也会立即进入拖拽。修复前新增重复滑动回归，direct=true失败；2.10.2移除持续锁键按钮/开关与第二次点击自动拖拽，将普通滑动统一为仅移动。450ms静止后只准备拖拽，超过8dp移动才真正按左键，抬手或取消即释放；连续轻点仍为普通点击。未配置时默认指针，已存偏好保留。范围见[操作说明](DESKTOP_REMOTE_CONTROLS.md#普通移动与拖拽android-2102)。
+
+51项定向回归通过，涵盖反复移动、点击后移动、双击、长按准备/真实拖拽/抬手复位、多指所有权、旧游戏和视频会话保持。Dart分析、正式主线arm64构建及包核验见[当前候选](DESKTOP_REMOTE_ACCEPTANCE.md)。Windows仍2.8.0，未操作手机或实际注入输入，手感需用户验收。
+
+
+## 2026-11-04：Android2.10.3功能分组去线
+
+删除首页、工作区、设置首页以及个性化/保活/默认应用/短信设置的显式Divider，并移除个性化专用DividerTheme；直接使用原有功能行列表。保留卡片和留白分组、图标标题对齐、交互目标及输入边界，未触及视频、手势或持久化数据。版本为Android2.10.3+160，Windows保持2.8.0。
+
+既有界面回归18项、此前远控/映射/Relay回归59项通过，7文件分析无问题；旧底栏测试仍查找280×64的Container，已按现有56高布局与DecoratedBox更新测试，不修改底栏实现。APK正式签名、arm64唯一ABI、16KiB对齐与CRC检查通过，真机视觉仍由用户验收。
+
+同步源码前复查Windows测试333项通过、1项既有测试失败：InstallerFileChecksTests用3字节数据模拟DLL，而生产校验要求有效签名PE，因此identical=true返回false；对应生产与测试文件本轮均未修改，也与功能线无关。此遗留夹具问题保留记录，没有为通过测试放宽安装器验证。

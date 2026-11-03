@@ -43,6 +43,188 @@ class _Sender extends RemoteInputSender {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
+    'desktop default leaves the center clear and can edit the same preset',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        GamePresetStore.channel,
+        (_) async => null,
+      );
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('hinge/platform'),
+        (_) async => false,
+      );
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(GamePresetStore.channel, null);
+        messenger.setMockMethodCallHandler(
+          const MethodChannel('hinge/platform'),
+          null,
+        );
+      });
+      final conn = _Connection();
+      final sender = _Sender(conn);
+      final key = GlobalKey<GameModeScreenState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: GameModeScreen(
+              key: key,
+              sender: sender,
+              connection: conn,
+              desktop: true,
+              onExit: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(key.currentState!.presetName, '桌面精简布局');
+      expect(find.text('地图'), findsNothing);
+      expect(find.text('移动'), findsNothing);
+      expect(find.byTooltip('退出游戏模式'), findsNothing);
+      for (final size in [const Size(800, 360), const Size(568, 256)]) {
+        tester.view.physicalSize = size;
+        await tester.pumpAndSettle();
+        final canvas = tester.getRect(
+          find.byKey(const ValueKey('game-controls')),
+        );
+        final controls = find.byWidgetPredicate(
+          (w) => w is Semantics && (w.properties.label?.contains('，') ?? false),
+        );
+        final rects = controls
+            .evaluate()
+            .map((e) => tester.getRect(find.byWidget(e.widget)))
+            .toList();
+        expect(rects.length, 8);
+        for (var i = 0; i < rects.length; i++) {
+          expect(rects[i].contains(canvas.center), false);
+          expect(rects[i].width, greaterThanOrEqualTo(48));
+          expect(rects[i].height, greaterThanOrEqualTo(48));
+          for (var j = i + 1; j < rects.length; j++) {
+            expect(rects[i].overlaps(rects[j]), false);
+          }
+        }
+      }
+      key.currentState!.editCurrentPreset();
+      await tester.pumpAndSettle();
+      expect(find.text('保存布局'), findsOneWidget);
+      unawaited(key.currentState!.openSettings());
+      await tester.pumpAndSettle();
+      expect(find.text('放弃未保存的布局修改？'), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(find.text('保存布局'), findsOneWidget);
+      expect(find.text('操控方案'), findsNothing);
+      await tester.tap(find.text('保存布局'));
+      await tester.pumpAndSettle();
+      expect(key.currentState!.presetName, '桌面精简布局');
+      expect(find.text('保存布局'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      sender.dispose();
+      await conn.states.close();
+    },
+  );
+  testWidgets(
+    'embedded mapping pauses keys and retains edits without owning system UI',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 360);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final messenger = tester.binding.defaultBinaryMessenger;
+      final system = <MethodCall>[];
+      var loads = 0, exits = 0;
+      messenger.setMockMethodCallHandler(GamePresetStore.channel, (call) async {
+        if (call.method == 'load') loads++;
+        return null;
+      });
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('hinge/platform'),
+        (_) async => false,
+      );
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        system.add(call);
+        return null;
+      });
+      final conn = _Connection();
+      final sender = _Sender(conn);
+      var enabled = true, visible = true;
+      late StateSetter refresh;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (ctx, rebuild) {
+              refresh = rebuild;
+              return Visibility(
+                visible: visible,
+                maintainState: true,
+                child: GameModeScreen(
+                  sender: sender,
+                  connection: conn,
+                  inputEnabled: enabled && visible,
+                  onExit: () => exits++,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final held = await tester.startGesture(
+        tester.getCenter(find.text('Q')),
+        pointer: 1030,
+      );
+      await tester.pump();
+      expect(sender.events, contains('81:true'));
+      refresh(() => enabled = false);
+      await tester.pumpAndSettle();
+      expect(sender.events, contains('81:false'));
+      await held.up();
+      refresh(() => enabled = true);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('游戏设置与预设'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('编辑布局'));
+      await tester.pumpAndSettle();
+      expect(find.text('保存布局'), findsOneWidget);
+      refresh(() => visible = false);
+      await tester.pumpAndSettle();
+      expect(find.text('保存布局'), findsNothing);
+      refresh(() => visible = true);
+      await tester.pumpAndSettle();
+      expect(find.text('保存布局'), findsOneWidget);
+      expect(loads, 1);
+      await tester.tap(find.byTooltip('取消编辑'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('退出游戏模式'));
+      await tester.pumpAndSettle();
+      expect(exits, 1);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(
+        system.where(
+          (call) =>
+              call.method == 'SystemChrome.setPreferredOrientations' ||
+              call.method == 'SystemChrome.setEnabledSystemUIMode',
+        ),
+        isEmpty,
+      );
+      sender.dispose();
+      await conn.states.close();
+      messenger.setMockMethodCallHandler(GamePresetStore.channel, null);
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('hinge/platform'),
+        null,
+      );
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    },
+  );
+  testWidgets(
     'game multitouch holds joystick and buttons, settings releases keys and edits without input',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 486);

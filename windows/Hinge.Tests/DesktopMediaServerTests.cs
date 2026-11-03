@@ -11,6 +11,57 @@ namespace Hinge.Tests;
 
 public class DesktopMediaServerTests
 {
+    [Theory]
+    [InlineData("allowed")]
+    [InlineData("viewOnly")]
+    [InlineData("revoked")]
+    [InlineData("malformed")]
+    [InlineData("unsupported")]
+    [InlineData("unknown")]
+    [InlineData("lock")]
+    [InlineData("restart")]
+    public async Task SystemActionsRequireCurrentDesktopPermissionAndFixedPayload(string scenario)
+    {
+        using var certificate = CreateCertificate("server", "1.3.6.1.5.5.7.3.1");
+        using var identity = CreateCertificate("client", "1.3.6.1.5.5.7.3.2");
+        string path = Path.Combine(Path.GetTempPath(), "HingeSystem-" + Guid.NewGuid().ToString("N") + ".json");
+        string trustPath = path + ".trust";
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new Dictionary<string,string> { ["phone"] = DesktopPeerIdentity.Fingerprint(identity.RawData) }));
+        var trust = new TrustStore(trustPath);
+        trust.AddOrUpdate(new TrustedDevice { DeviceId = "phone", Name = "Phone" });
+        using var manager = new RemoteInputManager(new MockInputInjector(), trust, enabled: scenario != "viewOnly");
+        var called = new TaskCompletionSource<DesktopSystemAction>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var error = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        await using var server = new DesktopMediaServer(certificate, _ => true, (_, _) => Task.FromResult(false),
+            token => Frames(() => {}, token), path, manager.BeginAuthenticatedControl,
+            scenario == "unsupported" ? null : action => called.TrySetResult(action));
+        server.Error += (_, message) => error.TrySetResult(message);
+        try
+        {
+            server.Start();
+            using var socket = new TcpClient();
+            await socket.ConnectAsync("127.0.0.1", server.Port, timeout.Token);
+            using var tls = await ConnectAsync(socket, identity, timeout.Token);
+            await SendAsync(tls, new { version = 1, deviceId = "phone", name = "Phone", mediaHeartbeat = true }, timeout.Token);
+            using var ready = await ReadAsync(tls, timeout.Token);
+            Assert.Equal(scenario != "viewOnly" && scenario != "unsupported", ready.RootElement.GetProperty("systemActions").GetBoolean());
+            if (scenario == "revoked") await manager.SetEnabledAsync(false);
+            var requested = scenario == "lock" ? DesktopSystemAction.Lock : scenario == "restart" ? DesktopSystemAction.Restart : DesktopSystemAction.Shutdown;
+            await SendAsync(tls, new { action = "input", data = Convert.ToBase64String(new RemoteInputEvent {
+                ActionType = RemoteActionType.DesktopSystemAction, ButtonOrKey = scenario == "unknown" ? (byte)255 : (byte)requested,
+                DeltaX = scenario == "malformed" ? 1 : 0,
+            }.Serialize()) }, timeout.Token);
+            if (scenario is "allowed" or "lock" or "restart") Assert.Equal(requested, await called.Task.WaitAsync(timeout.Token));
+            else
+            {
+                await error.Task.WaitAsync(timeout.Token);
+                Assert.False(called.Task.IsCompleted);
+            }
+        }
+        finally { File.Delete(path); File.Delete(trustPath); }
+    }
+
     [Fact]
     public async Task HandshakeDisconnectReportsItsStageAndDoesNotBlockNextViewer()
     {

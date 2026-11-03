@@ -1,13 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Desktop gestures share one intent lock, so a pinch never sends a wheel event.
 class DesktopGestureSurface extends StatefulWidget {
   final Widget child;
   final double aspect, sensitivity;
+  final double viewScale;
+  final int viewRevision;
   final bool enabled, direct, zoomOnly, dragging;
+  final ValueListenable<bool>? mouseButtonsHeld;
   final ValueChanged<Offset> onAbsolute, onRelative;
   final ValueChanged<bool> onDrag;
   final ValueChanged<bool> onClick;
@@ -20,7 +24,10 @@ class DesktopGestureSurface extends StatefulWidget {
     required this.direct,
     required this.zoomOnly,
     required this.dragging,
+    this.mouseButtonsHeld,
     required this.sensitivity,
+    this.viewScale = 1,
+    this.viewRevision = 0,
     required this.onAbsolute,
     required this.onRelative,
     required this.onDrag,
@@ -39,11 +46,38 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
   double _scale = 1, _baseScale = 1, _baseDistance = 0;
   Size _size = Size.zero;
   bool _moved = false, _multi = false, _ownDrag = false;
+  bool _externalDrag = false;
+  bool _dragArmed = false;
   String? _intent;
-  DateTime? _lastTap;
-  Offset? _lastTapPosition;
   Offset _fraction = Offset.zero;
   double _wheelRemainder = 0;
+  bool get _buttonHeld => widget.mouseButtonsHeld?.value ?? widget.dragging;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.mouseButtonsHeld?.addListener(_mouseButtonsChanged);
+  }
+
+  void _mouseButtonsChanged() {
+    if (_buttonHeld && !_ownDrag && _points.isNotEmpty) {
+      _externalDrag = true;
+      _hold?.cancel();
+      _dragArmed = false;
+    }
+  }
+
+  void _relative(Offset delta) {
+    _fraction += delta * widget.sensitivity;
+    final move = Offset(
+      _fraction.dx.truncateToDouble(),
+      _fraction.dy.truncateToDouble(),
+    );
+    if (move != Offset.zero) {
+      widget.onRelative(move);
+      _fraction -= move;
+    }
+  }
 
   Offset? _map(Offset point) {
     final scene = (point - _pan) / _scale;
@@ -76,6 +110,7 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
   void _beginDrag() {
     if (!mounted || !widget.enabled || widget.zoomOnly || _multi) return;
     _ownDrag = true;
+    _dragArmed = false;
     if (widget.direct) _absolute(_start);
     widget.onDrag(true);
     unawaited(HapticFeedback.selectionClick());
@@ -95,8 +130,8 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
     _ownDrag = false;
     _points.clear();
     _multi = false;
-    _lastTap = null;
-    _lastTapPosition = null;
+    _externalDrag = false;
+    _dragArmed = false;
     _fraction = Offset.zero;
     _wheelRemainder = 0;
   }
@@ -104,6 +139,18 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
   @override
   void didUpdateWidget(covariant DesktopGestureSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.mouseButtonsHeld != widget.mouseButtonsHeld) {
+      oldWidget.mouseButtonsHeld?.removeListener(_mouseButtonsChanged);
+      widget.mouseButtonsHeld?.addListener(_mouseButtonsChanged);
+    }
+    if (oldWidget.viewRevision != widget.viewRevision) {
+      _reset(duringUpdate: true);
+      _scale = widget.viewScale.clamp(1.0, 4.0);
+      _pan = Offset(
+        _size.width * (1 - _scale) / 2,
+        _size.height * (1 - _scale) / 2,
+      );
+    }
     if (oldWidget.enabled != widget.enabled ||
         oldWidget.direct != widget.direct ||
         oldWidget.zoomOnly != widget.zoomOnly) {
@@ -118,7 +165,11 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
 
   void _down(PointerDownEvent e) {
     if (!widget.enabled) return;
-    if (!widget.zoomOnly && _points.isEmpty && _map(e.localPosition) == null) {
+    if (!widget.zoomOnly &&
+        widget.direct &&
+        !_buttonHeld &&
+        _points.isEmpty &&
+        _map(e.localPosition) == null) {
       return;
     }
     _points[e.pointer] = e.localPosition;
@@ -126,29 +177,24 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
       _start = e.localPosition;
       _moved = false;
       _multi = false;
+      _externalDrag = _buttonHeld;
+      _dragArmed = false;
       _intent = null;
       if (widget.zoomOnly) return;
-      final second =
-          _lastTap != null &&
-          _lastTapPosition != null &&
-          DateTime.now().difference(_lastTap!) <
-              const Duration(milliseconds: 330) &&
-          (e.localPosition - _lastTapPosition!).distance < 32;
-      if (second && !widget.dragging) {
-        _beginDrag();
-        _lastTap = null;
-      } else if (!widget.dragging) {
+      if (!_buttonHeld) {
         _hold = Timer(const Duration(milliseconds: 450), () {
-          if (_points.length == 1 && !_moved) _beginDrag();
+          if (mounted && _points.length == 1 && !_moved && !_buttonHeld) {
+            _dragArmed = true;
+          }
         });
       }
     } else if (_points.length == 2) {
       _hold?.cancel();
+      _dragArmed = false;
       if (_ownDrag) widget.onDrag(false);
       _ownDrag = false;
       _multi = true;
       _intent = null;
-      _lastTap = null;
       final pair = _points.values.toList();
       _baseCenter = _lastCenter = (pair[0] + pair[1]) / 2;
       _baseDistance = (pair[0] - pair[1]).distance;
@@ -165,6 +211,12 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
       final pair = _points.values.take(2).toList();
       final center = (pair[0] + pair[1]) / 2;
       final distance = (pair[0] - pair[1]).distance;
+      if (_externalDrag || (_buttonHeld && !_ownDrag)) {
+        _externalDrag = true;
+        _relative(center - _lastCenter);
+        _lastCenter = center;
+        return;
+      }
       if (_intent == null) {
         if ((distance - _baseDistance).abs() > 10) {
           _intent = 'zoom';
@@ -203,6 +255,7 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
     if ((e.localPosition - _start).distance > 8) {
       _moved = true;
       _hold?.cancel();
+      if (_dragArmed && !_externalDrag && !_buttonHeld) _beginDrag();
     }
     if (widget.zoomOnly) {
       setState(
@@ -211,19 +264,13 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
           (_pan.dy + delta.dy).clamp(_size.height * (1 - _scale), 0),
         ),
       );
+    } else if (_externalDrag || (_buttonHeld && !_ownDrag)) {
+      _externalDrag = true;
+      _relative(delta);
     } else if (widget.direct) {
-      if (_moved && !_ownDrag && !widget.dragging) _beginDrag();
-      if (_moved || _ownDrag || widget.dragging) _absolute(e.localPosition);
+      if (_moved || _ownDrag) _absolute(e.localPosition);
     } else {
-      _fraction += delta * widget.sensitivity;
-      final move = Offset(
-        _fraction.dx.truncateToDouble(),
-        _fraction.dy.truncateToDouble(),
-      );
-      if (move != Offset.zero) {
-        widget.onRelative(move);
-        _fraction -= move;
-      }
+      _relative(delta);
     }
   }
 
@@ -236,22 +283,25 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
       if (_ownDrag) {
         widget.onDrag(false);
         _ownDrag = false;
+      } else if (_externalDrag) {
+        // A mapped button owns this gesture even if it was released before the finger.
       } else if (_multi) {
         if (_intent == null) widget.onClick(true);
-      } else if (!_moved && !widget.dragging) {
+      } else if (!_moved && !_buttonHeld) {
         if (widget.direct) _absolute(e.localPosition);
         widget.onClick(false);
-        _lastTap = DateTime.now();
-        _lastTapPosition = e.localPosition;
       }
     }
     _multi = false;
+    _externalDrag = false;
+    _dragArmed = false;
     _intent = null;
   }
 
   @override
   void dispose() {
     _hold?.cancel();
+    widget.mouseButtonsHeld?.removeListener(_mouseButtonsChanged);
     super.dispose();
   }
 
@@ -264,6 +314,7 @@ class _DesktopGestureSurfaceState extends State<DesktopGestureSurface> {
         _points.clear();
         _ownDrag = false;
         _multi = false;
+        _dragArmed = false;
         _size = size;
         _scale = 1;
         _pan = Offset.zero;

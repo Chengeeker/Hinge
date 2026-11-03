@@ -10,6 +10,9 @@ void main() {
     WidgetTester tester, {
     bool direct = true,
     bool enabled = true,
+    double viewScale = 1,
+    int viewRevision = 0,
+    ValueNotifier<bool>? mouseButtonsHeld,
   }) async {
     absolute.clear();
     relative.clear();
@@ -29,7 +32,10 @@ void main() {
               direct: direct,
               zoomOnly: false,
               dragging: false,
+              mouseButtonsHeld: mouseButtonsHeld,
               sensitivity: 3,
+              viewScale: viewScale,
+              viewRevision: viewRevision,
               onAbsolute: absolute.add,
               onRelative: relative.add,
               onClick: clicks.add,
@@ -58,16 +64,97 @@ void main() {
     expect(absolute.single.dy, closeTo(.5, .01));
     expect(clicks, [false]);
   });
-  testWidgets('direct drag releases left button and does not click', (
+  for (final direct in [false, true]) {
+    testWidgets(
+      'repeated ordinary swipes only move the mouse (direct=$direct)',
+      (tester) async {
+        await mount(tester, direct: direct);
+        for (var n = 0; n < 3; n++) {
+          final finger = await tester.startGesture(const Offset(160, 150));
+          await finger.moveBy(const Offset(40, 0));
+          await finger.up();
+        }
+        expect(drags, isEmpty);
+        expect(clicks, isEmpty);
+        expect(direct ? absolute : relative, hasLength(3));
+      },
+    );
+    testWidgets(
+      'click then swipe does not silently hold left (direct=$direct)',
+      (tester) async {
+        await mount(tester, direct: direct);
+        await tester.tapAt(const Offset(160, 150));
+        final finger = await tester.startGesture(const Offset(160, 150));
+        await finger.moveBy(const Offset(40, 0));
+        await finger.up();
+        expect(drags, isEmpty);
+        expect(clicks, [false]);
+      },
+    );
+    testWidgets(
+      'two quick taps stay clicks rather than a drag mode (direct=$direct)',
+      (tester) async {
+        await mount(tester, direct: direct);
+        await tester.tapAt(const Offset(160, 150));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.tapAt(const Offset(160, 150));
+        expect(clicks, [false, false]);
+        expect(drags, isEmpty);
+      },
+    );
+    testWidgets(
+      'holding still does not press left until dragging (direct=$direct)',
+      (tester) async {
+        await mount(tester, direct: direct);
+        final finger = await tester.startGesture(const Offset(160, 150));
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(drags, isEmpty);
+        await finger.moveBy(const Offset(40, 0));
+        expect(drags, [true]);
+        await finger.up();
+        expect(drags, [true, false]);
+        expect(clicks, isEmpty);
+        final next = await tester.startGesture(const Offset(160, 150));
+        await next.moveBy(const Offset(40, 0));
+        await next.up();
+        expect(drags, [
+          true,
+          false,
+        ], reason: 'lifting ends drag; the next swipe is movement');
+      },
+    );
+  }
+  testWidgets('view presets resize the same display child without input', (
     tester,
   ) async {
     await mount(tester);
-    final finger = await tester.startGesture(const Offset(160, 150));
-    await finger.moveBy(const Offset(40, 0));
-    await finger.up();
-    expect(drags, [true, false]);
+    final element = tester.element(find.byKey(const ValueKey('video')));
+    await mount(tester, viewScale: 2, viewRevision: 1);
+    expect(tester.element(find.byKey(const ValueKey('video'))), same(element));
+    expect(
+      tester.getRect(find.byKey(const ValueKey('video'))),
+      const Rect.fromLTWH(-200, -150, 800, 600),
+    );
+    expect(absolute, isEmpty);
     expect(clicks, isEmpty);
+    await mount(tester, viewRevision: 2);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('video'))),
+      const Rect.fromLTWH(0, 0, 400, 300),
+    );
   });
+  testWidgets(
+    'direct long press drag releases left button and does not click',
+    (tester) async {
+      await mount(tester);
+      final finger = await tester.startGesture(const Offset(160, 150));
+      await tester.pump(const Duration(milliseconds: 460));
+      await finger.moveBy(const Offset(40, 0));
+      await finger.up();
+      expect(drags, [true, false]);
+      expect(clicks, isEmpty);
+    },
+  );
   testWidgets('pointer long press drags and cancels safely', (tester) async {
     await mount(tester, direct: false);
     final finger = await tester.startGesture(const Offset(160, 150));
@@ -79,6 +166,59 @@ void main() {
     expect(absolute, isEmpty);
     expect(clicks, isEmpty);
   });
+  testWidgets(
+    'held mapped mouse drags relatively without jumping or clicking',
+    (tester) async {
+      final held = ValueNotifier(false);
+      await mount(tester, mouseButtonsHeld: held);
+      final finger = await tester.startGesture(const Offset(160, 150));
+      held.value = true;
+      await tester.pump(const Duration(milliseconds: 500));
+      await finger.moveBy(const Offset(20, 10));
+      held.value = false;
+      await finger.up();
+      expect(relative, [const Offset(60, 30)]);
+      expect(absolute, isEmpty);
+      expect(
+        drags,
+        isEmpty,
+        reason: 'must not add a left button while right is held',
+      );
+      expect(
+        clicks,
+        isEmpty,
+        reason: 'releasing the mapped button first is not a canvas tap',
+      );
+      await tester.pumpWidget(const SizedBox());
+      held.dispose();
+    },
+  );
+  testWidgets('mapped click while a finger rests cancels its pending tap', (
+    tester,
+  ) async {
+    final held = ValueNotifier(false);
+    await mount(tester, mouseButtonsHeld: held);
+    final finger = await tester.startGesture(const Offset(160, 150));
+    held.value = true;
+    held.value = false;
+    await finger.up();
+    expect(clicks, isEmpty);
+    expect(drags, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    held.dispose();
+  });
+  testWidgets(
+    'pointer movement also works in letterbox while direct taps stay bounded',
+    (tester) async {
+      await mount(tester, direct: false);
+      final finger = await tester.startGesture(const Offset(200, 20));
+      await finger.moveBy(const Offset(10, 0));
+      await finger.up();
+      expect(relative, [const Offset(30, 0)]);
+      expect(absolute, isEmpty);
+      expect(clicks, isEmpty);
+    },
+  );
   testWidgets('pinch locks zoom without sending wheel or clicks', (
     tester,
   ) async {

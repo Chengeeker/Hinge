@@ -7,6 +7,14 @@ import 'package:crypto/crypto.dart' as crypto_lib;
 import 'package:cryptography/cryptography.dart';
 
 const int cloudRelayPartSize = 8 * 1024 * 1024;
+const int cloudRelayMaxPartCount = 10000;
+
+int cloudRelayPartCount(int fileSize) {
+  if (fileSize < 0 || fileSize > cloudRelayPartSize * cloudRelayMaxPartCount) {
+    throw ArgumentError('Cloud Relay 单个文件最多支持 10,000 个 8 MiB 分块（约 78.1 GiB）。');
+  }
+  return max(1, (fileSize + cloudRelayPartSize - 1) ~/ cloudRelayPartSize);
+}
 const int cloudRelayGcmTagSize = 16;
 const int cloudRelayGcmNonceSize = 12;
 const int cloudRelayDefaultTtlHours = 168;
@@ -901,10 +909,7 @@ class CloudRelayTransferService {
       settings.relayEncryptionKey,
       peerHingeDeviceId,
     );
-    final partCount = max(
-      1,
-      (stat.size + cloudRelayPartSize - 1) ~/ cloudRelayPartSize,
-    );
+    final partCount = cloudRelayPartCount(stat.size);
     final sha256Hash = (await crypto_lib.sha256.bind(file.openRead()).first)
         .toString();
     final transferKey = CloudRelayCrypto.deriveTransferKey(

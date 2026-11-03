@@ -206,7 +206,10 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
             ),
           ),
           const SizedBox(height: 16),
-          Text('保活清单', style: Theme.of(context).textTheme.titleMedium),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(start: 26, end: 26),
+            child: Text('保活清单', style: Theme.of(context).textTheme.titleMedium),
+          ),
           const SizedBox(height: 8),
           Card(
             child: Column(
@@ -224,7 +227,6 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                   ),
                   action: _notificationEnabled ? null : '去开启',
                 ),
-                const Divider(height: 1),
                 _settingTile(
                   icon: Symbols.battery_saver_rounded,
                   title: '后台高耗电设置',
@@ -238,7 +240,6 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                   ),
                   action: _batteryOptimizationIgnored ? null : '去设置',
                 ),
-                const Divider(height: 1),
                 _settingTile(
                   icon: Symbols.lock_clock_rounded,
                   title: '锁定后台 / 自启动',
@@ -250,7 +251,6 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                   ),
                   action: '去设置',
                 ),
-                const Divider(height: 1),
                 _settingTile(
                   icon: Symbols.settings_applications_rounded,
                   title: '应用详情',
@@ -259,7 +259,6 @@ class _KeepAliveSettingsScreenState extends State<KeepAliveSettingsScreen>
                   onTap: widget.dataService.openAppSettings,
                   action: '打开',
                 ),
-                const Divider(height: 1),
                 _settingTile(
                   icon: Symbols.content_copy_rounded,
                   title: '复制连接诊断',

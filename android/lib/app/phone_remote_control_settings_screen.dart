@@ -288,7 +288,7 @@ class _PhoneRemoteControlSettingsScreenState
                     Text(_status, style: theme.textTheme.bodyLarge),
                     const SizedBox(height: 8),
                     Text(
-                      '单指滑动移动鼠标，轻点左键，双指轻点右键，双指滑动滚动；双击后按住并拖动可拖拽。',
+                      '单指滑动移鼠标，轻点左键，双指右键/滚动。电脑桌面长按后移动可拖拽，抬手即松开。',
                       style: theme.textTheme.bodyMedium,
                     ),
                   ],
@@ -296,7 +296,13 @@ class _PhoneRemoteControlSettingsScreenState
               ),
             ),
             const SizedBox(height: 20),
-            Text('已连接的 Windows 电脑', style: theme.textTheme.titleMedium),
+            Padding(
+              padding: const EdgeInsetsDirectional.only(start: 16, end: 16),
+              child: Text(
+                '已连接的 Windows 电脑',
+                style: theme.textTheme.titleMedium,
+              ),
+            ),
             const SizedBox(height: 8),
             if (computers.isEmpty)
               const Card(

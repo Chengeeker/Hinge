@@ -39,14 +39,18 @@ class GameProfileBridge(private val activity: Activity, messenger: io.flutter.pl
                         file.openRead().bufferedReader().use { it.readText().also { json -> if (json.toByteArray().size > 1024 * 1024) throw java.io.IOException() } }
                     } else null
                 }
-                "save" -> {
-                    val json = call.arguments as? String
+                "loadDesktopSelection" -> result.success(activity.getSharedPreferences("desktop_mapping", Activity.MODE_PRIVATE).getString("mappingPreset", null))
+                "save", "saveDesktop" -> {
+                    val json = if (call.method == "saveDesktop") call.argument<String>("json") else call.arguments as? String
+                    val selected = if (call.method == "saveDesktop") call.argument<String>("selected") else null
                     if (json == null || json.toByteArray().size > 1024 * 1024) result.error("invalid", "预设数据过大", null)
+                    else if (call.method == "saveDesktop" && (selected == null || selected.length !in 1..256)) result.error("invalid", "无效的桌面预设", null)
                     else run(result) {
                         val document = JSONObject(json)
                         var stream: java.io.FileOutputStream? = null
                         try { stream = file.startWrite(); stream.write(json.toByteArray()); file.finishWrite(stream) }
                         catch (e: Exception) { if (stream != null) file.failWrite(stream); throw e }
+                        if (call.method == "saveDesktop") activity.getSharedPreferences("desktop_mapping", Activity.MODE_PRIVATE).edit().putString("mappingPreset", selected).apply()
                         // Leave fresh draft icons alone; remove only old, unreferenced private icons.
                         runCatching {
                             val keep = mutableSetOf<String>()

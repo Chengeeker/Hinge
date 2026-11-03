@@ -746,7 +746,9 @@ ThemeData _hingeTheme(
             },
           )
         : null,
-    splashFactory: InkRipple.splashFactory,
+    splashFactory: defaultTargetPlatform == TargetPlatform.android
+        ? NoSplash.splashFactory
+        : InkRipple.splashFactory,
     // Windows does not ship Roboto as a system font.  Use the native Chinese
     // UI font there; Flutter's null family keeps Android on its system font.
     fontFamily: Platform.isWindows ? 'Microsoft YaHei' : null,
@@ -4096,7 +4098,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                   subtitle: '$connectedCount 台设备已连接',
                   onTap: () => _setPage(1),
                 ),
-                const Divider(height: 1),
                 _mobileHomeEntry(
                   icon: Symbols.add_link_rounded,
                   title: '连接设备',
@@ -4167,7 +4168,6 @@ class _DevicesScreenState extends State<DevicesScreen>
                   subtitle: '${_notes.length} 篇笔记，支持新建、编辑和删除',
                   onTap: () => _openMobileWorkspaceSection('notes'),
                 ),
-                const Divider(height: 1),
                 _mobileWorkspaceEntry(
                   icon: Symbols.checklist_rounded,
                   title: '待办',
@@ -4175,21 +4175,18 @@ class _DevicesScreenState extends State<DevicesScreen>
                       '${_tasks.where((task) => !task.completed).length} 项待完成任务',
                   onTap: () => _openMobileWorkspaceSection('tasks'),
                 ),
-                const Divider(height: 1),
                 _mobileWorkspaceEntry(
                   icon: Symbols.calendar_month_rounded,
                   title: '日历',
                   subtitle: '${_calendarEvents.length} 项手机日程',
                   onTap: () => _setPage(4),
                 ),
-                const Divider(height: 1),
                 _mobileWorkspaceEntry(
                   icon: Symbols.photo_library_rounded,
                   title: '相册',
                   subtitle: '${_photoAlbums.length} 个相册集，按最新照片显示封面',
                   onTap: () => _setPage(5),
                 ),
-                const Divider(height: 1),
                 _mobileWorkspaceEntry(
                   icon: Symbols.notifications_rounded,
                   title: '通知历史',
@@ -5123,7 +5120,11 @@ class _DevicesScreenState extends State<DevicesScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
+              padding: EdgeInsets.symmetric(
+                horizontal: defaultTargetPlatform == TargetPlatform.android
+                    ? 24 // 16dp content inset + centered 24dp icon in a 40dp slot.
+                    : 4,
+              ),
               child: Text(
                 title,
                 style: theme.textTheme.titleSmall?.copyWith(
@@ -5133,16 +5134,7 @@ class _DevicesScreenState extends State<DevicesScreen>
               ),
             ),
             const SizedBox(height: 8),
-            Card(
-              child: Column(
-                children: [
-                  for (var index = 0; index < tiles.length; index++) ...[
-                    tiles[index],
-                    if (index < tiles.length - 1) const Divider(height: 1),
-                  ],
-                ],
-              ),
-            ),
+            Card(child: Column(children: tiles)),
           ],
         ),
       );

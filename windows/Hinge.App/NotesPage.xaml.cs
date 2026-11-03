@@ -166,7 +166,7 @@ public sealed partial class NotesPage : Page
             TextWrapping = TextWrapping.Wrap,
             MinHeight = 150
         };
-        var pinned = new CheckBox { Content = "置顶", IsChecked = existing?.Pinned == true };
+        var pinned = new HandCursorCheckBox { Content = "置顶", IsChecked = existing?.Pinned == true };
         AutomationProperties.SetName(title, "笔记标题");
         AutomationProperties.SetAutomationId(title, "Notes.Editor.Title");
         AutomationProperties.SetName(content, "笔记正文");

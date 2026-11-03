@@ -18,7 +18,7 @@
                 </Grid>
                 <Border Style="{StaticResource HingeCardStyle}" Padding="0">
                         <local:HandCursorButton x:Name="PhoneScreenButton" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="RemoteSettingsPage.PhoneScreenButton" AutomationProperties.Name="手机投屏到电脑" Style="{StaticResource HingeM3SettingsRowButtonStyle}">
-                            <Grid Padding="20,16" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <Viewbox Width="24" Height="24" VerticalAlignment="Center"><SymbolIcon Symbol="Video" Foreground="{ThemeResource HingeM3PrimaryBrush}" /></Viewbox>
                                 <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
@@ -31,7 +31,7 @@
                 </Border>
                 <Border Style="{StaticResource HingeCardStyle}" Padding="0">
                         <local:HandCursorButton x:Name="RemoteInputButton" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="RemoteSettingsPage.RemoteInputButton" AutomationProperties.Name="手机远控电脑" Style="{StaticResource HingeM3SettingsRowButtonStyle}">
-                            <Grid Padding="20,16" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <Viewbox Width="24" Height="24" VerticalAlignment="Center"><SymbolIcon Symbol="TouchPointer" Foreground="{ThemeResource HingeM3PrimaryBrush}" /></Viewbox>
                                 <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">

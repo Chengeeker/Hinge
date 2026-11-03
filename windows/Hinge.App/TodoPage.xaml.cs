@@ -80,7 +80,7 @@ public sealed partial class TodoPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var checkBox = new CheckBox { IsChecked = task.Completed, Tag = task, VerticalAlignment = VerticalAlignment.Center };
+        var checkBox = new HandCursorCheckBox { IsChecked = task.Completed, Tag = task, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(checkBox, string.IsNullOrWhiteSpace(task.Title) ? "未命名待办" : task.Title);
         AutomationProperties.SetAutomationId(checkBox, $"Todo.Complete.{task.Id}");
         checkBox.Checked += TaskCheckBox_Changed;
@@ -176,12 +176,12 @@ public sealed partial class TodoPage : Page
     private async Task EditTaskAsync(RemoteWorkspaceTask? existing)
     {
         var title = new TextBox { Text = existing?.Title ?? string.Empty, PlaceholderText = "例如：整理会议资料" };
-        var due = new DatePicker
+        var due = new HandCursorDatePicker
         {
             Style = (Style)Application.Current.Resources["HingeM3DatePickerStyle"],
             Date = existing?.DueAt is { } value ? DateTimeOffset.FromUnixTimeMilliseconds(value).ToLocalTime() : DateTimeOffset.Now,
         };
-        var noDue = new CheckBox { Content = "不设置截止日期", IsChecked = existing?.DueAt == null };
+        var noDue = new HandCursorCheckBox { Content = "不设置截止日期", IsChecked = existing?.DueAt == null };
         AutomationProperties.SetName(title, "待办内容");
         AutomationProperties.SetAutomationId(title, "Todo.Editor.Title");
         AutomationProperties.SetName(due, "截止日期");

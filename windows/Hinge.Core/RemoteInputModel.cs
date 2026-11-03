@@ -14,6 +14,7 @@ public enum RemoteActionType : byte
     KeyDown          = 0x10,
     KeyUp            = 0x11,
     TextInput         = 0x12,
+    DesktopSystemAction = 0x13,
     ControlStart      = 0x20,
     ControlStop       = 0x21,
     ControlAccepted   = 0x22,

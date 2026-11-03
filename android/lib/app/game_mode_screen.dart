@@ -15,20 +15,32 @@ class GameModeScreen extends StatefulWidget {
   final SessionConnection connection;
   final List<DeviceOrientation> restoreOrientations;
   final VoidCallback? onExit;
+  final bool inputEnabled;
+  final bool desktop;
+  final bool gameCamera;
+  final double? mouseSensitivity;
+  final ValueChanged<double>? onSensitivityChanged;
+  final void Function(RemoteMouseButton, bool)? onMouseButton;
   const GameModeScreen({
     super.key,
     required this.sender,
     required this.connection,
     this.restoreOrientations = const [],
     this.onExit,
+    this.inputEnabled = true,
+    this.desktop = false,
+    this.gameCamera = false,
+    this.mouseSensitivity,
+    this.onSensitivityChanged,
+    this.onMouseButton,
   });
   @override
-  State<GameModeScreen> createState() => _GameModeScreenState();
+  GameModeScreenState createState() => GameModeScreenState();
 }
 
-class _GameModeScreenState extends State<GameModeScreen>
+class GameModeScreenState extends State<GameModeScreen>
     with WidgetsBindingObserver {
-  final _store = GamePresetStore();
+  late final _store = GamePresetStore(desktop: widget.desktop);
   late final GameInputState _input;
   StreamSubscription<SessionState>? _subscription;
   bool _loading = true, _editing = false, _suspended = false, _haptics = true;
@@ -39,11 +51,29 @@ class _GameModeScreenState extends State<GameModeScreen>
   Orientation? _orientation;
   final Map<int, Offset> _camera = {};
   double _remainderX = 0, _remainderY = 0, _sensitivity = 3;
+  double _opacity = .55;
   bool _canvasDragging = false;
+  bool _canvasMulti = false;
   bool _externalSyncPending = false;
   Offset? _canvasCentroid;
+  Offset? _canvasAnchor;
+  bool get _captureCamera => !widget.desktop || widget.gameCamera;
+  double get _mouseSensitivity => widget.mouseSensitivity ?? _sensitivity;
   GamePreset get _preset => _draft ?? _store.current;
+  String get presetName => _loading || _error != null ? '桌面精简布局' : _preset.name;
+
+  void editCurrentPreset() {
+    if (_loading || _error != null) return;
+    _release();
+    setState(() {
+      _draft ??= _store.current.copy();
+      _selectedControl = null;
+      _editing = true;
+    });
+  }
+
   bool get _canInput =>
+      widget.inputEnabled &&
       !_loading &&
       _error == null &&
       !_editing &&
@@ -57,29 +87,37 @@ class _GameModeScreenState extends State<GameModeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     GamePresetStore.syncRevision.addListener(_externalPresetSync);
-    unawaited(
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]),
-    );
+    if (widget.onExit == null) {
+      unawaited(
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]),
+      );
+    }
     _input = GameInputState((key, down) {
       if (key > 0) {
         widget.sender.sendKey(key, down);
       } else {
         final button = RemoteMouseButton.values[-key - 1];
-        down
-            ? widget.sender.sendMouseDown(button)
-            : widget.sender.sendMouseUp(button);
+        if (widget.onMouseButton != null) {
+          widget.onMouseButton!(button, down);
+        } else {
+          down
+              ? widget.sender.sendMouseDown(button)
+              : widget.sender.sendMouseUp(button);
+        }
       }
     });
     widget.sender.addListener(_connectionChanged);
     _subscription = widget.connection.stateStream.listen(
       (_) => _connectionChanged(),
     );
-    unawaited(
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
-    );
+    if (widget.onExit == null) {
+      unawaited(
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
+      );
+    }
     _load();
   }
 
@@ -115,6 +153,15 @@ class _GameModeScreenState extends State<GameModeScreen>
     setState(() {});
   }
 
+  @override
+  void didUpdateWidget(covariant GameModeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.inputEnabled && !widget.inputEnabled ||
+        oldWidget.gameCamera != widget.gameCamera) {
+      _release();
+    }
+  }
+
   void _externalPresetSync() {
     if (!mounted) return;
     if (_editing) {
@@ -125,6 +172,7 @@ class _GameModeScreenState extends State<GameModeScreen>
   }
 
   Future<void> _reloadPresets() async {
+    _release();
     try {
       await _store.load();
       if (mounted) setState(() => _epoch++);
@@ -137,21 +185,65 @@ class _GameModeScreenState extends State<GameModeScreen>
     _input.releaseAll();
     _camera.clear();
     _canvasDragging = false;
+    _canvasMulti = false;
     _canvasCentroid = null;
+    _canvasAnchor = null;
     _remainderX = _remainderY = 0;
     _epoch++;
   }
 
   void _endCanvasPointer(int pointer) {
     if (!_camera.containsKey(pointer)) return;
-    if (_canvasDragging) {
+    if (_canvasMulti) {
       _input.update('canvas-drag', {});
       _camera.clear();
       _canvasDragging = false;
+      _canvasMulti = false;
       _canvasCentroid = null;
       _remainderX = _remainderY = 0;
     } else {
       _camera.remove(pointer);
+    }
+  }
+
+  void _cameraDown(PointerDownEvent event) {
+    if (!_canInput) return;
+    _camera[event.pointer] = event.localPosition;
+    if (_camera.length >= 2) {
+      _canvasMulti = true;
+      _canvasAnchor = _canvasCentroid =
+          _camera.values.reduce((a, b) => a + b) / _camera.length.toDouble();
+    }
+  }
+
+  void _cameraMove(PointerMoveEvent event) {
+    if (!_canInput || !_camera.containsKey(event.pointer)) return;
+    final previous = _camera[event.pointer]!;
+    _camera[event.pointer] = event.localPosition;
+    if (_canvasMulti) {
+      final center =
+          _camera.values.reduce((a, b) => a + b) / _camera.length.toDouble();
+      if (!_canvasDragging) {
+        if ((center - _canvasAnchor!).distance < 8) return;
+        _canvasDragging = true;
+        _input.update('canvas-drag', {-1});
+        _feedback();
+      }
+      _moveMouse(center - _canvasCentroid!);
+      _canvasCentroid = center;
+    } else {
+      _moveMouse(event.localPosition - previous);
+    }
+  }
+
+  void _moveMouse(Offset delta) {
+    _remainderX += delta.dx * _mouseSensitivity;
+    _remainderY += delta.dy * _mouseSensitivity;
+    final dx = _remainderX.truncate(), dy = _remainderY.truncate();
+    _remainderX -= dx;
+    _remainderY -= dy;
+    if (dx != 0 || dy != 0) {
+      widget.sender.sendMouseMove(dx, dy, relative: _captureCamera);
     }
   }
 
@@ -174,7 +266,7 @@ class _GameModeScreenState extends State<GameModeScreen>
       _suspended = state != AppLifecycleState.resumed;
       if (_suspended) _release();
     });
-    if (!_suspended) {
+    if (!_suspended && widget.onExit == null) {
       unawaited(
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
       );
@@ -188,10 +280,13 @@ class _GameModeScreenState extends State<GameModeScreen>
     widget.sender.removeListener(_connectionChanged);
     unawaited(_subscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
-    unawaited(
-      SystemChrome.setPreferredOrientations(widget.restoreOrientations),
-    );
+    // Embedded controls leave orientation and system bars to the desktop owner.
+    if (widget.onExit == null) {
+      unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+      unawaited(
+        SystemChrome.setPreferredOrientations(widget.restoreOrientations),
+      );
+    }
     super.dispose();
   }
 
@@ -263,7 +358,12 @@ class _GameModeScreenState extends State<GameModeScreen>
       ) ??
       false;
 
-  Future<void> _settings() async {
+  Future<void> openSettings({bool preferencesOnly = false}) async {
+    if (_loading || _error != null) return;
+    if (_editing && !preferencesOnly) {
+      await _exit();
+      if (!mounted || _editing) return;
+    }
     _release();
     setState(() => _suspended = true);
     try {
@@ -271,158 +371,216 @@ class _GameModeScreenState extends State<GameModeScreen>
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
-        builder: (sheetContext) => StatefulBuilder(
-          builder: (ctx, refresh) => SizedBox(
-            height: MediaQuery.sizeOf(ctx).height * .9,
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '游戏预设',
-                        style: Theme.of(ctx).textTheme.titleLarge,
+        constraints: BoxConstraints(maxWidth: widget.desktop ? 420 : 640),
+        builder: (sheetContext) => Theme(
+          data: widget.desktop
+              ? Theme.of(context).copyWith(
+                  textTheme: Theme.of(context).textTheme.copyWith(
+                    titleLarge: Theme.of(context).textTheme.titleLarge
+                        ?.copyWith(fontSize: 18),
+                    bodyLarge: Theme.of(context).textTheme.bodyLarge
+                        ?.copyWith(fontSize: 13),
+                    bodyMedium: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(fontSize: 13),
+                    bodySmall: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(fontSize: 11),
+                  ),
+                  listTileTheme: const ListTileThemeData(
+                    minTileHeight: 48,
+                    dense: true,
+                  ),
+                )
+              : Theme.of(context),
+          child: StatefulBuilder(
+            builder: (ctx, refresh) => SizedBox(
+              height: MediaQuery.sizeOf(ctx).height * .9,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          preferencesOnly
+                              ? '映射设置'
+                              : widget.desktop
+                              ? '操控方案'
+                              : '游戏预设',
+                          style: Theme.of(ctx).textTheme.titleLarge,
+                        ),
                       ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.pop(sheetContext);
-                        setState(() {
-                          _draft = _store.current.copy();
-                          _selectedControl = null;
-                          _editing = true;
-                        });
-                      },
-                      child: const Text('编辑布局'),
-                    ),
-                  ],
-                ),
-                Text(
-                  '空白区域滑动：移动视角 · 按住按钮：持续按键 · 多指可同时操作',
-                  style: Theme.of(ctx).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 8),
-                for (final preset in _store.presets)
-                  ListTile(
-                    leading: Icon(
-                      preset.id == _store.current.id
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_off,
-                    ),
-                    title: Text(preset.name),
-                    subtitle: Text('${preset.controls.length} 个控件'),
-                    onTap: () async {
-                      final old = _store.selected;
-                      _store.selected = preset.id;
-                      if (!await _saveStore()) _store.selected = old;
-                      if (mounted && ctx.mounted) {
-                        setState(() {});
-                        refresh(() {});
-                      }
-                    },
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (action) async {
-                        if (action == 'delete') {
-                          if (_store.presets.length == 1) {
-                            _snack('至少保留一套预设');
-                            return;
+                      if (!preferencesOnly)
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(sheetContext);
+                            editCurrentPreset();
+                          },
+                          child: const Text('编辑布局'),
+                        ),
+                    ],
+                  ),
+                  Text(
+                    '空白区域滑动：移动视角 · 按住按钮：持续按键 · 多指可同时操作',
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  if (!preferencesOnly) ...[
+                    for (final preset in _store.presets)
+                      ListTile(
+                        leading: Icon(
+                          preset.id == _store.current.id
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_off,
+                        ),
+                        title: Text(preset.name),
+                        subtitle: Text('${preset.controls.length} 个控件'),
+                        onTap: () async {
+                          final old = _store.selected;
+                          _store.selected = preset.id;
+                          if (!await _saveStore()) _store.selected = old;
+                          if (mounted && ctx.mounted) {
+                            setState(() {});
+                            refresh(() {});
                           }
-                          if (!await _confirm('删除“${preset.name}”？')) return;
-                          final index = _store.presets.indexOf(preset),
-                              oldSelected = _store.selected;
-                          _store.presets.removeAt(index);
-                          if (!await _saveStore()) {
-                            _store.presets.insert(index, preset);
-                            _store.selected = oldSelected;
-                          }
-                        } else {
-                          if (action == 'copy' && _store.presets.length >= 32) {
-                            _snack('最多保存32套预设');
-                            return;
-                          }
-                          final name = await _askName(
-                            action == 'copy'
-                                ? '${preset.name} 副本'
-                                : preset.name,
-                          );
-                          if (name == null || !mounted) return;
-                          final oldName = preset.name;
-                          final copy = preset.copy(
-                            id: GamePreset.newId(),
-                            name: name,
-                          );
-                          if (action == 'copy') {
-                            _store.presets.add(copy);
-                          } else {
-                            preset.name = name;
-                          }
-                          if (!await _saveStore()) {
-                            if (action == 'copy') {
-                              _store.presets.remove(copy);
+                        },
+                        trailing: PopupMenuButton<String>(
+                          onSelected: (action) async {
+                            if (action == 'delete') {
+                              if (_store.presets.length == 1) {
+                                _snack('至少保留一套预设');
+                                return;
+                              }
+                              if (!await _confirm('删除“${preset.name}”？')) {
+                                return;
+                              }
+                              final index = _store.presets.indexOf(preset),
+                                  oldSelected = _store.selected;
+                              _store.presets.removeAt(index);
+                              if (_store.selected == preset.id) {
+                                _store.selected = _store.presets.first.id;
+                              }
+                              if (!await _saveStore()) {
+                                _store.presets.insert(index, preset);
+                                _store.selected = oldSelected;
+                              }
                             } else {
-                              preset.name = oldName;
+                              if (action == 'copy' &&
+                                  _store.presets.length >= 32) {
+                                _snack('最多保存32套预设');
+                                return;
+                              }
+                              final name = await _askName(
+                                action == 'copy'
+                                    ? '${preset.name} 副本'
+                                    : preset.name,
+                              );
+                              if (name == null || !mounted) return;
+                              final oldName = preset.name;
+                              final copy = preset.copy(
+                                id: GamePreset.newId(),
+                                name: name,
+                              );
+                              if (action == 'copy') {
+                                _store.presets.add(copy);
+                              } else {
+                                preset.name = name;
+                              }
+                              if (!await _saveStore()) {
+                                if (action == 'copy') {
+                                  _store.presets.remove(copy);
+                                } else {
+                                  preset.name = oldName;
+                                }
+                              }
                             }
-                          }
+                            if (mounted && ctx.mounted) {
+                              setState(() {});
+                              refresh(() {});
+                            }
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'rename', child: Text('重命名')),
+                            PopupMenuItem(value: 'copy', child: Text('复制为新预设')),
+                            PopupMenuItem(value: 'delete', child: Text('删除')),
+                          ],
+                        ),
+                      ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.add),
+                      label: Text(widget.desktop ? '从桌面布局新建' : '从基础布局新建'),
+                      onPressed: () async {
+                        if (_store.presets.length >= 32) {
+                          _snack('最多保存32套预设');
+                          return;
+                        }
+                        final name = await _askName(
+                          widget.desktop ? '新桌面方案' : '新游戏布局',
+                        );
+                        if (name == null || !mounted) return;
+                        final preset = widget.desktop
+                            ? GamePreset.desktop().copy(
+                                id: GamePreset.newId(),
+                                name: name,
+                              )
+                            : (GamePreset.basic()..name = name);
+                        final oldSelected = _store.selected;
+                        _store.presets.add(preset);
+                        _store.selected = preset.id;
+                        if (!await _saveStore()) {
+                          _store.presets.remove(preset);
+                          _store.selected = oldSelected;
                         }
                         if (mounted && ctx.mounted) {
                           setState(() {});
                           refresh(() {});
                         }
                       },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'rename', child: Text('重命名')),
-                        PopupMenuItem(value: 'copy', child: Text('复制为新预设')),
-                        PopupMenuItem(value: 'delete', child: Text('删除')),
-                      ],
                     ),
-                  ),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.add),
-                  label: const Text('从基础布局新建'),
-                  onPressed: () async {
-                    if (_store.presets.length >= 32) {
-                      _snack('最多保存32套预设');
-                      return;
-                    }
-                    final name = await _askName('新游戏布局');
-                    if (name == null || !mounted) return;
-                    final preset = GamePreset.basic()..name = name;
-                    final oldSelected = _store.selected;
-                    _store.presets.add(preset);
-                    _store.selected = preset.id;
-                    if (!await _saveStore()) {
-                      _store.presets.remove(preset);
-                      _store.selected = oldSelected;
-                    }
-                    if (mounted && ctx.mounted) {
-                      setState(() {});
-                      refresh(() {});
-                    }
-                  },
-                ),
-                const Divider(),
-                SwitchListTile(
-                  title: const Text('触控反馈'),
-                  value: _haptics,
-                  onChanged: (value) {
-                    setState(() => _haptics = value);
-                    refresh(() {});
-                  },
-                ),
-                Text('视角灵敏度 ${_sensitivity.toStringAsFixed(1)}'),
-                Slider(
-                  value: _sensitivity,
-                  min: 1.5,
-                  max: 5,
-                  divisions: 14,
-                  onChanged: (value) {
-                    setState(() => _sensitivity = value);
-                    refresh(() {});
-                  },
-                ),
-                const Text('此模式控制电脑键鼠；电脑画面仍需在电脑屏幕查看。部分游戏或管理员窗口可能不接受系统模拟输入。'),
-              ],
+                  ],
+                  if (preferencesOnly || !widget.desktop) ...[
+                    SwitchListTile(
+                      title: const Text('触控反馈'),
+                      value: _haptics,
+                      onChanged: (value) {
+                        setState(() => _haptics = value);
+                        refresh(() {});
+                      },
+                    ),
+                    Text(
+                      '${widget.desktop ? '鼠标' : '视角'}灵敏度 ${_mouseSensitivity.toStringAsFixed(1)}',
+                    ),
+                    Slider(
+                      value: _mouseSensitivity,
+                      min: 1.5,
+                      max: 5,
+                      divisions: 14,
+                      onChanged: (value) {
+                        setState(() => _sensitivity = value);
+                        widget.onSensitivityChanged?.call(value);
+                        refresh(() {});
+                      },
+                    ),
+                    if (widget.desktop) ...[
+                      Text('按键不透明度 ${(_opacity * 100).round()}%'),
+                      Slider(
+                        value: _opacity,
+                        min: .2,
+                        max: .9,
+                        divisions: 14,
+                        onChanged: (value) {
+                          setState(() => _opacity = value);
+                          refresh(() {});
+                        },
+                      ),
+                    ],
+                    Text(
+                      widget.desktop
+                          ? '沿用操作面板所选的触控或指针模式；按住映射的鼠标键滑动可拖拽。'
+                          : '此模式控制电脑键鼠；电脑画面仍需在电脑屏幕查看。部分游戏或管理员窗口可能不接受系统模拟输入。',
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -745,8 +903,12 @@ class _GameModeScreenState extends State<GameModeScreen>
   }
 
   Future<void> _saveDraft() async {
-    final index = _store.presets.indexWhere((p) => p.id == _draft!.id),
-        old = _store.current;
+    final index = _store.presets.indexWhere((p) => p.id == _draft!.id);
+    if (index < 0) {
+      _snack('原方案已改变，请保留修改并重新选择方案。');
+      return;
+    }
+    final old = _store.presets[index];
     _store.presets[index] = _draft!;
     if (await _saveStore()) {
       if (mounted) {
@@ -804,8 +966,12 @@ class _GameModeScreenState extends State<GameModeScreen>
       h,
     );
     // Reserve only the fixed toolbar targets, leaving the other top buttons in one row.
-    if (rect.overlaps(Rect.fromLTWH(area.width / 2 - 28, 0, 56, 56)) ||
-        rect.overlaps(Rect.fromLTWH(area.width - 64, 0, 64, 56))) {
+    final toolbarWidth = widget.onExit == null ? 64.0 : 56.0;
+    if ((!widget.desktop || _editing) &&
+        (rect.overlaps(Rect.fromLTWH(area.width / 2 - 28, 0, 56, 56)) ||
+            rect.overlaps(
+              Rect.fromLTWH(area.width - toolbarWidth, 0, toolbarWidth, 56),
+            ))) {
       rect = Rect.fromLTWH(rect.left, 60, rect.width, rect.height);
     }
     return rect;
@@ -828,9 +994,9 @@ class _GameModeScreenState extends State<GameModeScreen>
     Widget face(bool pressed, Offset knob) => AnimatedContainer(
       duration: const Duration(milliseconds: 65),
       decoration: BoxDecoration(
-        color: pressed
-            ? colors.primaryContainer
-            : colors.surfaceContainerHighest,
+        color:
+            (pressed ? colors.primaryContainer : colors.surfaceContainerHighest)
+                .withValues(alpha: widget.desktop && !_editing ? _opacity : 1),
         borderRadius: BorderRadius.circular(_cornerRadius(control, rect)),
         border: Border.all(
           color: selected
@@ -902,6 +1068,7 @@ class _GameModeScreenState extends State<GameModeScreen>
       control: control,
       enabled: _canInput,
       onBindings: (bindings) => _input.update(control.id, bindings),
+      onMouseMove: control.binding < 0 ? _moveMouse : null,
       onFeedback: _feedback,
       face: face,
     );
@@ -931,206 +1098,168 @@ class _GameModeScreenState extends State<GameModeScreen>
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return PopScope(
-      canPop: !_editing && widget.onExit == null,
-      onPopInvokedWithResult: (popped, _) {
-        if (!popped) _exit();
-      },
-      child: Scaffold(
-        backgroundColor: widget.onExit == null
-            ? colors.surface
-            : Colors.transparent,
-        body: SafeArea(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_error!),
-                        TextButton(onPressed: _exit, child: const Text('返回')),
-                      ],
-                    ),
-                  ),
-                )
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final area = constraints.biggest;
-                    _area = area;
-                    return Stack(
-                      children: [
-                        Positioned.fill(
-                          child: Listener(
-                            key: const ValueKey('game-canvas'),
-                            behavior: HitTestBehavior.opaque,
-                            onPointerDown: (event) {
-                              if (!_canInput) return;
-                              _camera[event.pointer] = event.localPosition;
-                              if (!_canvasDragging && _camera.length == 2) {
-                                _canvasDragging = true;
-                                _canvasCentroid =
-                                    _camera.values.reduce((a, b) => a + b) /
-                                    _camera.length.toDouble();
-                                _input.update('canvas-drag', {-1});
-                                _feedback();
-                              } else if (_canvasDragging) {
-                                _canvasCentroid =
-                                    _camera.values.reduce((a, b) => a + b) /
-                                    _camera.length.toDouble();
-                              }
-                            },
-                            onPointerMove: (event) {
-                              if (!_canInput ||
-                                  !_camera.containsKey(event.pointer)) {
-                                return;
-                              }
-                              final previous = _camera[event.pointer]!;
-                              _camera[event.pointer] = event.localPosition;
-                              final centroid = _canvasDragging
-                                  ? _camera.values.reduce((a, b) => a + b) /
-                                        _camera.length.toDouble()
-                                  : event.localPosition;
-                              final delta =
-                                  ((_canvasDragging
-                                      ? centroid - (_canvasCentroid ?? centroid)
-                                      : centroid - previous)) *
-                                  _sensitivity;
-                              if (_canvasDragging) _canvasCentroid = centroid;
-                              _remainderX += delta.dx;
-                              _remainderY += delta.dy;
-                              final dx = _remainderX.truncate(),
-                                  dy = _remainderY.truncate();
-                              _remainderX -= dx;
-                              _remainderY -= dy;
-                              if (dx != 0 || dy != 0) {
-                                widget.sender.sendMouseMove(
-                                  dx,
-                                  dy,
-                                  relative: true,
-                                );
-                              }
-                            },
-                            onPointerUp: (e) => _endCanvasPointer(e.pointer),
-                            onPointerCancel: (e) =>
-                                _endCanvasPointer(e.pointer),
-                            child: Center(
-                              child: IgnorePointer(
-                                child: Text(
-                                  _editing
-                                      ? '拖动控件调整位置 · 轻点修改按键和外观'
-                                      : '单指滑动移动视角 · 双指按住并移动可拖拽（鼠标左键）',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: widget.onExit == null
-                                            ? colors.onSurfaceVariant
-                                            : Colors.white,
-                                        shadows: widget.onExit == null
-                                            ? null
-                                            : const [
-                                                Shadow(
-                                                  color: Colors.black,
-                                                  blurRadius: 6,
-                                                ),
-                                              ],
-                                      ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        for (final control in _preset.controls)
-                          Positioned.fromRect(
-                            rect: _rect(control, area),
-                            child: _control(control, _rect(control, area)),
-                          ),
-                        Positioned(
-                          top: 2,
-                          left: area.width / 2 - 24,
-                          child: IconButton.filledTonal(
-                            tooltip: _editing ? '取消编辑' : '退出游戏模式',
-                            onPressed: _exit,
-                            icon: const Icon(Icons.close),
-                          ),
-                        ),
-                        if (_editing) ...[
-                          Positioned(
-                            top: 2,
-                            left: 8,
-                            child: TextButton.icon(
-                              onPressed: () {
-                                if (_draft!.controls.length >= 64) {
-                                  _snack('每套预设最多64个控件');
-                                  return;
-                                }
-                                final control = GameControl(
-                                  id: GamePreset.newId(),
-                                  label: '新按键',
-                                  x: .5,
-                                  y: .5,
-                                );
-                                setState(() {
-                                  _draft!.controls.add(control);
-                                  _selectedControl = control.id;
-                                });
-                                _editControl(control);
-                              },
-                              icon: const Icon(Icons.add),
-                              label: const Text('添加按键'),
-                            ),
-                          ),
-                          Positioned(
-                            top: 2,
-                            right: 8,
-                            child: FilledButton.icon(
-                              onPressed: _saveDraft,
-                              icon: const Icon(Icons.save_outlined),
-                              label: const Text('保存布局'),
-                            ),
-                          ),
-                        ] else
-                          Positioned(
-                            top: 2,
-                            right: 8,
-                            child: IconButton.filledTonal(
-                              tooltip: '游戏设置与预设',
-                              onPressed: _settings,
-                              icon: const Icon(Icons.settings_outlined),
-                            ),
-                          ),
-                        if (!_editing &&
-                            (!widget.sender.ready ||
-                                !widget.sender.supportsGameKeys ||
-                                widget.connection.state !=
-                                    SessionState.connected))
-                          Positioned(
-                            bottom: 8,
-                            left: 16,
-                            right: 16,
-                            child: Material(
-                              color: colors.errorContainer,
-                              borderRadius: BorderRadius.circular(12),
-                              child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Text(
-                                  widget.onExit == null
-                                      ? '控制已停止，所有按键已释放。请返回触控板重新连接。'
-                                      : '控制已停止，所有按键已释放。请退出游戏模式，检查电脑端支持并重新连接。',
-                                  style: TextStyle(
-                                    color: colors.onErrorContainer,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    );
-                  },
+    final body = SafeArea(
+      child: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error!),
+                    TextButton(onPressed: _exit, child: const Text('返回')),
+                  ],
                 ),
-        ),
-      ),
+              ),
+            )
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final area = constraints.biggest;
+                _area = area;
+                return Stack(
+                  key: const ValueKey('game-controls'),
+                  fit: StackFit.expand,
+                  children: [
+                    if (_captureCamera || _editing)
+                      Positioned.fill(
+                        child: Listener(
+                          key: const ValueKey('game-canvas'),
+                          behavior: HitTestBehavior.opaque,
+                          onPointerDown: _cameraDown,
+                          onPointerMove: _cameraMove,
+                          onPointerUp: (e) => _endCanvasPointer(e.pointer),
+                          onPointerCancel: (e) => _endCanvasPointer(e.pointer),
+                          child: Center(
+                            child: IgnorePointer(
+                              child: widget.desktop && !_editing
+                                  ? const SizedBox.shrink()
+                                  : Text(
+                                      _editing
+                                          ? '拖动控件调整位置 · 轻点修改按键和外观'
+                                          : '单指滑动移动视角 · 双指按住并移动可拖拽（鼠标左键）',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: widget.onExit == null
+                                                ? colors.onSurfaceVariant
+                                                : Colors.white,
+                                            shadows: widget.onExit == null
+                                                ? null
+                                                : const [
+                                                    Shadow(
+                                                      color: Colors.black,
+                                                      blurRadius: 6,
+                                                    ),
+                                                  ],
+                                          ),
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    for (final control in _preset.controls)
+                      Positioned.fromRect(
+                        rect: _rect(control, area),
+                        child: _control(control, _rect(control, area)),
+                      ),
+                    if (!widget.desktop || _editing)
+                      Positioned(
+                        top: 2,
+                        left: area.width / 2 - 24,
+                        child: IconButton.filledTonal(
+                          tooltip: _editing ? '取消编辑' : '退出游戏模式',
+                          onPressed: _exit,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    if (_editing) ...[
+                      Positioned(
+                        top: 2,
+                        left: 8,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            if (_draft!.controls.length >= 64) {
+                              _snack('每套预设最多64个控件');
+                              return;
+                            }
+                            final control = GameControl(
+                              id: GamePreset.newId(),
+                              label: '新按键',
+                              x: .5,
+                              y: .5,
+                            );
+                            setState(() {
+                              _draft!.controls.add(control);
+                              _selectedControl = control.id;
+                            });
+                            _editControl(control);
+                          },
+                          icon: const Icon(Icons.add),
+                          label: const Text('添加按键'),
+                        ),
+                      ),
+                      Positioned(
+                        top: 2,
+                        right: 8,
+                        child: FilledButton.icon(
+                          onPressed: _saveDraft,
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('保存布局'),
+                        ),
+                      ),
+                    ] else if (!widget.desktop)
+                      Positioned(
+                        top: 2,
+                        right: 8,
+                        child: IconButton.filledTonal(
+                          tooltip: '游戏设置与预设',
+                          onPressed: openSettings,
+                          icon: const Icon(Icons.settings_outlined),
+                        ),
+                      ),
+                    if (!_editing &&
+                        (!widget.sender.ready ||
+                            !widget.sender.supportsGameKeys ||
+                            widget.connection.state != SessionState.connected))
+                      Positioned(
+                        bottom: 8,
+                        left: 16,
+                        right: 16,
+                        child: Material(
+                          color: colors.errorContainer,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Text(
+                              widget.onExit == null
+                                  ? '控制已停止，所有按键已释放。请返回触控板重新连接。'
+                                  : '控制已停止，所有按键已释放。请退出游戏模式，检查电脑端支持并重新连接。',
+                              style: TextStyle(color: colors.onErrorContainer),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+    );
+    return PopScope(
+      canPop: !widget.inputEnabled || (!_editing && widget.onExit == null),
+      onPopInvokedWithResult: (popped, _) {
+        if (!popped && widget.inputEnabled) _exit();
+      },
+      child: widget.desktop
+          ? (_loading || _error != null ? AbsorbPointer(child: body) : body)
+          : Scaffold(
+              backgroundColor: widget.onExit == null
+                  ? colors.surface
+                  : Colors.transparent,
+              body: body,
+            ),
     );
   }
 }
@@ -1141,6 +1270,7 @@ class _GameTouchControl extends StatefulWidget {
   final ValueChanged<Set<int>> onBindings;
   final VoidCallback onFeedback;
   final Widget Function(bool pressed, Offset knob) face;
+  final ValueChanged<Offset>? onMouseMove;
   const _GameTouchControl({
     super.key,
     required this.control,
@@ -1148,6 +1278,7 @@ class _GameTouchControl extends StatefulWidget {
     required this.onBindings,
     required this.onFeedback,
     required this.face,
+    this.onMouseMove,
   });
   @override
   State<_GameTouchControl> createState() => _GameTouchControlState();
@@ -1209,6 +1340,13 @@ class _GameTouchControlState extends State<_GameTouchControl> {
           setState(() {});
         },
         onPointerMove: (event) {
+          if (mounted &&
+              widget.enabled &&
+              !widget.control.joystick &&
+              _pointers.contains(event.pointer) &&
+              event.pointer == _pointers.first) {
+            widget.onMouseMove?.call(event.delta);
+          }
           if (mounted &&
               widget.enabled &&
               widget.control.joystick &&

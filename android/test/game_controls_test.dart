@@ -2,10 +2,70 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:hinge/core/game_controls.dart';
 import 'package:hinge/core/remote_input_cipher.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'desktop selection persists without changing the shared game selection',
+    () async {
+      final game = GamePreset.basic(),
+          custom = GamePreset.basic()..name = '自定义';
+      var raw =
+          (GamePresetStore()
+                ..presets = [game, custom]
+                ..selected = game.id)
+              .toJsonString();
+      String? desktopSelection;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(GamePresetStore.channel, (call) async {
+        if (call.method == 'load') return raw;
+        if (call.method == 'loadDesktopSelection') return desktopSelection;
+        if (call.method == 'saveDesktop') {
+          raw = call.arguments['json'] as String;
+          desktopSelection = call.arguments['selected'] as String;
+        }
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(GamePresetStore.channel, null),
+      );
+      final store = GamePresetStore(desktop: true);
+      await store.load();
+      expect(store.current.id, GamePreset.desktopId);
+      expect(store.current.controls.length, 8);
+      expect(store.current.controls.any((c) => c.joystick), false);
+      expect(
+        store.current.controls.map((c) => c.binding),
+        containsAll([-1, -2, 0x11, 0x12]),
+      );
+      expect(
+        GamePresetStore.fromJsonString(raw).presets.length,
+        2,
+        reason: 'loading does not write presets',
+      );
+      await store.save();
+      store.selected = custom.id;
+      await store.save();
+      final reload = GamePresetStore(desktop: true);
+      await reload.load();
+      expect(reload.current.id, custom.id);
+      final regular = GamePresetStore();
+      await regular.load();
+      expect(regular.current.id, game.id);
+      expect(
+        regular.presets.firstWhere((p) => p.id == custom.id).toJson(),
+        custom.toJson(),
+      );
+      expect(
+        regular.presets.where((p) => p.id == GamePreset.desktopId).length,
+        1,
+      );
+    },
+  );
   test('joystick dead zone and diagonals', () {
     expect(GameInputState.joystick(.1, -.1, [87, 65, 83, 68]), isEmpty);
     expect(GameInputState.joystick(.8, -.9, [87, 65, 83, 68]), {87, 68});
@@ -79,7 +139,10 @@ void main() {
         'presets': [preset.toJson()],
       }),
     );
-    expect(GamePresetStore.fromJsonString(store.toJsonString()).selected, preset.id);
+    expect(
+      GamePresetStore.fromJsonString(store.toJsonString()).selected,
+      preset.id,
+    );
   });
   test('encrypted input rejects tampering replay reflection and old sessions', () async {
     final key = List<int>.generate(32, (i) => i);
@@ -102,6 +165,7 @@ void main() {
     );
     expect(await next.decrypt(envelope), isNull);
     expect(await client.decrypt(await server.encrypt(plain)), plain);
+    // ignore: avoid_print
     print(
       'REMOTE_INPUT_VECTOR=${envelope.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}',
     );

@@ -126,10 +126,7 @@ class _DefaultAppsScreenState extends State<DefaultAppsScreen> {
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
-                for (var index = 0; index < _types.length; index++) ...[
-                  if (index > 0) const Divider(height: 1),
-                  _buildTypeTile(_types.keys.elementAt(index), scheme),
-                ],
+                for (final type in _types.keys) _buildTypeTile(type, scheme),
               ],
             ),
           ),

@@ -7,6 +7,15 @@ namespace Hinge.Tests;
 public class CloudRelayTests
 {
     [Fact]
+    public void CloudRelayPartCount_RejectsFilesBeyondR2LimitBeforeUpload()
+    {
+        long maximum = (long)CloudRelayConstants.PartSize * CloudRelayConstants.MaxPartCount;
+        Assert.Equal(1, CloudRelayConstants.GetPartCount(0));
+        Assert.Equal(10000, CloudRelayConstants.GetPartCount(maximum));
+        Assert.Throws<ArgumentOutOfRangeException>(() => CloudRelayConstants.GetPartCount(maximum + 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => CloudRelayConstants.GetPartCount(-1));
+    }
+    [Fact]
     public void CloudRelayCrypto_DerivesStableRelayAndTransferIdentifiers()
     {
         string key = CloudRelayCrypto.GenerateEncryptionKey();

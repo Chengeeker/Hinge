@@ -394,6 +394,10 @@ void main() {
       'Floating capsule navigation bar renders with centered capsule, full-column indicator, and switches in settings',
       (tester) async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
         try {
           const identity = DeviceIdentity(
             deviceId: 'test-capsule-device',
@@ -418,9 +422,10 @@ void main() {
 
           final capsuleFinder = find.byWidgetPredicate(
             (widget) =>
-                widget is Container &&
-                widget.constraints ==
-                    const BoxConstraints.tightFor(width: 280, height: 64),
+                widget is SizedBox &&
+                widget.height == 56 &&
+                widget.width != null &&
+                (widget.width! - 233.33).abs() < .01,
           );
           expect(capsuleFinder, findsOneWidget);
 
@@ -445,7 +450,7 @@ void main() {
 
           final indicatorFinder = find.byWidgetPredicate(
             (widget) =>
-                widget is Container &&
+                widget is DecoratedBox &&
                 widget.decoration is BoxDecoration &&
                 (widget.decoration as BoxDecoration).borderRadius ==
                     BorderRadius.circular(28),

@@ -19,7 +19,7 @@
                     <ColumnDefinition Width="1.2*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border x:Name="IdentityCard" Style="{StaticResource HingeCardStyle}" Grid.Row="0" Grid.Column="0">
+                <Border x:Name="IdentityCard" Style="{StaticResource HingeContentCardStyle}" Grid.Row="0" Grid.Column="0">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -33,7 +33,7 @@
                             <ContentControl x:Name="HeroDeviceLogo" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                            <TextBlock x:Name="HeroDeviceName" Style="{StaticResource HingeSectionTitleStyle}" />
+                            <TextBlock x:Name="HeroDeviceName" Style="{StaticResource HingeM3TitleMediumStyle}" FontSize="18" />
                             <TextBlock x:Name="HeroDeviceDetail" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -41,14 +41,14 @@
                         </StackPanel>
                     </Grid>
                 </Border>
-                <Border x:Name="ServiceCard" Grid.Row="1" Grid.Column="0" Style="{StaticResource HingeCardStyle}">
+                <Border x:Name="ServiceCard" Grid.Row="1" Grid.Column="0" Style="{StaticResource HingeContentCardStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock Text="本机服务" FontWeight="SemiBold" />
                         <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource HingeCaptionStyle}" />
                         <TextBlock Text="UDP 52830 · TCP 52831" Style="{StaticResource HingeCaptionStyle}" />
                     </StackPanel>
                 </Border>
-                <Border x:Name="NearbyDevicesCard" Grid.Row="0" Grid.Column="1" Grid.RowSpan="2" Style="{StaticResource HingeCardStyle}">
+                <Border x:Name="NearbyDevicesCard" Grid.Row="0" Grid.Column="1" Grid.RowSpan="2" Style="{StaticResource HingeContentCardStyle}">
                     <StackPanel Spacing="12">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -99,7 +99,7 @@
                 </Border>
             </Grid>
 
-            <Border x:Name="TransferHistoryCard" Style="{StaticResource HingeCardStyle}">
+            <Border x:Name="TransferHistoryCard" Style="{StaticResource HingeContentCardStyle}">
                 <StackPanel Spacing="10">
                     <Grid>
                         <Grid.ColumnDefinitions>

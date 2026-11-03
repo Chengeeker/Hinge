@@ -1,6 +1,6 @@
 <Page x:Class="Hinge.App.GameLayoutSettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Hinge.App" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     NavigationCacheMode="Required">
     <ScrollViewer x:Name="LayoutScrollViewer" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
         <Grid x:Name="LayoutPageRoot" HorizontalAlignment="Stretch">

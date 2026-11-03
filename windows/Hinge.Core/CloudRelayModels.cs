@@ -6,6 +6,13 @@ public static class CloudRelayConstants
 {
     public const int ApiVersion = 1;
     public const int PartSize = 8 * 1024 * 1024;
+    public const int MaxPartCount = 10000;
+    public static int GetPartCount(long fileSize)
+    {
+        if (fileSize < 0 || fileSize > (long)PartSize * MaxPartCount)
+            throw new ArgumentOutOfRangeException(nameof(fileSize), "Cloud Relay 单个文件最多支持 10,000 个 8 MiB 分块（约 78.1 GiB）。");
+        return Math.Max(1, (int)((fileSize + PartSize - 1) / PartSize));
+    }
     public const int GcmTagSize = 16;
     public const int GcmNonceSize = 12;
     public const int RelayKeySize = 32;

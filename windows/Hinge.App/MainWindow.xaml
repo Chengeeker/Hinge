@@ -85,7 +85,7 @@
             <NavigationView.Content>
                 <Border x:Name="WorkspaceSurface"
                     Margin="0,32,8,8"
-                    CornerRadius="{StaticResource HingeM3ShapeExtraLarge}"
+                    CornerRadius="{StaticResource HingeCornerRadius}"
                     Background="{ThemeResource HingeM3SurfaceBrush}">
                     <Grid x:Name="WorkspaceContent"
                         Background="Transparent"
@@ -189,7 +189,7 @@
                 AllowDrop="True"
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
-                CornerRadius="12"
+                CornerRadius="{StaticResource HingeCornerRadius}"
                 Background="{ThemeResource HingeM3SurfaceContainerBrush}"
                 BorderBrush="{ThemeResource SystemFillColorCriticalBrush}"
                 BorderThickness="2"

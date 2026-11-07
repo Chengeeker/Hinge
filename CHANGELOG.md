@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.0.0] - 2026-11-07
+
+对照上一正式发行版 [v2.2.0](https://github.com/Chengeeker/Hinge/releases/tag/v2.2.0)。
+
+- 新增手机查看并控制 Windows 桌面，提供全屏、鼠标与触控手势、键盘、仅观看和系统快捷操作。
+- 新增手机触控板、全屏游戏模式、按键映射、多套预设及预设导入导出，支持电脑编辑布局并同步至手机。
+- Android 迁移至 Kotlin 与 Jetpack Compose，更新 Material 3 页面和液态玻璃悬浮底栏。
+- 双端统一投屏与远控设置入口，Windows 新增 ADB 指令区和托盘传输文件入口。
+- 新增配对码更新后撤销旧会话与重新验证，修复设备列表手动断开后自动连回、连接条目重复等问题。
+- 更新 Windows Material 3 色彩、圆角和公共控件，相册集与照片列表支持自适应列数，改进相册原图打开及右键集成复用。
+
+完整功能、升级条件、验证范围及发行文件校验值见 [v3.0.0 中文更新日志](docs/CHANGELOG_v3.0.0.md)。
+
+Android 为 3.0.0+188，仅 arm64-v8a；Windows 为 3.0.0.0。
+
 ## [2.2.0] - 2026-10-23
 
 对照 GitHub 上一正式发行版 [`v2.0.2`](https://github.com/Chengeeker/Hinge/releases/tag/v2.0.2)，本版新增 Windows 发起的 Android 手机投屏与远程控制、Android 传输进度通知和液态玻璃底栏选项，并更新桌面界面。完整发行说明见 [v2.2.0 更新日志](docs/CHANGELOG_v2.2.0.md)。

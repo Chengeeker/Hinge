@@ -13,6 +13,12 @@
 
             <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/HarmonyOS_Sans_SC_Regular.ttf#HarmonyOS Sans SC</FontFamily>
 
+            <StaticResource x:Key="ControlCornerRadius" ResourceKey="HingeCornerRadius" />
+            <StaticResource x:Key="OverlayCornerRadius" ResourceKey="HingeCornerRadius" />
+            <StaticResource x:Key="ListViewItemCornerRadius" ResourceKey="HingeCornerRadius" />
+            <StaticResource x:Key="GridViewItemCornerRadius" ResourceKey="HingeCornerRadius" />
+            <StaticResource x:Key="ComboBoxItemCornerRadius" ResourceKey="HingeCornerRadius" />
+
             <!-- Shared M3 page primitives. -->
             <Thickness x:Key="HingePageMargin">24,24,24,24</Thickness>
             <Thickness x:Key="HingeCardPadding">16</Thickness>
@@ -28,22 +34,17 @@
                 <Setter Property="MaxWidth" Value="960" />
             </Style>
             <Style x:Key="HingeCardStyle" TargetType="Border">
-                <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerLowBrush}" />
-                <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeExtraLarge}" />
+                <Setter Property="Background" Value="{ThemeResource HingeM3SurfaceContainerBrush}" />
+                <Setter Property="CornerRadius" Value="{StaticResource HingeCornerRadius}" />
                 <Setter Property="Padding" Value="{StaticResource HingeCardPadding}" />
             </Style>
-            <Style x:Key="HingeContentCardStyle" TargetType="Border" BasedOn="{StaticResource HingeCardStyle}">
-                <Setter Property="Background" Value="{ThemeResource HingeM3ContentCardBrush}" />
-                <Setter Property="CornerRadius" Value="22" />
-                <Setter Property="BorderBrush" Value="{ThemeResource HingeM3CardOutlineBrush}" />
-                <Setter Property="BorderThickness" Value="0.8" />
-            </Style>
+            <Style x:Key="HingeContentCardStyle" TargetType="Border" BasedOn="{StaticResource HingeCardStyle}" />
             <Style x:Key="HingePageTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3HeadlineSmallStyle}" />
             <Style x:Key="HingePageDescriptionStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3BodyVariantStyle}" />
             <Style x:Key="HingeSectionTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3SectionHeaderStyle}" />
             <Style x:Key="HingeCaptionStyle" TargetType="TextBlock" BasedOn="{StaticResource HingeM3CaptionStyle}" />
             <Style TargetType="local:HandCursorNavigationViewItem">
-                <Setter Property="CornerRadius" Value="20" />
+                <Setter Property="CornerRadius" Value="{StaticResource HingeCornerRadius}" />
                 <Setter Property="Margin" Value="0,2" />
                 <Setter Property="MinHeight" Value="40" />
                 <Setter Property="FontSize" Value="14" />

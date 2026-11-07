@@ -75,7 +75,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
                                 <TextBlock Text="连接安全" Style="{StaticResource HingeM3TitleMediumStyle}" />
-                                <TextBlock Text="本机配对码；留空表示不启用。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                <TextBlock Text="更改本机配对码会断开当前局域网连接，连接时需验证新配对码。" TextWrapping="Wrap" Style="{StaticResource HingeM3BodyVariantStyle}" />
                             </StackPanel>
                             <TextBox
                                 x:Name="PairingCodeTextBox"

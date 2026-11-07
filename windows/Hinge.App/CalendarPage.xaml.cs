@@ -373,7 +373,7 @@ public sealed partial class CalendarPage : Page
         {
             Width = 38,
             Height = 38,
-            CornerRadius = new CornerRadius(19),
+            CornerRadius = ThemeBrushes.CornerRadius,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             Background = today ? AccentBrush() : selected ? selectedDayBackground : TransparentBrush(),
@@ -432,7 +432,7 @@ public sealed partial class CalendarPage : Page
             Tag = date,
             Style = (Style)Application.Current.Resources["HingeM3TextButtonStyle"],
             Padding = new Thickness(2),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = ThemeBrushes.CornerRadius,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,

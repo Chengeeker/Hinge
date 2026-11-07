@@ -1,0 +1,4657 @@
+package com.hinge.office
+
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
+import android.Manifest
+import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.database.Cursor
+import android.content.ContentResolver
+import android.content.Intent
+import android.content.Context
+import android.content.ComponentName
+import android.content.res.Configuration
+import android.content.ContentUris
+import android.content.ActivityNotFoundException
+import android.content.pm.PackageManager
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.companion.AssociationInfo
+import android.companion.AssociationRequest
+import android.companion.BluetoothLeDeviceFilter
+import android.companion.CompanionDeviceManager
+import android.content.IntentSender
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.PowerManager
+import android.os.StatFs
+import java.io.File
+import java.io.ByteArrayOutputStream
+import android.util.Base64
+import android.util.Size
+import android.provider.CalendarContract
+import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.provider.Settings
+import android.provider.DocumentsContract
+import androidx.core.content.FileProvider
+import android.media.ImageReader
+import android.media.MediaMetadataRetriever
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.view.Display
+import android.graphics.PixelFormat
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.LinkedHashMap
+import java.util.Locale
+import java.util.ArrayDeque
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import kotlin.math.max
+import kotlin.math.min
+
+class MainActivity : androidx.activity.ComponentActivity() {
+    private val channelName = "hinge/platform"
+    private var nativeConnectionEventSink: NativeEventSink? = null
+    private var smsEventSink: NativeEventSink? = null
+    private var notificationHistoryEventSink: NativeEventSink? = null
+    private val calendarPermissionRequest = 4101
+    private val photosPermissionRequest = 4102
+    private val screenCapturePermissionRequest = 4201
+    private val notificationPermissionRequest = 4103
+    private val mediaPermissionRequest = 4104
+    private val smsPermissionRequest = 4105
+    private val companionAssociationRequest = 4401
+    // MediaStore/Calendar work is off the UI thread. A small adaptive pool
+    // keeps thumbnail and metadata requests responsive on modern phones while
+    // avoiding an unbounded thread explosion on low-end devices.
+    private val contentExecutor: ExecutorService = Executors.newFixedThreadPool(
+        max(2, min(4, Runtime.getRuntime().availableProcessors() - 1)),
+    )
+    private var screenCaptureResult: NativeResult? = null
+    private var screenCaptureWidth = 1080
+    private var screenCaptureHeight = 1920
+    private var screenCaptureFps = 60
+    private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private var captureThread: HandlerThread? = null
+    private var captureHandler: Handler? = null
+    private var lastCaptureAt = 0L
+    private var encodingFrame = false
+    private var screenEventSink: NativeEventSink? = null
+    private var discoveryMulticastLock: WifiManager.MulticastLock? = null
+    private var calendarPermissionResult: NativeResult? = null
+    private var photosPermissionResult: NativeResult? = null
+    private var notificationPermissionResult: NativeResult? = null
+    private var mediaPermissionResult: NativeResult? = null
+    private var smsPermissionResult: NativeResult? = null
+    private var companionAssociationResult: NativeResult? = null
+    private val shareLock = Any()
+    private val pendingShareBatches = ArrayDeque<List<Map<String, Any?>>>()
+    private var shareEventSink: NativeEventSink? = null
+    private data class StorageCacheEntry(
+        val expiresAt: Long,
+        val entries: List<Map<String, Any?>>,
+    )
+
+    private data class CountCacheEntry(
+        val expiresAt: Long,
+        val total: Int,
+    )
+
+    private data class CalendarSourceInfo(
+        val displayName: String = "",
+        val name: String = "",
+        val accountName: String = "",
+        val ownerAccount: String = "",
+        val accountType: String = "",
+    )
+
+    private data class CalendarCatalog(
+        val sources: Map<String, CalendarSourceInfo>,
+        val visibleCalendarIds: Set<String>,
+        val visibilityKnown: Boolean,
+    )
+
+    private data class CalendarInstanceRecord(
+        val id: String,
+        val title: String,
+        val start: Long,
+        val end: Long?,
+        val location: String,
+        val calendarId: String,
+        val allDay: Boolean,
+        val description: String,
+        val organizer: String,
+        val eventColor: Long?,
+        val timeZone: String,
+    )
+
+    private data class CalendarEventInfo(
+        val title: String = "",
+        val description: String = "",
+        val calendarId: String = "",
+        val eventColor: Long? = null,
+        val timeZone: String = "",
+        val organizer: String = "",
+        val customAppPackage: String = "",
+        val customAppUri: String = "",
+    )
+
+    private val storageDirectoryCache = ConcurrentHashMap<String, StorageCacheEntry>()
+    private val mediaTotalCache = ConcurrentHashMap<String, CountCacheEntry>()
+    private val notificationIconCache = ConcurrentHashMap<String, String>()
+    private val documentFileExtensions = arrayOf(
+        "pdf", "doc", "docx", "docm", "dot", "dotx", "odt",
+        "xls", "xlsx", "xlsm", "xlt", "xltx", "ods",
+        "ppt", "pptx", "pptm", "pps", "ppsx", "odp",
+        "txt", "md", "csv", "tsv", "rtf", "json", "xml", "html", "htm",
+    )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        startConnectionService(
+            if (intent?.action == HingeForegroundService.ACTION_WAKE) {
+                HingeForegroundService.ACTION_WAKE
+            } else {
+                HingeForegroundService.ACTION_START
+            },
+        )
+        HingeCompanionManager.startObserving(this)
+        configureNative()
+        cleanupSharedFileCache()
+        handleShareIntent(intent)
+        // A notification click can create the activity from a cold start.
+        // Handle the same deep link path as onNewIntent so the directory
+        // shortcut works whether Flutter is already running or not.
+        when (intent?.action) {
+            ACTION_OPEN_RECEIVED_DIRECTORY -> {
+                openReceivedDirectory(intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH))
+            }
+            ACTION_OPEN_RECEIVED_FILE -> {
+                openReceivedFile(
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH),
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_MIME),
+                )
+            }
+        }
+    }
+
+    private var gameProfileBridge: GameProfileBridge? = null
+    private var desktopVideoBridge: DesktopVideoBridge? = null
+    val api = NativeApi()
+    val desktopSurface by lazy { DesktopSurfaceHost(this) }
+    lateinit var model: HingeModel
+    private val workspaceWorker=java.util.concurrent.Executors.newSingleThreadExecutor()
+    private fun configureNative() {
+        gameProfileBridge = GameProfileBridge(this, api)
+        desktopVideoBridge = DesktopVideoBridge(this, api, desktopSurface)
+        api.register("hinge/platform") { call, result ->
+            if(call.method in setOf("loadNotes","loadTasks","saveNote","saveTask","deleteNote","deleteTask","loadSettings","saveSettings","storageInfo","storagePaths"))workspaceWorker.execute{try{handleMethod(call,result)}catch(e:Exception){result.error("storage",e.message,null)}}
+            else handleMethod(call, result)
+        }
+        screenEventSink = api.sink("hinge/screen_capture/events")
+        smsEventSink = api.sink("hinge/sms/events")
+        notificationHistoryEventSink = api.sink("hinge/notification_history/events")
+        nativeConnectionEventSink = api.sink("hinge/native_connection/events")
+        shareEventSink = api.sink("hinge/share/events")
+        model = HingeModel(this, api)
+        model.start()
+        SmsRelayBridge.attach(smsEventSink)
+        NotificationHistoryBridge.attach(notificationHistoryEventSink)
+        HingeNativeConnectionEvents.attach(nativeConnectionEventSink)
+        shareEventSink?.let { drainPendingShareBatches(it) }
+        setComposeContent()
+    }
+
+    private var lightSystemBars: Boolean? = null
+
+    internal fun applySystemBarAppearance(lightBars: Boolean) {
+        lightSystemBars = lightBars
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = lightBars
+            isAppearanceLightNavigationBars = lightBars
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) lightSystemBars?.let(::applySystemBarAppearance)
+    }
+
+    private val tapHaptics = TapHaptics()
+
+    internal fun suppressTapFeedback() {
+        tapHaptics.cancel()
+    }
+
+    internal fun onGlassGestureStarted(longPress: Boolean) {
+        val trackedTouch = tapHaptics.cancel()
+        if (longPress && trackedTouch && hapticFeedbackEnabled()) {
+            window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        }
+    }
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (tapHaptics.onTouch(event, resources.displayMetrics.density) && hapticFeedbackEnabled()) {
+            window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        }
+        return super.dispatchTouchEvent(event)
+    }
+    override fun onResume() {
+        super.onResume()
+        model.foreground = true
+        if (model.remote?.let { it.isClosed && model.isConnectionReady(it.peer.text("connectionId")) } == true) {
+            model.remoteRevision++
+        }
+        // A share Activity can replace these process-wide sinks while this engine stays alive.
+        smsEventSink?.let { SmsRelayBridge.attach(it) }
+        notificationHistoryEventSink?.let { NotificationHistoryBridge.attach(it) }
+        nativeConnectionEventSink?.let {
+            HingeNativeConnectionEvents.attach(it)
+            HingeForegroundService.current?.connectionBroker()?.emitCurrentSnapshotForFlutter()
+        }
+        HingeForegroundService.current?.setActivityForeground(true)
+    }
+
+    override fun onPause() {
+        model.foreground = false
+        HingeForegroundService.current?.setActivityForeground(false)
+        super.onPause()
+    }
+
+    override fun onStop() {
+        model.remote?.close()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        model.close()
+        desktopVideoBridge?.close()
+        gameProfileBridge?.close()
+        stopScreenCapture()
+        releaseDiscoveryMulticastLock()
+        synchronized(shareLock) {
+            shareEventSink = null
+        }
+        HingeNativeConnectionEvents.detach(nativeConnectionEventSink)
+        SmsRelayBridge.detach(smsEventSink)
+        NotificationHistoryBridge.detach(notificationHistoryEventSink)
+        nativeConnectionEventSink = null
+        smsEventSink = null
+        notificationHistoryEventSink = null
+        workspaceWorker.shutdown()
+        contentExecutor.shutdownNow()
+        super.onDestroy()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (gameProfileBridge?.onResult(requestCode, resultCode, data) == true) return
+        if (requestCode == companionAssociationRequest) {
+            handleCompanionAssociationResult(resultCode, data)
+            return
+        }
+        if (requestCode != screenCapturePermissionRequest) return
+        val pending = screenCaptureResult
+        screenCaptureResult = null
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            pending?.success(false)
+            return
+        }
+        val started = startScreenCapture(data)
+        pending?.success(started)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == HingeForegroundService.ACTION_WAKE) {
+            startConnectionService(HingeForegroundService.ACTION_WAKE)
+        }
+        handleShareIntent(intent)
+        when (intent.action) {
+            ACTION_OPEN_RECEIVED_DIRECTORY -> {
+                openReceivedDirectory(intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH))
+            }
+            ACTION_OPEN_RECEIVED_FILE -> {
+                openReceivedFile(
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_PATH),
+                    intent.getStringExtra(EXTRA_RECEIVED_FILE_MIME),
+                )
+            }
+        }
+    }
+
+    /**
+     * Android share targets deliver content:// URIs, not filesystem paths.
+     * Copy them to an app-owned cache before handing them to Dart so the
+     * existing streaming FILE_OFFER/FILE_CHUNK implementation can be reused.
+     */
+    private fun handleShareIntent(intent: Intent?) {
+        if (intent == null) return
+        val action = intent.action
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+            return
+        }
+        val uris = extractSharedUris(intent)
+        if (uris.isEmpty()) return
+        val requestedMimeType = intent.type.orEmpty()
+        try {
+            contentExecutor.execute {
+                val files = copySharedUris(uris, requestedMimeType)
+                publishSharedFiles(files)
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // The activity is already being destroyed; there is no receiver
+            // left that could process this share request.
+        }
+    }
+
+    private fun extractSharedUris(intent: Intent): List<Uri> {
+        val uris = ArrayList<Uri>()
+        if (intent.action == Intent.ACTION_SEND) {
+            sharedStreamUri(intent)?.let { uris.add(it) }
+        } else if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            uris.addAll(sharedStreamUris(intent))
+        }
+
+        // Some file managers put the stream only in ClipData. Include it as a
+        // fallback and de-duplicate providers that set both representations.
+        val clipData = intent.clipData
+        if (clipData != null) {
+            for (index in 0 until clipData.itemCount) {
+                clipData.getItemAt(index).uri?.let { uris.add(it) }
+            }
+        }
+        return uris.distinctBy { it.toString() }
+    }
+
+    private fun sharedStreamUri(intent: Intent): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+    }
+
+    private fun sharedStreamUris(intent: Intent): List<Uri> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                ?: emptyList()
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+                ?: emptyList()
+        }
+    }
+
+    private fun copySharedUris(
+        uris: List<Uri>,
+        requestedMimeType: String,
+    ): List<Map<String, Any?>> {
+        val directory = File(cacheDir, "hinge_share")
+        if (!directory.exists() && !directory.mkdirs() && !directory.isDirectory) {
+            return emptyList()
+        }
+
+        return uris.mapIndexedNotNull { index, uri ->
+            var target: File? = null
+            try {
+                val fallbackName = if (uris.size == 1) {
+                    "分享文件"
+                } else {
+                    "分享文件_${index + 1}"
+                }
+                val displayName = sanitizeSharedFileName(
+                    querySharedDisplayName(uri),
+                    fallbackName,
+                )
+                target = File(
+                    directory,
+                    "${System.currentTimeMillis()}_${UUID.randomUUID()}_$displayName",
+                )
+                val input = if (uri.scheme.equals("file", ignoreCase = true)) {
+                    val source = File(uri.path.orEmpty())
+                    if (!source.isFile) return@mapIndexedNotNull null
+                    source.inputStream()
+                } else {
+                    contentResolver.openInputStream(uri)
+                        ?: return@mapIndexedNotNull null
+                }
+                input.use { inputStream ->
+                    target!!.outputStream().use { output ->
+                        inputStream.copyTo(output)
+                    }
+                }
+                val mimeType = contentResolver.getType(uri)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: requestedMimeType.takeIf {
+                        it.isNotBlank() && it != "*/*"
+                    }
+                    ?: "application/octet-stream"
+                mapOf(
+                    "path" to target!!.absolutePath,
+                    "name" to displayName,
+                    "mimeType" to mimeType,
+                    "sizeBytes" to target!!.length(),
+                )
+            } catch (_: Exception) {
+                target?.delete()
+                null
+            }
+        }
+    }
+
+    private fun querySharedDisplayName(uri: Uri): String {
+        if (uri.scheme.equals("file", ignoreCase = true)) {
+            return File(uri.path.orEmpty()).name
+        }
+        return try {
+            contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use ""
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index < 0) "" else cursor.getString(index).orEmpty()
+            }.orEmpty().ifBlank {
+                uri.lastPathSegment?.substringAfterLast('/').orEmpty()
+            }
+        } catch (_: Exception) {
+            uri.lastPathSegment?.substringAfterLast('/').orEmpty()
+        }
+    }
+
+    private fun sanitizeSharedFileName(rawName: String, fallback: String): String {
+        val sanitized = rawName.trim()
+            .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
+            .trimEnd('.', ' ')
+            .take(180)
+        return sanitized.ifBlank { fallback }
+    }
+
+    private fun publishSharedFiles(files: List<Map<String, Any?>>) {
+        if (files.isEmpty()) return
+        runOnUiThread {
+            var sink: NativeEventSink? = null
+            synchronized(shareLock) {
+                sink = shareEventSink
+                if (sink == null) pendingShareBatches.addLast(files)
+            }
+            if (sink != null) {
+                try {
+                    sink!!.success(mapOf("files" to files))
+                } catch (_: Exception) {
+                    synchronized(shareLock) {
+                        pendingShareBatches.addFirst(files)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun drainPendingShareBatches(events: NativeEventSink) {
+        val batches: List<List<Map<String, Any?>>> = synchronized(shareLock) {
+            shareEventSink = events
+            val copy = pendingShareBatches.toList()
+            pendingShareBatches.clear()
+            copy
+        }
+        for (batch in batches) {
+            try {
+                events.success(mapOf("files" to batch))
+            } catch (_: Exception) {
+                synchronized(shareLock) {
+                    pendingShareBatches.addLast(batch)
+                }
+            }
+        }
+    }
+
+    private fun cleanupSharedFileCache() {
+        val directory = File(cacheDir, "hinge_share")
+        val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+        directory.listFiles()?.forEach { file ->
+            if (file.isFile && file.lastModified() < cutoff) file.delete()
+        }
+    }
+
+    private fun handleMethod(call: NativeCall, result: NativeResult) {
+        when (call.method) {
+            "bindDiscoveryToWifi" -> result.success(bindDiscoveryToWifi())
+            "acquireDiscoveryMulticastLock" -> result.success(acquireDiscoveryMulticastLock())
+            "releaseDiscoveryMulticastLock" -> result.success(releaseDiscoveryMulticastLock())
+            "storageInfo" -> result.success(readStorageInfo())
+            "storagePaths" -> result.success(storagePaths())
+            "deviceName" -> result.success(deviceDisplayName())
+            "deviceInfo" -> result.success(deviceInfo())
+            "systemAccentColor" -> result.success(systemAccentColor())
+            "systemDynamicColors" -> result.success(systemDynamicColors())
+            "loadSettings" -> result.success(loadSettings())
+            "saveSettings" -> saveSettings(call, result)
+            "hapticFeedbackEnabled" -> result.success(hapticFeedbackEnabled())
+            "setHapticFeedbackEnabled" -> setHapticFeedbackEnabled(call, result)
+            "hasNotificationPermission" -> result.success(hasNotificationPermission())
+            "requestNotificationPermission" -> requestNotificationPermission(result)
+            "persistentNotificationEnabled" -> result.success(persistentNotificationEnabled())
+            "setPersistentNotificationEnabled" -> setPersistentNotificationEnabled(call, result)
+            "companionStatus" -> result.success(HingeCompanionManager.status(this))
+            "associateCompanion" -> associateCompanion(result)
+            "removeCompanion" -> result.success(HingeCompanionManager.removeAssociation(this))
+            "wakeConnection" -> {
+                HingeCompanionManager.requestWake(this, "manual")
+                result.success(true)
+            }
+            "nativeListenerStatus" -> result.success(HingeForegroundService.current?.connectionBroker()?.listenerStatus() ?: mapOf("listening" to false))
+            "startNativeSession" -> startNativeSession(call, result)
+            "updateNativePairingCode" -> updateNativePairingCode(call, result)
+            "nativeConnect" -> nativeConnect(call, result)
+            "nativeDisconnect" -> nativeDisconnect(call, result)
+            "nativeDisconnectDevice" -> {
+                HingeForegroundService.current?.connectionBroker()?.disconnectDevice(call.argument<String>("deviceId").orEmpty())
+                result.success(true)
+            }
+            "nativeSendFrame" -> nativeSendFrame(call, result)
+            "nativeSendFileChunk" -> nativeSendFileChunk(call, result)
+            "nativeEnqueueFile" -> nativeEnqueueFile(call, result)
+            "activeTransferHistoryIds" -> {
+                val broker = HingeForegroundService.current?.connectionBroker()
+                if (broker == null) {
+                    result.error(
+                        "native_service_unavailable",
+                        "原生连接服务尚未启动，无法校验传输状态",
+                        null,
+                    )
+                } else {
+                    result.success(broker.activeTransferHistoryIds())
+                }
+            }
+            "pendingNativeTransferReceipts" -> {
+                val receipts: List<Map<String, Any?>> =
+                    HingeForegroundService.current?.connectionBroker()
+                        ?.pendingTransferReceipts() ?: emptyList()
+                result.success(receipts)
+            }
+            "ackNativeTransferReceipts" -> {
+                val receiptIds = (call.argument<List<String>>("receiptIds") ?: emptyList())
+                    .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+                    .toSet()
+                HingeForegroundService.current?.connectionBroker()
+                    ?.acknowledgeTransferReceipts(receiptIds)
+                result.success(true)
+            }
+            "readConnectionDiagnostics" -> result.success(
+                HingeForegroundService.current?.connectionBroker()?.readDiagnostics() ?: "",
+            )
+            "clearConnectionDiagnostics" -> {
+                HingeForegroundService.current?.connectionBroker()?.clearDiagnostics()
+                result.success(true)
+            }
+            "smsRelayEnabled" -> result.success(smsRelayEnabled())
+            "setSmsRelayEnabled" -> setSmsRelayEnabled(call, result)
+            "smsPermissionStatus" -> result.success(smsPermissionStatus())
+            "requestSmsPermissions" -> requestSmsPermissions(result)
+            "smsNotificationAccessEnabled" -> result.success(smsNotificationAccessEnabled())
+            "openSmsNotificationAccessSettings" -> result.success(openSmsNotificationAccessSettings())
+            "sendSmsRelayTestEvent" -> result.success(sendSmsRelayTestEvent())
+            "smsPermissionPromptShown" -> result.success(smsPermissionPromptShown())
+            "setSmsPermissionPromptShown" -> setSmsPermissionPromptShown(call, result)
+            "notificationHistoryAccessEnabled" -> result.success(notificationHistoryAccessEnabled())
+            "notificationHistoryEnabled" -> result.success(notificationHistoryEnabled())
+            "setNotificationHistoryEnabled" -> setNotificationHistoryEnabled(call, result)
+            "openNotificationHistorySettings" -> result.success(openNotificationHistorySettings())
+            "notificationHistory" -> readNotificationHistory(call, result)
+            "openNotificationHistoryItem" -> openNotificationHistoryItem(call, result)
+            "deleteNotificationHistoryItem" -> deleteNotificationHistoryItem(call, result)
+            "clearNotificationHistory" -> clearNotificationHistory(result)
+            "keepAliveStatus" -> result.success(keepAliveStatus())
+            "openNotificationSettings" -> result.success(openNotificationSettings())
+            "screenControlStatus" -> result.success(mapOf(
+                "supported" to (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R),
+                "developerOptionsEnabled" to runCatching {
+                    Settings.Global.getInt(contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) != 0
+                }.getOrNull(),
+            ))
+            "openWirelessDebuggingSettings" -> result.success(openWirelessDebuggingSettings())
+            "openBatteryOptimizationSettings" -> result.success(openBatteryOptimizationSettings())
+            "openBackgroundProtectionSettings" -> result.success(openBackgroundProtectionSettings())
+            "moveTaskToBack" -> result.success(moveTaskToBack(true))
+            "showFileReceivedNotification" -> showFileReceivedNotification(call, result)
+            "showCloudRelayTransferProgress" ->
+                showCloudRelayTransferProgress(call, result)
+            "finishCloudRelayTransferNotification" ->
+                finishCloudRelayTransferNotification(call, result)
+            "defaultAppOptions" -> defaultAppOptions(call, result)
+            "defaultApp" -> result.success(defaultApp(call))
+            "setDefaultApp" -> setDefaultApp(call, result)
+            "openTransferHistoryFile" -> openTransferHistoryFile(call, result)
+            "openAppSettings" -> openAppSettings(result)
+            "openProjectUrl" -> result.success(openProjectUrl())
+            "startScreenCapture" -> requestScreenCapture(call, result)
+            "stopScreenCapture" -> {
+                stopScreenCapture()
+                result.success(true)
+            }
+            "hasCalendarPermission" -> result.success(hasCalendarPermission())
+            "requestCalendarPermission" -> requestCalendarPermission(result)
+            "calendarEvents" -> readCalendarEvents(result)
+            "calendarCreate" -> openCalendarCreate(call, result)
+            "hasPhotosPermission" -> result.success(hasPhotosPermission())
+            "requestPhotosPermission" -> requestPhotosPermission(result)
+            "hasMediaPermission" -> result.success(hasMediaPermission())
+            "requestMediaPermission" -> requestMediaPermission(result)
+            "hasAllFilesAccess" -> result.success(hasAllFilesAccess())
+            "openAllFilesAccessSettings" -> openAllFilesAccessSettings(result)
+            "photoAlbums" -> readPhotoAlbums(result)
+            "photos" -> readPhotos(call, result)
+            "photosPage" -> readPhotoPage(call, result)
+            "photoBytes" -> readPhotoBytes(call, result)
+            "photoThumbnailBytes" -> readPhotoThumbnailBytes(call, result)
+            "photoPreviewBytes" -> readPhotoPreviewBytes(call, result)
+            "mediaMetadata" -> readMediaMetadata(call, result)
+            "copyUriToCache" -> copyUriToCache(call, result)
+            "files" -> readFiles(result)
+            "storageDirectory" -> readStorageDirectory(call, result)
+            "storageDirectoryPage" -> readStorageDirectoryPage(call, result)
+            "deleteFiles" -> deleteFiles(call, result)
+            "loadNotes" -> result.success(readWorkspaceList("notes"))
+            "saveNote" -> saveWorkspaceItem("notes", call.arguments, result)
+            "deleteNote" -> deleteWorkspaceItem("notes", call.arguments, result)
+            "loadTasks" -> result.success(readWorkspaceList("tasks"))
+            "saveTask" -> saveWorkspaceItem("tasks", call.arguments, result)
+            "deleteTask" -> deleteWorkspaceItem("tasks", call.arguments, result)
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun startConnectionService(action: String = HingeForegroundService.ACTION_START) {
+        val intent = Intent(this, HingeForegroundService::class.java).apply {
+            this.action = action
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun startNativeSession(call: NativeCall, result: NativeResult) {
+        val arguments = call.arguments as? Map<*, *>
+        val service = HingeForegroundService.current
+        if (service != null) {
+            result.success(service.connectionBroker().configure(arguments))
+            return
+        }
+
+        // The Activity starts the foreground service before Flutter finishes
+        // configuring its engine. If Android has not delivered onCreate yet,
+        // carry the configuration in the start Intent and let the service
+        // apply it immediately after creation.
+        val intent = Intent(this, HingeForegroundService::class.java).apply {
+            action = HingeForegroundService.ACTION_CONFIGURE
+            putExtra("deviceId", arguments?.get("deviceId")?.toString())
+            putExtra("name", arguments?.get("name")?.toString())
+            putExtra("manufacturer", arguments?.get("manufacturer")?.toString())
+            putExtra("model", arguments?.get("model")?.toString())
+            putExtra("localPairingCode", arguments?.get("localPairingCode")?.toString())
+            putExtra("listenPort", (arguments?.get("listenPort") as? Number)?.toInt() ?: 52831)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("native_service_start_failed", "无法启动原生连接服务：${error.message}", null)
+        }
+    }
+
+    private fun updateNativePairingCode(call: NativeCall, result: NativeResult) {
+        val broker = HingeForegroundService.current?.connectionBroker()
+        result.success(broker?.updateLocalPairingCode(call.argument<String>("localPairingCode").orEmpty()) == true)
+    }
+
+    private fun nativeConnect(call: NativeCall, result: NativeResult) {
+        val broker = HingeForegroundService.current?.connectionBroker()
+        if (broker == null) {
+            result.error("native_service_unavailable", "原生连接服务尚未启动", null)
+            return
+        }
+        try {
+            val id = broker.connect(
+                connectionId = call.argument<String>("connectionId").orEmpty(),
+                address = call.argument<String>("address").orEmpty(),
+                port = call.argument<Int>("port") ?: 52831,
+                remotePairingCode = call.argument<String>("remotePairingCode").orEmpty(),
+                manualConnect = call.argument<Boolean>("manualConnect") == true,
+            )
+            result.success(id)
+        } catch (error: Exception) {
+            result.error("native_connect_failed", error.message, null)
+        }
+    }
+
+    private fun nativeDisconnect(call: NativeCall, result: NativeResult) {
+        HingeForegroundService.current?.connectionBroker()?.disconnect(
+            connectionId = call.argument<String>("connectionId").orEmpty(),
+            manual = call.argument<Boolean>("manual") ?: true,
+        )
+        result.success(true)
+    }
+
+    private fun nativeSendFrame(call: NativeCall, result: NativeResult) {
+        val payload = call.argument<ByteArray>("payload") ?: ByteArray(0)
+        HingeForegroundService.current?.connectionBroker()?.sendFrame(
+            connectionId = call.argument<String>("connectionId").orEmpty(),
+            type = call.argument<Int>("type") ?: 0,
+            payload = payload,
+        )
+        result.success(true)
+    }
+
+    private fun nativeSendFileChunk(call: NativeCall, result: NativeResult) {
+        val transferId = call.argument<ByteArray>("transferId") ?: ByteArray(0)
+        val data = call.argument<ByteArray>("data") ?: ByteArray(0)
+        val count = (call.argument<Number>("count")?.toInt() ?: data.size)
+            .coerceIn(0, data.size)
+        HingeForegroundService.current?.connectionBroker()?.sendFileChunk(
+            connectionId = call.argument<String>("connectionId").orEmpty(),
+            transferId = transferId,
+            chunkIndex = call.argument<Number>("chunkIndex")?.toInt() ?: 0,
+            offset = call.argument<Number>("offset")?.toLong() ?: 0L,
+            data = data,
+            count = count,
+        )
+        result.success(true)
+    }
+
+    private fun nativeEnqueueFile(call: NativeCall, result: NativeResult) {
+        val broker = HingeForegroundService.current?.connectionBroker()
+        if (broker == null) {
+            result.error("native_service_unavailable", "原生连接服务尚未启动", null)
+            return
+        }
+        result.success(
+            broker.enqueueFile(
+                path = call.argument<String>("path").orEmpty(),
+                name = call.argument<String>("name").orEmpty(),
+                mimeType = call.argument<String>("mimeType").orEmpty(),
+                targetDeviceId = call.argument<String>("targetDeviceId").orEmpty(),
+                deleteAfter = call.argument<Boolean>("deleteAfter") ?: true,
+            ),
+        )
+    }
+
+    private fun openAppSettings(result: NativeResult) {
+        try {
+            startActivity(appDetailsIntent())
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("settings_failed", "无法打开应用权限设置：${error.message}", null)
+        }
+    }
+
+    private fun appDetailsIntent(): Intent =
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:$packageName")
+        }
+
+    private fun keepAliveStatus(): Map<String, Any> {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val batteryOptimizationIgnored = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            powerManager?.isIgnoringBatteryOptimizations(packageName) == true
+        val companion = HingeCompanionManager.status(this)
+        return mapOf(
+            "notificationPermission" to hasNotificationPermission(),
+            "persistentNotification" to persistentNotificationEnabled(),
+            "batteryOptimizationIgnored" to batteryOptimizationIgnored,
+            "manufacturer" to Build.MANUFACTURER,
+            "model" to Build.MODEL,
+            "apiLevel" to Build.VERSION.SDK_INT,
+            "companionSupported" to (companion["supported"] == true),
+            "companionAssociated" to (companion["associated"] == true),
+            "companionAddress" to (companion["address"]?.toString().orEmpty()),
+        )
+    }
+
+    private fun associateCompanion(result: NativeResult) {
+        if (!HingeCompanionManager.isSupported(this) || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            result.error("companion_unsupported", "当前 Android 设备不支持 Companion Device 唤醒", null)
+            return
+        }
+
+        val manager = getSystemService(CompanionDeviceManager::class.java)
+        if (manager == null) {
+            result.error("companion_unavailable", "系统 Companion Device 服务不可用", null)
+            return
+        }
+
+        val scanFilter = ScanFilter.Builder()
+            .setManufacturerData(
+                HingeWakeProtocol.COMPANY_ID,
+                HingeWakeProtocol.FILTER_DATA,
+                HingeWakeProtocol.FILTER_MASK,
+            )
+            .build()
+        val deviceFilter = BluetoothLeDeviceFilter.Builder()
+            .setScanFilter(scanFilter)
+            .build()
+        val request = AssociationRequest.Builder()
+            .addDeviceFilter(deviceFilter)
+            .setSingleDevice(true)
+            .build()
+
+        companionAssociationResult = result
+        val callback = object : CompanionDeviceManager.Callback() {
+            override fun onAssociationPending(intentSender: IntentSender) {
+                launchCompanionPicker(intentSender)
+            }
+
+            @Suppress("DEPRECATION")
+            override fun onDeviceFound(intentSender: IntentSender) {
+                launchCompanionPicker(intentSender)
+            }
+
+            @androidx.annotation.RequiresApi(33)
+            override fun onAssociationCreated(associationInfo: AssociationInfo) {
+                val address = associationInfo.deviceMacAddress?.toString()
+                if (address.isNullOrBlank()) return
+                val saved = HingeCompanionManager.saveAssociation(this@MainActivity, address)
+                companionAssociationResult?.success(saved)
+                companionAssociationResult = null
+            }
+
+            override fun onFailure(errorMessage: CharSequence?) {
+                companionAssociationResult?.error(
+                    "companion_association_failed",
+                    errorMessage?.toString() ?: "没有找到 Hinge Windows BLE 广播",
+                    null,
+                )
+                companionAssociationResult = null
+            }
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                manager.associate(request, mainExecutor, callback)
+            } else {
+                @Suppress("DEPRECATION")
+                manager.associate(request, callback, null)
+            }
+        } catch (error: Exception) {
+            companionAssociationResult = null
+            result.error("companion_association_failed", error.message, null)
+        }
+    }
+
+    private fun launchCompanionPicker(intentSender: IntentSender) {
+        try {
+            startIntentSenderForResult(
+                intentSender,
+                companionAssociationRequest,
+                null,
+                0,
+                0,
+                0,
+            )
+        } catch (error: IntentSender.SendIntentException) {
+            companionAssociationResult?.error(
+                "companion_picker_failed",
+                error.message,
+                null,
+            )
+            companionAssociationResult = null
+        }
+    }
+
+    private fun handleCompanionAssociationResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            companionAssociationResult?.success(false)
+            companionAssociationResult = null
+            return
+        }
+
+        val bluetoothDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            data.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE, BluetoothDevice::class.java)
+                ?: data.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE, ScanResult::class.java)?.device
+        } else {
+            @Suppress("DEPRECATION")
+            val classicDevice = data.getParcelableExtra<BluetoothDevice>(CompanionDeviceManager.EXTRA_DEVICE)
+            @Suppress("DEPRECATION")
+            val scanResult = data.getParcelableExtra<ScanResult>(CompanionDeviceManager.EXTRA_DEVICE)
+            classicDevice ?: scanResult?.device
+        }
+        val address = bluetoothDevice?.address
+        if (address == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+ completes the association through
+            // onAssociationCreated(AssociationInfo), which may arrive after
+            // this legacy activity result without EXTRA_DEVICE.
+            return
+        }
+        val saved = address != null && HingeCompanionManager.saveAssociation(this, address)
+        companionAssociationResult?.success(saved)
+        companionAssociationResult = null
+    }
+
+    private fun openNotificationSettings(): Boolean {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            }
+        } else {
+            appDetailsIntent()
+        }
+        return startSettingsIntent(intent, appDetailsIntent())
+    }
+
+    private fun openWirelessDebuggingSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return startSettingsIntent(Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"), null) ||
+            startSettingsIntent(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
+                Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
+    }
+
+    private fun openBatteryOptimizationSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return startSettingsIntent(
+                Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS),
+                appDetailsIntent(),
+            )
+        }
+        val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:$packageName")
+        }
+        val listIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        return startSettingsIntent(requestIntent, listIntent) ||
+            startSettingsIntent(listIntent, appDetailsIntent())
+    }
+
+    private fun openBackgroundProtectionSettings(): Boolean {
+        val manufacturer = Build.MANUFACTURER.lowercase(Locale.ROOT)
+        val candidates = when {
+            manufacturer.contains("vivo") -> listOf(
+                componentIntent("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
+                componentIntent("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.PurviewTabActivity"),
+            )
+            manufacturer.contains("iqoo") -> listOf(
+                componentIntent("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager"),
+                componentIntent("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
+            )
+            manufacturer.contains("xiaomi") || manufacturer.contains("redmi") -> listOf(
+                componentIntent("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
+            )
+            manufacturer.contains("huawei") || manufacturer.contains("honor") -> listOf(
+                componentIntent("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+                componentIntent("com.hihonor.systemmanager", "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+            )
+            manufacturer.contains("oppo") || manufacturer.contains("realme") -> listOf(
+                componentIntent("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
+                componentIntent("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"),
+            )
+            manufacturer.contains("oneplus") -> listOf(
+                componentIntent("com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"),
+            )
+            else -> emptyList()
+        }
+        for (candidate in candidates) {
+            if (startSettingsIntent(candidate, null)) return true
+        }
+        return startSettingsIntent(appDetailsIntent(), null)
+    }
+
+    private fun componentIntent(packageName: String, className: String): Intent =
+        Intent().setClassName(packageName, className)
+
+    private fun startSettingsIntent(intent: Intent, fallback: Intent?): Boolean {
+        return try {
+            if (intent.resolveActivity(packageManager) == null) {
+                if (fallback != null) return startSettingsIntent(fallback, null)
+                return false
+            }
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            if (fallback != null) startSettingsIntent(fallback, null) else false
+        }
+    }
+
+    private fun openProjectUrl(): Boolean {
+        val intent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://github.com/Chengeeker/Hinge"),
+        ).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+        return try {
+            // Do not depend on a particular browser package. Android may hide
+            // browser activities from resolveActivity unless the manifest has
+            // an explicit VIEW query, so starting the external intent directly
+            // is the reliable path and is still guarded by ActivityNotFound.
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent.createChooser(intent, "在浏览器中打开"))
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            calendarPermissionRequest -> {
+                val pending = calendarPermissionResult
+                calendarPermissionResult = null
+                pending?.success(hasCalendarPermission())
+            }
+            photosPermissionRequest -> {
+                val pending = photosPermissionResult
+                photosPermissionResult = null
+                pending?.success(hasPhotosPermission())
+            }
+            notificationPermissionRequest -> {
+                val pending = notificationPermissionResult
+                notificationPermissionResult = null
+                pending?.success(hasNotificationPermission())
+            }
+            mediaPermissionRequest -> {
+                val pending = mediaPermissionResult
+                mediaPermissionResult = null
+                pending?.success(hasMediaPermission())
+            }
+            smsPermissionRequest -> {
+                val pending = smsPermissionResult
+                smsPermissionResult = null
+                startConnectionService()
+                pending?.success(smsPermissionStatus())
+            }
+        }
+    }
+
+    private fun acquireDiscoveryMulticastLock(): Boolean {
+        return try {
+            if (discoveryMulticastLock?.isHeld != true) {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                discoveryMulticastLock = wifiManager.createMulticastLock("HingeDiscovery").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+            discoveryMulticastLock?.isHeld == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * The long-lived service scopes LAN sockets to the active physical Network
+     * individually. Do not bind the whole process here during ordinary network
+     * use: process-wide binding makes Flutter and unrelated HTTP traffic inherit
+     * a stale Wi-Fi handle after a roam/DHCP change. When a third-party VPN is
+     * active, HingeForegroundService owns a temporary process-level physical
+     * LAN compatibility binding because Dart cannot call Network.bindSocket on
+     * its RawDatagramSocket; this method remains a compatibility status query.
+     */
+    private fun bindDiscoveryToWifi(): Map<String, Any> {
+        return mapOf(
+            "bound" to false,
+            "wifi" to true,
+            "scopedSockets" to true,
+        )
+    }
+
+    private fun releaseDiscoveryMulticastLock(): Boolean {
+        return try {
+            if (discoveryMulticastLock?.isHeld == true) discoveryMulticastLock?.release()
+            discoveryMulticastLock = null
+            true
+        } catch (_: Exception) {
+            discoveryMulticastLock = null
+            false
+        }
+    }
+
+    private fun readStorageInfo(): Map<String, Long> {
+        val stat = StatFs(Environment.getDataDirectory().path)
+        val total = stat.totalBytes
+        val free = stat.availableBytes
+        return mapOf(
+            "totalBytes" to total,
+            "usedBytes" to (total - free).coerceAtLeast(0L),
+            "freeBytes" to free,
+        )
+    }
+
+    private fun systemAccentColor(): Int? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+        val resourceId = resources.getIdentifier("system_accent1_600", "color", "android")
+        return if (resourceId == 0) null else getColor(resourceId)
+    }
+
+    /**
+     * Read Android 12+'s wallpaper-derived Material roles directly from the
+     * framework resources. Flutter's ColorScheme.fromSeed is intentionally
+     * not used for this path: it cannot reproduce the system's HCT palette
+     * from one sampled accent color.
+     */
+    fun systemDynamicColors(): Map<String, Long>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+
+        // Android 14 introduced public, already role-mapped Monet resources.
+        // Use those resources when available instead of reconstructing a
+        // Material scheme from one accent palette.  The values are maintained
+        // by SystemUI and are derived from the current wallpaper/color source.
+        // Android 12/13 fall back to the public accent/neutral tonal palettes
+        // below because these role resources do not exist there.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val directColors = linkedMapOf<String, Long>()
+
+            fun addDirectRoles(prefix: String, mode: String) {
+                val roles = mapOf(
+                    "primary" to "primary",
+                    "onPrimary" to "on_primary",
+                    "primaryContainer" to "primary_container",
+                    "onPrimaryContainer" to "on_primary_container",
+                    "secondary" to "secondary",
+                    "onSecondary" to "on_secondary",
+                    "secondaryContainer" to "secondary_container",
+                    "onSecondaryContainer" to "on_secondary_container",
+                    "tertiary" to "tertiary",
+                    "onTertiary" to "on_tertiary",
+                    "tertiaryContainer" to "tertiary_container",
+                    "onTertiaryContainer" to "on_tertiary_container",
+                    "surface" to "surface",
+                    "onSurface" to "on_surface",
+                    "onSurfaceVariant" to "on_surface_variant",
+                    "outline" to "outline",
+                    "outlineVariant" to "outline_variant",
+                    "surfaceContainerLowest" to "surface_container_lowest",
+                    "surfaceContainerLow" to "surface_container_low",
+                    "surfaceContainer" to "surface_container",
+                    "surfaceContainerHigh" to "surface_container_high",
+                    "surfaceContainerHighest" to "surface_container_highest",
+                    "surfaceBright" to "surface_bright",
+                    "surfaceDim" to "surface_dim",
+                    "surfaceVariant" to "surface_variant",
+                    "error" to "error",
+                    "onError" to "on_error",
+                    "errorContainer" to "error_container",
+                    "onErrorContainer" to "on_error_container",
+                )
+                for ((role, resourceRole) in roles) {
+                    val resourceId = resources.getIdentifier(
+                        "system_${resourceRole}_$mode",
+                        "color",
+                        "android",
+                    )
+                    if (resourceId != 0) {
+                        directColors["$prefix.$role"] =
+                            getColor(resourceId).toLong() and 0xffffffffL
+                    }
+                }
+            }
+
+            addDirectRoles("light", "light")
+            addDirectRoles("dark", "dark")
+            if (directColors.containsKey("light.primary") &&
+                directColors.containsKey("dark.primary")) {
+                directColors["light.inversePrimary"] =
+                    directColors["dark.primary"]!!
+                directColors["dark.inversePrimary"] =
+                    directColors["light.primary"]!!
+                directColors["light.inverseSurface"] =
+                    directColors["dark.surface"]!!
+                directColors["dark.inverseSurface"] =
+                    directColors["light.surface"]!!
+                directColors["light.onInverseSurface"] =
+                    directColors["dark.onSurface"]!!
+                directColors["dark.onInverseSurface"] =
+                    directColors["light.onSurface"]!!
+                return directColors
+            }
+        }
+
+        val lightContext = dynamicColorContext(dark = false)
+        val darkContext = dynamicColorContext(dark = true)
+        val colors = linkedMapOf<String, Long>()
+
+        fun color(context: Context, palette: String, tone: Int): Long? {
+            val resourceId = context.resources.getIdentifier(
+                "system_${palette}_${tone}",
+                "color",
+                "android",
+            )
+            if (resourceId == 0) return null
+            return context.getColor(resourceId).toLong() and 0xffffffffL
+        }
+
+        fun put(
+            prefix: String,
+            role: String,
+            context: Context,
+            palette: String,
+            tone: Int,
+        ) {
+            color(context, palette, tone)?.let { colors["$prefix.$role"] = it }
+        }
+
+        fun addAccentRoles(prefix: String, context: Context, dark: Boolean) {
+            val primaryTone = if (dark) 200 else 600
+            val onPrimaryTone = if (dark) 800 else 0
+            val containerTone = if (dark) 700 else 100
+            val onContainerTone = if (dark) 100 else 900
+            put(prefix, "primary", context, "accent1", primaryTone)
+            put(prefix, "onPrimary", context, "accent1", onPrimaryTone)
+            put(prefix, "primaryContainer", context, "accent1", containerTone)
+            put(prefix, "onPrimaryContainer", context, "accent1", onContainerTone)
+            put(prefix, "secondary", context, "accent2", primaryTone)
+            put(prefix, "onSecondary", context, "accent2", onPrimaryTone)
+            put(prefix, "secondaryContainer", context, "accent2", containerTone)
+            put(prefix, "onSecondaryContainer", context, "accent2", onContainerTone)
+            put(prefix, "tertiary", context, "accent3", primaryTone)
+            put(prefix, "onTertiary", context, "accent3", onPrimaryTone)
+            put(prefix, "tertiaryContainer", context, "accent3", containerTone)
+            put(prefix, "onTertiaryContainer", context, "accent3", onContainerTone)
+            put(prefix, "inversePrimary", context, "accent1", if (dark) 600 else 200)
+        }
+
+        fun addNeutralRoles(prefix: String, context: Context, dark: Boolean) {
+            val surfaceTone = if (dark) 900 else 10
+            val onSurfaceTone = if (dark) 100 else 900
+            val variantTone = if (dark) 200 else 700
+            val outlineTone = if (dark) 500 else 500
+            val inverseSurfaceTone = if (dark) 100 else 800
+            val inverseOnSurfaceTone = if (dark) 900 else 100
+            put(prefix, "surface", context, "neutral1", surfaceTone)
+            put(prefix, "onSurface", context, "neutral1", onSurfaceTone)
+            put(prefix, "onSurfaceVariant", context, "neutral2", variantTone)
+            put(prefix, "outline", context, "neutral2", outlineTone)
+            put(prefix, "outlineVariant", context, "neutral2", if (dark) 300 else 200)
+            put(prefix, "inverseSurface", context, "neutral1", inverseSurfaceTone)
+            put(prefix, "onInverseSurface", context, "neutral1", inverseOnSurfaceTone)
+            put(prefix, "surfaceContainerLowest", context, "neutral1", if (dark) 1000 else 0)
+            put(prefix, "surfaceContainerLow", context, "neutral1", if (dark) 950 else 10)
+            put(prefix, "surfaceContainer", context, "neutral1", if (dark) 900 else 30)
+            put(prefix, "surfaceContainerHigh", context, "neutral1", if (dark) 800 else 50)
+            put(prefix, "surfaceContainerHighest", context, "neutral1", if (dark) 700 else 60)
+        }
+
+        addAccentRoles("light", lightContext, dark = false)
+        addNeutralRoles("light", lightContext, dark = false)
+        addAccentRoles("dark", darkContext, dark = true)
+        addNeutralRoles("dark", darkContext, dark = true)
+        return colors.takeIf { it.containsKey("light.primary") && it.containsKey("dark.primary") }
+    }
+
+    private fun dynamicColorContext(dark: Boolean): Context {
+        val configuration = Configuration(resources.configuration)
+        configuration.uiMode = (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) or
+            if (dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+        return createConfigurationContext(configuration)
+    }
+
+    private fun deviceInfo(): Map<String, String> {
+        val manufacturer = Build.MANUFACTURER.trim()
+        val model = Build.MODEL.trim()
+        // Android 没有一个跨厂商统一的“零售机型名称” API。优先读取厂商市场名，
+        // 再读取用户在系统设置中的设备名/蓝牙名，最后才退回到 Build.MODEL。
+        // 不同厂商会把市场名放在不同的只读属性中，且某些属性仍然只返回型号代码，
+        // 因此必须逐项过滤，不能只取第一个非空属性。
+        val configuredNames = listOf(
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME)
+                } else {
+                    null
+                }
+            }.getOrNull(),
+            runCatching { Settings.System.getString(contentResolver, "device_name") }.getOrNull(),
+            runCatching {
+                Settings.System.getString(contentResolver, "device_name_for_settings")
+            }.getOrNull(),
+        )
+        val secureNames = listOf(
+            runCatching {
+                Settings.Secure.getString(contentResolver, "bluetooth_name")
+            }.getOrNull(),
+            runCatching {
+                Settings.Global.getString(contentResolver, "bluetooth_name")
+            }.getOrNull(),
+        )
+        val bluetoothName = if (
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { BluetoothAdapter.getDefaultAdapter()?.name?.trim() }.getOrNull()
+        } else {
+            null
+        }
+        val marketNames = listOf(
+            // vivo/OriginOS 常见属性
+            "ro.vivo.marketname",
+            "ro.vivo.market.name",
+            "ro.vivo.product.marketname",
+            "ro.vivo.product.model",
+            "ro.vivo.product.name",
+            // AOSP 及其他厂商常见属性
+            "ro.product.marketname",
+            "ro.product.market_name",
+            "ro.product.odm.marketname",
+            "ro.product.vendor.marketname",
+            "ro.product.system.marketname",
+            "ro.product.product.marketname",
+            "ro.product.odm.name",
+            "ro.product.vendor.name",
+            "ro.product.system.name",
+            "ro.product.product.name",
+            "ro.product.name",
+            "ro.product.odm.model",
+            "ro.product.vendor.model",
+            "ro.product.system.model",
+            "ro.product.product.model",
+        ).mapNotNull(::readSystemProperty)
+
+        // Android 的公开 API 不提供“型号代码 -> 零售名称”的通用映射。
+        // 对已经确认的官方型号提供本地兜底，避免 vivo V2419A 在系统属性不可读时
+        // 退化成用户无法理解的技术代码。新增型号时应补充官方来源后再加入这里。
+        val knownMarketName = when {
+            manufacturer.equals("vivo", ignoreCase = true) &&
+                model.equals("V2419A", ignoreCase = true) -> "vivo X200 Pro mini"
+            else -> null
+        }
+
+        val technicalNames = setOf(
+            model,
+            Build.DEVICE,
+            Build.PRODUCT,
+            Build.BRAND,
+            manufacturer,
+        ).filter { it.isNotBlank() }.map { it.lowercase(Locale.ROOT) }.toSet()
+
+        fun usableName(value: String?): String? {
+            val candidate = value?.trim().orEmpty()
+            if (candidate.isBlank()) return null
+            val normalized = candidate.lowercase(Locale.ROOT)
+            if (normalized in technicalNames) return null
+            if (normalized in setOf(
+                    "android",
+                    "android device",
+                    "android 设备",
+                    "phone",
+                    "mobile",
+                    "unknown",
+                    "unknown device",
+                    "未命名设备",
+                    "null",
+                    "none",
+                )
+            ) {
+                return null
+            }
+            return candidate
+        }
+
+        // 市场名放在最前面，避免系统蓝牙名或历史身份名把 V2419A 的真实名称遮住。
+        // 如果用户明确设置了一个非技术名，而厂商没有公开市场名，则保留该名称。
+        val marketName = marketNames.asSequence()
+            .mapNotNull(::usableName)
+            .firstOrNull()
+        val configuredName = configuredNames.asSequence()
+            .mapNotNull(::usableName)
+            .firstOrNull()
+        val secureName = secureNames.asSequence()
+            .mapNotNull(::usableName)
+            .firstOrNull()
+        val name = sequenceOf(
+            marketName,
+            knownMarketName,
+            configuredName,
+            secureName,
+            usableName(bluetoothName),
+        ).filterNotNull().firstOrNull()
+            ?: listOf(manufacturer, model).filter { it.isNotBlank() }.joinToString(" ")
+                .ifBlank { "Android 设备" }
+
+        return mapOf(
+            "name" to name,
+            "manufacturer" to manufacturer,
+            "model" to model,
+            // Dart's generic HOME environment variable is not a reliable
+            // persistence location on every Android build/OEM. Expose the
+            // application-private directory so identity and trust data stay
+            // stable across an APK update without entering shared storage.
+            "dataDirectory" to filesDir.absolutePath,
+        )
+    }
+
+    private fun readSystemProperty(key: String): String? = runCatching {
+        Class.forName("android.os.SystemProperties")
+            .getMethod("get", String::class.java)
+            .invoke(null, key) as? String
+    }.getOrNull()
+
+    private fun deviceDisplayName(): String {
+        return deviceInfo()["name"] ?: "Android 设备"
+    }
+
+    private fun storagePaths(): Map<String, String> {
+        val publicDownloads = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_DOWNLOADS,
+        )
+        val publicRoot = File(publicDownloads, "Hinge")
+        val root = if ((publicRoot.exists() || publicRoot.mkdirs()) && publicRoot.canWrite()) {
+            publicRoot
+        } else {
+            File(
+                getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir,
+                "Hinge",
+            )
+        }
+        val image = File(root, "图片")
+        val video = File(root, "视频")
+        val file = File(root, "文件")
+        image.mkdirs()
+        video.mkdirs()
+        file.mkdirs()
+        return mapOf(
+            "imagePath" to image.absolutePath,
+            "videoPath" to video.absolutePath,
+            "filePath" to file.absolutePath,
+        )
+    }
+
+    private fun requestScreenCapture(call: NativeCall, result: NativeResult) {
+        if (mediaProjection != null) {
+            result.success(true)
+            return
+        }
+        val requestedWidth = call.argument<Int>("width") ?: 1080
+        val requestedHeight = call.argument<Int>("height") ?: 1920
+        val metrics = resources.displayMetrics
+        screenCaptureWidth = (if (requestedWidth > 0) requestedWidth else metrics.widthPixels)
+            .coerceIn(360, 1920)
+        screenCaptureHeight = (if (requestedHeight > 0) requestedHeight else metrics.heightPixels)
+            .coerceIn(360, 2400)
+        screenCaptureFps = (call.argument<Int>("fps") ?: 60).coerceIn(5, 60)
+        screenCaptureResult = result
+        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        startActivityForResult(
+            manager.createScreenCaptureIntent(),
+            screenCapturePermissionRequest,
+        )
+    }
+
+    private fun startScreenCapture(permissionData: Intent): Boolean {
+        return try {
+            val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = manager.getMediaProjection(Activity.RESULT_OK, permissionData)
+            val projection = mediaProjection ?: return false
+            captureThread = HandlerThread("HingeScreenCapture").also { it.start() }
+            captureHandler = Handler(captureThread!!.looper)
+            imageReader = ImageReader.newInstance(
+                screenCaptureWidth,
+                screenCaptureHeight,
+                PixelFormat.RGBA_8888,
+                2,
+            )
+            imageReader?.setOnImageAvailableListener(
+                { reader -> encodeLatestScreenImage(reader) },
+                captureHandler,
+            )
+            val display = projection.createVirtualDisplay(
+                "Hinge Screen Mirror",
+                screenCaptureWidth,
+                screenCaptureHeight,
+                resources.displayMetrics.densityDpi,
+                android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface,
+                null,
+                captureHandler,
+            )
+            virtualDisplay = display
+            if (display == null) {
+                stopScreenCapture()
+                false
+            } else {
+                true
+            }
+        } catch (error: Exception) {
+            stopScreenCapture()
+            false
+        }
+    }
+
+    private fun encodeLatestScreenImage(reader: ImageReader) {
+        if (encodingFrame) return
+        val image = reader.acquireLatestImage() ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastCaptureAt < 1000L / screenCaptureFps) {
+            image.close()
+            return
+        }
+        lastCaptureAt = now
+        encodingFrame = true
+        try {
+            val plane = image.planes[0]
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
+            val rowPadding = rowStride - pixelStride * image.width
+            val bitmapWidth = image.width + rowPadding / pixelStride
+            val bitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
+            bitmap.copyPixelsFromBuffer(plane.buffer)
+            val cropped = if (bitmapWidth == image.width) {
+                bitmap
+            } else {
+                Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height).also { bitmap.recycle() }
+            }
+            val output = java.io.ByteArrayOutputStream()
+            cropped.compress(Bitmap.CompressFormat.JPEG, 84, output)
+            if (cropped !== bitmap) cropped.recycle()
+            else bitmap.recycle()
+            val bytes = output.toByteArray()
+            runOnUiThread { screenEventSink?.success(bytes) }
+        } catch (_: Exception) {
+            // A frame can be invalid while the virtual display is rotating.
+        } finally {
+            image.close()
+            encodingFrame = false
+        }
+    }
+
+    private fun stopScreenCapture() {
+        virtualDisplay?.release()
+        virtualDisplay = null
+        imageReader?.close()
+        imageReader = null
+        captureHandler?.removeCallbacksAndMessages(null)
+        captureThread?.quitSafely()
+        captureThread = null
+        captureHandler = null
+        mediaProjection?.stop()
+        mediaProjection = null
+        encodingFrame = false
+    }
+
+    private fun loadSettings(): Map<String, Any> {
+        val preferences = getSharedPreferences("app_settings", MODE_PRIVATE)
+        return mapOf(
+            "themePreference" to preferences.getString("theme_preference", "system").orEmpty(),
+            "pureBlackDarkMode" to preferences.getBoolean("pure_black_dark_mode", false),
+            // Monet is enabled by default. An explicit false remains false.
+            "dynamicColorEnabled" to preferences.getBoolean("dynamic_color_enabled", true),
+            "fontWeightLevel" to preferences.getInt("font_weight_level", 0),
+            "seedColor" to preferences.getInt("seed_color", 0xFF6750A4.toInt()),
+            "navigationStyle" to preferences.getString("navigation_style", "adaptive").orEmpty(),
+            "floatingCapsuleNavigation" to preferences.getBoolean("floating_capsule_navigation", false),
+            "useLiquidGlass" to preferences.getBoolean("use_liquid_glass", false),
+            "phoneRemoteControlEnabled" to preferences.getBoolean("phone_remote_control_enabled", false),
+            "imageStoragePath" to preferences.getString("image_storage_path", "").orEmpty(),
+            "videoStoragePath" to preferences.getString("video_storage_path", "").orEmpty(),
+            "fileStoragePath" to preferences.getString("file_storage_path", "").orEmpty(),
+            "localPairingCode" to preferences.getString("local_pairing_code", "").orEmpty(),
+            "cloudRelay" to mapOf(
+                "enabled" to preferences.getBoolean("cloud_relay_enabled", false),
+                "endpoint" to preferences.getString("cloud_relay_endpoint", "").orEmpty(),
+                "deviceToken" to preferences.getString("cloud_relay_device_token", "").orEmpty(),
+                "relayEncryptionKey" to preferences.getString("cloud_relay_encryption_key", "").orEmpty(),
+            ),
+        )
+    }
+
+    private fun saveSettings(call: NativeCall, result: NativeResult) {
+        val values = call.arguments as? Map<*, *>
+        if (values == null) {
+            result.error("invalid_argument", "设置数据无效", null)
+            return
+        }
+        val editor = getSharedPreferences("app_settings", MODE_PRIVATE)
+            .edit()
+            .putString("theme_preference", values["themePreference"]?.toString() ?: "system")
+            .putBoolean("pure_black_dark_mode", values["pureBlackDarkMode"] as? Boolean ?: false)
+            .putBoolean("dynamic_color_enabled", values["dynamicColorEnabled"] as? Boolean ?: false)
+            .putInt("font_weight_level", (values["fontWeightLevel"] as? Number)?.toInt() ?: 0)
+            .putInt("seed_color", (values["seedColor"] as? Number)?.toInt() ?: 0xFF6750A4.toInt())
+            .putString("navigation_style", values["navigationStyle"]?.toString() ?: "adaptive")
+            .putBoolean("floating_capsule_navigation", values["floatingCapsuleNavigation"] as? Boolean ?: false)
+            .putBoolean("use_liquid_glass", values["useLiquidGlass"] as? Boolean ?: false)
+            .putBoolean("phone_remote_control_enabled", values["phoneRemoteControlEnabled"] as? Boolean ?: false)
+            .putString("image_storage_path", values["imageStoragePath"]?.toString() ?: "")
+            .putString("video_storage_path", values["videoStoragePath"]?.toString() ?: "")
+            .putString("file_storage_path", values["fileStoragePath"]?.toString() ?: "")
+            .putString("local_pairing_code", values["localPairingCode"]?.toString() ?: "")
+        val cloudRelay = values["cloudRelay"] as? Map<*, *>
+        if (cloudRelay != null) {
+            editor.putBoolean("cloud_relay_enabled", cloudRelay["enabled"] as? Boolean ?: false)
+                .putString("cloud_relay_endpoint", cloudRelay["endpoint"]?.toString() ?: "")
+                .putString("cloud_relay_device_token", cloudRelay["deviceToken"]?.toString() ?: "")
+                .putString("cloud_relay_encryption_key", cloudRelay["relayEncryptionKey"]?.toString() ?: "")
+        }
+        editor.apply()
+        result.success(true)
+    }
+
+    internal fun hapticFeedbackEnabled(): Boolean {
+        return getSharedPreferences("app_settings", MODE_PRIVATE)
+            .getBoolean("haptic_feedback_enabled", true)
+    }
+
+    private fun setHapticFeedbackEnabled(call: NativeCall, result: NativeResult) {
+        val enabled = call.argument<Boolean>("enabled") ?: true
+        getSharedPreferences("app_settings", MODE_PRIVATE)
+            .edit()
+            .putBoolean("haptic_feedback_enabled", enabled)
+            .apply()
+        result.success(true)
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestNotificationPermission(result: NativeResult) {
+        if (hasNotificationPermission() || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            result.success(true)
+            return
+        }
+        notificationPermissionResult = result
+        requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            notificationPermissionRequest,
+        )
+    }
+
+    private fun persistentNotificationEnabled(): Boolean {
+        return getSharedPreferences("app_settings", MODE_PRIVATE)
+            .getBoolean("persistent_notification_enabled", true)
+    }
+
+    private fun setPersistentNotificationEnabled(call: NativeCall, result: NativeResult) {
+        val enabled = call.argument<Boolean>("enabled") ?: true
+        getSharedPreferences("app_settings", MODE_PRIVATE)
+            .edit()
+            .putBoolean("persistent_notification_enabled", enabled)
+            .apply()
+        startConnectionService()
+        result.success(true)
+    }
+
+    private fun hasPermission(permission: String): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun smsPermissionStatus(): Map<String, Boolean> = mapOf(
+        "sms" to hasPermission(Manifest.permission.RECEIVE_SMS),
+        "readSms" to hasPermission(Manifest.permission.READ_SMS),
+        "mms" to (
+            hasPermission(Manifest.permission.RECEIVE_MMS) &&
+                hasPermission(Manifest.permission.RECEIVE_WAP_PUSH)
+            ),
+    )
+
+    private fun requestSmsPermissions(result: NativeResult) {
+        val current = smsPermissionStatus()
+        if (current["sms"] == true &&
+            current["readSms"] == true &&
+            current["mms"] == true
+        ) {
+            result.success(current)
+            return
+        }
+        if (smsPermissionResult != null) {
+            result.error("permission_in_progress", "短信权限请求正在进行", null)
+            return
+        }
+        smsPermissionResult = result
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            smsPermissionResult = null
+            result.success(current)
+            return
+        }
+        requestPermissions(
+            arrayOf(
+                Manifest.permission.RECEIVE_SMS,
+                Manifest.permission.READ_SMS,
+                Manifest.permission.RECEIVE_MMS,
+                Manifest.permission.RECEIVE_WAP_PUSH,
+            ),
+            smsPermissionRequest,
+        )
+    }
+
+    private fun smsRelayEnabled(): Boolean = getSharedPreferences("app_settings", MODE_PRIVATE)
+        .getBoolean("sms_relay_enabled", false)
+
+    private fun setSmsRelayEnabled(call: NativeCall, result: NativeResult) {
+        val requested = call.argument<Boolean>("enabled") ?: false
+        val enabled = requested && hasPermission(Manifest.permission.RECEIVE_SMS)
+        getSharedPreferences("app_settings", MODE_PRIVATE)
+            .edit()
+            .putBoolean("sms_relay_enabled", enabled)
+            .apply()
+        startConnectionService()
+        result.success(enabled)
+    }
+
+    private fun smsNotificationAccessEnabled(): Boolean {
+        return notificationListenerAccessEnabled()
+    }
+
+    private fun notificationHistoryAccessEnabled(): Boolean {
+        return notificationListenerAccessEnabled()
+    }
+
+    private fun notificationListenerAccessEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            "enabled_notification_listeners",
+        ).orEmpty()
+        val component = ComponentName(this, SmsNotificationListenerService::class.java)
+        return enabled.split(':').any {
+            ComponentName.unflattenFromString(it)?.packageName == component.packageName &&
+                ComponentName.unflattenFromString(it)?.className == component.className
+        }
+    }
+
+    private fun openSmsNotificationAccessSettings(): Boolean = try {
+        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        true
+    } catch (_: Exception) {
+        try {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun openNotificationHistorySettings(): Boolean =
+        openSmsNotificationAccessSettings()
+
+    private fun notificationHistoryEnabled(): Boolean =
+        NotificationHistorySettings.isEnabled(this)
+
+    private fun setNotificationHistoryEnabled(call: NativeCall, result: NativeResult) {
+        val requested = call.argument<Boolean>("enabled") ?: false
+        val enabled = requested && notificationHistoryAccessEnabled()
+        NotificationHistorySettings.setEnabled(this, enabled)
+        if (enabled) SmsNotificationListenerService.captureActiveNotifications()
+        result.success(enabled)
+    }
+
+    private fun readNotificationHistory(call: NativeCall, result: NativeResult) {
+        val offset = (call.argument<Number>("offset")?.toInt() ?: 0).coerceAtLeast(0)
+        val limit = (call.argument<Number>("limit")?.toInt() ?: 200).coerceIn(1, 200)
+        val ascending = call.argument<Boolean>("ascending") ?: false
+        val packageName = call.argument<String>("packageName")?.trim().orEmpty()
+            .ifBlank { null }
+        contentExecutor.execute {
+            try {
+                val access = notificationHistoryAccessEnabled()
+                val enabled = notificationHistoryEnabled()
+                if (!access || !enabled) {
+                    runOnUiThread {
+                        result.success(
+                            mapOf(
+                                "access" to access,
+                                "enabled" to enabled,
+                                "items" to emptyList<Map<String, Any?>>(),
+                                "total" to 0,
+                                "applications" to emptyList<Map<String, Any?>>(),
+                            ),
+                        )
+                    }
+                    return@execute
+                }
+
+                val store = NotificationHistoryStore(applicationContext)
+                try {
+                    val records = store.query(offset, limit, ascending, packageName)
+                    val applications = store.applications().map { app ->
+                        mapOf<String, Any?>(
+                            "packageName" to app.packageName,
+                            "appName" to app.appName,
+                            "count" to app.count,
+                            "iconBase64" to notificationIconBase64(app.packageName),
+                        )
+                    }
+                    val items = records.map { record ->
+                        mapOf<String, Any?>(
+                            "id" to record.id,
+                            "packageName" to record.packageName,
+                            "appName" to record.appName,
+                            "title" to record.title,
+                            "content" to record.content,
+                            "timestamp" to record.timestamp,
+                            "category" to record.category,
+                            "ongoing" to record.ongoing,
+                            "notificationKey" to record.notificationKey,
+                            "iconBase64" to notificationIconBase64(record.packageName),
+                            "isVerificationCode" to record.isVerificationCode,
+                            "verificationCode" to record.verificationCode,
+                        )
+                    }
+                    val total = store.count(packageName)
+                    runOnUiThread {
+                        result.success(
+                            mapOf(
+                                "access" to true,
+                                "enabled" to true,
+                                "items" to items,
+                                "total" to total,
+                                "applications" to applications,
+                            ),
+                        )
+                    }
+                } finally {
+                    store.close()
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("NOTIFICATION_HISTORY", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun openNotificationHistoryItem(call: NativeCall, result: NativeResult) {
+        val packageName = call.argument<String>("packageName")?.trim().orEmpty()
+        val notificationKey = call.argument<String>("notificationKey")?.trim().orEmpty()
+        result.success(
+            SmsNotificationListenerService.openHistoryItem(
+                this,
+                packageName,
+                notificationKey,
+            ),
+        )
+    }
+
+    private fun deleteNotificationHistoryItem(call: NativeCall, result: NativeResult) {
+        val id = call.argument<String>("id")?.trim().orEmpty()
+        if (id.isBlank()) {
+            result.success(false)
+            return
+        }
+        contentExecutor.execute {
+            try {
+                val store = NotificationHistoryStore(applicationContext)
+                val deleted = try {
+                    store.delete(id)
+                } finally {
+                    store.close()
+                }
+                runOnUiThread { result.success(deleted) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("NOTIFICATION_HISTORY", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun clearNotificationHistory(result: NativeResult) {
+        contentExecutor.execute {
+            try {
+                val store = NotificationHistoryStore(applicationContext)
+                val deleted = try {
+                    store.clear()
+                } finally {
+                    store.close()
+                }
+                runOnUiThread { result.success(deleted) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("NOTIFICATION_HISTORY", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun notificationIconBase64(packageName: String): String {
+        if (packageName.isBlank()) return ""
+        val cached = notificationIconCache[packageName]
+        if (cached != null) return cached
+        val encoded = try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            drawableIconBase64(appInfo.loadIcon(packageManager), 64)
+        } catch (_: Exception) {
+            ""
+        }
+        // Do not permanently cache a transient package-visibility or package
+        // manager failure. A later read after an app/package update can retry.
+        if (encoded.isNotEmpty()) notificationIconCache[packageName] = encoded
+        return encoded
+    }
+
+    private fun sendSmsRelayTestEvent(): Boolean {
+        if (!smsRelayEnabled()) return false
+        HingeDiagnostics.from(this).log(
+            "sms_test_requested",
+            mapOf("bridgeAttached" to SmsRelayBridge.isAttached()),
+        )
+        SmsRelayBridge.emit(
+            mapOf(
+                "messageId" to "sms-test-${System.currentTimeMillis()}",
+                "source" to "sms",
+                "origin" to "sms_test",
+                "sender" to "Hinge 测试",
+                "body" to "验证码 123456，用于验证 Android 到 Windows 的短信同步链路。",
+                "timestamp" to System.currentTimeMillis(),
+                "isVerificationCode" to true,
+                "verificationCode" to "123456",
+            ),
+        )
+        return true
+    }
+
+    private fun smsPermissionPromptShown(): Boolean = getSharedPreferences(
+        "app_settings",
+        MODE_PRIVATE,
+    ).getBoolean("sms_permission_prompt_shown", false)
+
+    private fun setSmsPermissionPromptShown(call: NativeCall, result: NativeResult) {
+        val shown = call.argument<Boolean>("shown") ?: true
+        getSharedPreferences("app_settings", MODE_PRIVATE)
+            .edit()
+            .putBoolean("sms_permission_prompt_shown", shown)
+            .apply()
+        result.success(true)
+    }
+
+    private fun showFileReceivedNotification(call: NativeCall, result: NativeResult) {
+        val path = call.argument<String>("path")?.trim().orEmpty()
+        result.success(HingeFileTransferNotifier.show(this, path))
+    }
+
+    private fun showCloudRelayTransferProgress(
+        call: NativeCall,
+        result: NativeResult,
+    ) {
+        if (!hasNotificationPermission()) {
+            result.success(false)
+            return
+        }
+        val transferId = call.argument<String>("transferId")?.trim().orEmpty()
+        if (transferId.isEmpty()) {
+            result.success(false)
+            return
+        }
+        val fileName = call.argument<String>("fileName")
+            ?.replace(Regex("[\\r\\n\\u0000-\\u001f]"), " ")
+            ?.take(120)
+            .orEmpty()
+        val direction = call.argument<String>("direction") ?: "download"
+        val stage = call.argument<String>("stage") ?: "uploading"
+        val totalBytes = (call.argument<Number>("totalBytes")?.toLong() ?: 0L)
+            .coerceAtLeast(0L)
+        val bytesTransferred =
+            (call.argument<Number>("bytesTransferred")?.toLong() ?: 0L)
+                .coerceIn(0L, totalBytes)
+        val percentage = (call.argument<Number>("percentage")?.toInt() ?: 0)
+            .coerceIn(0, 100)
+        val isUpload = direction == "upload"
+        val indeterminate = stage == "preparing" ||
+            (totalBytes == 0L && stage != "verifying" && stage != "publishing")
+        val body = when (stage) {
+            "preparing" -> "$fileName · 正在准备并计算完整性校验"
+            "verifying" -> "$fileName · 正在校验文件完整性"
+            "publishing" -> "$fileName · 正在完成云端提交"
+            else -> {
+                val transferredText = android.text.format.Formatter
+                    .formatFileSize(this, bytesTransferred)
+                val totalText = android.text.format.Formatter
+                    .formatFileSize(this, totalBytes)
+                "$fileName · $transferredText / $totalText · $percentage%"
+            }
+        }
+        createFileNotificationChannel()
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, FILE_CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+        val notification = builder
+            .setSmallIcon(
+                if (isUpload) android.R.drawable.stat_sys_upload
+                else android.R.drawable.stat_sys_download,
+            )
+            .setContentTitle(
+                if (isUpload) "Cloud Relay 上传中" else "Cloud Relay 下载中",
+            )
+            .setContentText(body)
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setProgress(100, if (indeterminate) 0 else percentage, indeterminate)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setContentIntent(cloudRelayTransferIntent(transferId))
+            .build()
+        getSystemService(NotificationManager::class.java)
+            .notify(cloudRelayProgressNotificationId(transferId), notification)
+        result.success(true)
+    }
+
+    private fun finishCloudRelayTransferNotification(
+        call: NativeCall,
+        result: NativeResult,
+    ) {
+        val transferId = call.argument<String>("transferId")?.trim().orEmpty()
+        if (transferId.isEmpty()) {
+            result.success(false)
+            return
+        }
+        val notificationId = cloudRelayProgressNotificationId(transferId)
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        val succeeded = call.argument<Boolean>("succeeded") == true
+        val direction = call.argument<String>("direction") ?: "download"
+        if (!hasNotificationPermission()) {
+            notificationManager.cancel(notificationId)
+            result.success(false)
+            return
+        }
+        if (succeeded && direction != "upload") {
+            // The existing received-file notification replaces the download progress item.
+            notificationManager.cancel(notificationId)
+            result.success(true)
+            return
+        }
+
+        val fileName = call.argument<String>("fileName")
+            ?.replace(Regex("[\\r\\n\\u0000-\\u001f]"), " ")
+            ?.take(120)
+            .orEmpty()
+        val isUpload = direction == "upload"
+        createFileNotificationChannel()
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, FILE_CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+        val title = when {
+            succeeded -> "Cloud Relay 上传完成"
+            isUpload -> "Cloud Relay 上传失败"
+            else -> "Cloud Relay 下载失败"
+        }
+        val body = when {
+            succeeded -> "$fileName · 已上传，等待对方接收"
+            else -> "$fileName · 请打开 Hinge 查看状态并重试"
+        }
+        val notification = builder
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .setContentIntent(cloudRelayTransferIntent(transferId))
+            .build()
+        notificationManager.notify(notificationId, notification)
+        result.success(true)
+    }
+
+    private fun cloudRelayProgressNotificationId(transferId: String): Int =
+        (transferId.hashCode() and 0x3fffffff) or 0x40000000
+
+    private fun cloudRelayTransferIntent(transferId: String): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = "com.hinge.office.OPEN_CLOUD_RELAY_TRANSFER"
+            data = Uri.parse("hinge://cloud-relay/$transferId")
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
+        return PendingIntent.getActivity(
+            this,
+            cloudRelayProgressNotificationId(transferId),
+            intent,
+            flags,
+        )
+    }
+
+    private fun createFileNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(
+                FILE_CHANNEL_ID,
+                "文件传输",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply { description = "Hinge 接收文件提醒" },
+        )
+    }
+
+    private fun receivedDirectoryIntent(path: String): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_OPEN_RECEIVED_DIRECTORY
+            putExtra(EXTRA_RECEIVED_FILE_PATH, path)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
+        return PendingIntent.getActivity(this, path.hashCode(), intent, flags)
+    }
+
+    private fun receivedFileIntent(path: String, mimeType: String): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_OPEN_RECEIVED_FILE
+            putExtra(EXTRA_RECEIVED_FILE_PATH, path)
+            putExtra(EXTRA_RECEIVED_FILE_MIME, mimeType)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
+        return PendingIntent.getActivity(this, path.hashCode(), intent, flags)
+    }
+
+    private fun openReceivedFile(path: String?, mimeType: String?) {
+        if (path.isNullOrBlank()) return
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return
+        val resolvedMime = mimeType?.takeIf { it.isNotBlank() } ?: guessMimeType(file.name)
+        if (!openFileUsingDefaultApp(file, resolvedMime)) {
+            // Keep the received-file notification useful if an OEM handler or
+            // FileProvider rejects the view intent.
+            openReceivedDirectory(path)
+        }
+    }
+
+    private fun openTransferHistoryFile(call: NativeCall, result: NativeResult) {
+        val path = call.argument<String>("path")?.trim().orEmpty()
+        val file = File(path)
+        if (path.isEmpty() || !file.isFile) {
+            result.success("missing")
+            return
+        }
+        val opened = openFileUsingDefaultApp(file, guessMimeType(file.name))
+        result.success(if (opened) "opened" else "failed")
+    }
+
+    private fun openFileUsingDefaultApp(file: File, resolvedMime: String): Boolean {
+        try {
+            val fileUri = FileProvider.getUriForFile(
+                this@MainActivity,
+                "${applicationContext.packageName}.fileprovider",
+                file,
+            )
+            val openIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(fileUri, resolvedMime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val preferredPackage = getSharedPreferences(DEFAULT_APPS_PREFS, MODE_PRIVATE)
+                .getString(defaultAppKey(resolvedMime), null)
+                ?.takeIf { it.isNotBlank() }
+            if (preferredPackage != null) {
+                openIntent.setPackage(preferredPackage)
+            }
+            try {
+                startActivity(openIntent)
+                return true
+            } catch (_: ActivityNotFoundException) {
+                if (preferredPackage != null) {
+                    val editIntent = Intent(Intent.ACTION_EDIT).apply {
+                        setDataAndType(fileUri, resolvedMime)
+                        setPackage(preferredPackage)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        startActivity(editIntent)
+                        return true
+                    } catch (_: ActivityNotFoundException) {
+                        // The selected package may have disappeared between
+                        // listing and notification click; fall back to the
+                        // system chooser below.
+                    }
+                }
+                openIntent.setPackage(null)
+                startActivity(Intent.createChooser(openIntent, "选择打开方式"))
+                return true
+            }
+        } catch (_: Exception) {
+            return false
+        }
+    }
+
+    private fun defaultAppKey(mimeType: String): String {
+        return when {
+            mimeType.startsWith("image/") -> "image"
+            mimeType.startsWith("video/") -> "video"
+            else -> "file"
+        }
+    }
+
+    private fun defaultAppMimeType(type: String): String {
+        return when (type.lowercase(Locale.ROOT)) {
+            "image" -> "image/*"
+            "video" -> "video/*"
+            else -> "*/*"
+        }
+    }
+
+    private fun defaultAppOptions(call: NativeCall, result: NativeResult) {
+        val type = call.argument<String>("type")?.trim().orEmpty().ifBlank { "file" }
+        contentExecutor.execute {
+            try {
+                val mimeType = defaultAppMimeType(type)
+                // A single content-URI query is not enough: file managers and
+                // media tools commonly advertise different combinations of
+                // ACTION_VIEW, ACTION_EDIT, file:// and content://. Query the
+                // same MIME type through those standard shapes, then merge by
+                // package name. This is package visibility, not a user runtime
+                // permission request.
+                val queryUri = when (type.lowercase(Locale.ROOT)) {
+                    "image" -> Uri.parse("content://media/external/images/media/1")
+                    "video" -> Uri.parse("content://media/external/video/media/1")
+                    else -> Uri.parse("content://$packageName.fileprovider/received")
+                }
+                val queryUris = listOf(
+                    queryUri,
+                    Uri.parse("file:///storage/emulated/0/Download/Hinge/placeholder"),
+                )
+                val queryIntents = buildList {
+                    for (action in listOf(Intent.ACTION_VIEW, Intent.ACTION_EDIT)) {
+                        for (uri in queryUris) {
+                            add(Intent(action).apply {
+                                addCategory(Intent.CATEGORY_DEFAULT)
+                                setDataAndType(uri, mimeType)
+                            })
+                        }
+                        add(Intent(action).apply {
+                            addCategory(Intent.CATEGORY_DEFAULT)
+                            setType(mimeType)
+                        })
+                    }
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PackageManager.MATCH_ALL
+                } else {
+                    0
+                }
+                val options = queryIntents
+                    .asSequence()
+                    .flatMap { packageManager.queryIntentActivities(it, flags).asSequence() }
+                    .filter { it.activityInfo.packageName != packageName }
+                    .filter {
+                        it.activityInfo.packageName !in setOf(
+                            "com.android.documentsui",
+                            "com.google.android.documentsui",
+                            "com.android.providers.downloads.ui",
+                        )
+                    }
+                    .distinctBy { it.activityInfo.packageName }
+                    .map { resolveInfo ->
+                        mapOf(
+                            "packageName" to resolveInfo.activityInfo.packageName,
+                            "label" to resolveInfo.loadLabel(packageManager).toString(),
+                            "iconBase64" to (appIconBase64(resolveInfo) ?: ""),
+                        )
+                    }
+                    .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it["label"].toString() })
+                    .toList()
+                runOnUiThread { result.success(options) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("DEFAULT_APP_OPTIONS", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun appIconBase64(resolveInfo: android.content.pm.ResolveInfo): String? {
+        return try {
+            drawableIconBase64(resolveInfo.loadIcon(packageManager), 96)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun drawableIconBase64(drawable: Drawable, size: Int): String {
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(bitmap)
+            drawable.setBounds(0, 0, bitmap.width, bitmap.height)
+            drawable.draw(canvas)
+            val output = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            return Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun defaultApp(call: NativeCall): String? {
+        val type = call.argument<String>("type")?.trim().orEmpty().ifBlank { "file" }
+        return getSharedPreferences(DEFAULT_APPS_PREFS, MODE_PRIVATE)
+            .getString(type.lowercase(Locale.ROOT), null)
+    }
+
+    private fun setDefaultApp(call: NativeCall, result: NativeResult) {
+        val type = call.argument<String>("type")?.trim().orEmpty().ifBlank { "file" }
+        val packageName = call.argument<String>("packageName")?.trim().orEmpty()
+        getSharedPreferences(DEFAULT_APPS_PREFS, MODE_PRIVATE)
+            .edit()
+            .putString(type.lowercase(Locale.ROOT), packageName)
+            .apply()
+        result.success(true)
+    }
+
+    private fun openReceivedDirectory(path: String?) {
+        if (path.isNullOrBlank()) return
+        try {
+            val directory = File(path).canonicalFile.parentFile ?: return
+            val storageRoot = Environment.getExternalStorageDirectory().canonicalFile
+            val rootPath = storageRoot.path.trimEnd(File.separatorChar)
+            val directoryPath = directory.path
+            val relativePath = if (directoryPath.startsWith(rootPath + File.separator)) {
+                directoryPath.removePrefix(rootPath + File.separator)
+                    .replace(File.separatorChar, '/')
+            } else {
+                ""
+            }
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && relativePath.isNotEmpty()) {
+                intent.putExtra(
+                    DocumentsContract.EXTRA_INITIAL_URI,
+                    DocumentsContract.buildTreeDocumentUri(
+                        "com.android.externalstorage.documents",
+                        "primary:$relativePath",
+                    ),
+                )
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            startActivity(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE))
+        }
+    }
+
+    private fun hasCalendarPermission(): Boolean {
+        return checkSelfPermission(Manifest.permission.READ_CALENDAR) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestCalendarPermission(result: NativeResult) {
+        if (hasCalendarPermission()) {
+            result.success(true)
+            return
+        }
+        if (calendarPermissionResult != null) {
+            result.error("permission_in_progress", "日历权限请求正在进行", null)
+            return
+        }
+        calendarPermissionResult = result
+        requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), calendarPermissionRequest)
+    }
+
+    private fun readCalendarEvents(result: NativeResult) {
+        if (!hasCalendarPermission()) {
+            result.error("permission_required", "需要日历读取权限", null)
+            return
+        }
+
+        contentExecutor.execute {
+            try {
+                val events = queryCalendarEvents()
+                runOnUiThread { result.success(events) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取日历失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    /**
+     * Read visible instances from every calendar provider exposed through
+     * CalendarContract. Some OEM providers reject optional columns on the
+     * Instances view, so the rich projection always has a small-column
+     * fallback instead of failing the complete calendar page.
+     */
+    private fun queryCalendarEvents(): List<Map<String, Any?>> {
+        val events = ArrayList<Map<String, Any?>>()
+        val calendarCatalog = queryCalendarNames()
+        val calendarSources = calendarCatalog.sources
+        val baseProjection = arrayOf(
+            CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.BEGIN,
+            CalendarContract.Instances.END,
+            CalendarContract.Instances.EVENT_LOCATION,
+            CalendarContract.Instances.ALL_DAY,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Calendars.VISIBLE,
+        )
+        val providerFallbackProjection = arrayOf(
+            CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.BEGIN,
+            CalendarContract.Instances.END,
+            CalendarContract.Instances.EVENT_LOCATION,
+            CalendarContract.Instances.ALL_DAY,
+            CalendarContract.Events.CALENDAR_ID,
+        )
+        val richProjection = arrayOf(
+            CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.BEGIN,
+            CalendarContract.Instances.END,
+            CalendarContract.Instances.EVENT_LOCATION,
+            CalendarContract.Instances.ALL_DAY,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.EVENT_COLOR,
+            CalendarContract.Events.EVENT_TIMEZONE,
+            CalendarContract.Events.ORGANIZER,
+            CalendarContract.Calendars.VISIBLE,
+        )
+        val now = System.currentTimeMillis()
+        val from = now - 365L * 24L * 60L * 60L * 1000L
+        val until = now + 730L * 24L * 60L * 60L * 1000L
+        val instancesUri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
+            ContentUris.appendId(it, from)
+            ContentUris.appendId(it, until)
+        }.build()
+        val cursor = try {
+            contentResolver.query(
+                instancesUri,
+                richProjection,
+                null,
+                null,
+                "${CalendarContract.Instances.BEGIN} ASC",
+            )
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            contentResolver.query(
+                instancesUri,
+                baseProjection,
+                null,
+                null,
+                "${CalendarContract.Instances.BEGIN} ASC",
+            )
+        } catch (_: Exception) {
+            try {
+                // A few OEM providers reject inherited optional columns on
+                // Instances. Keep a final standard projection so calendar
+                // reading degrades gracefully instead of returning nothing.
+                contentResolver.query(
+                    instancesUri,
+                    providerFallbackProjection,
+                    null,
+                    null,
+                    "${CalendarContract.Instances.BEGIN} ASC",
+                )
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        val instances = ArrayList<CalendarInstanceRecord>()
+        val seenInstanceKeys = HashSet<String>()
+        cursor?.use {
+            val idIndex = it.getColumnIndex(CalendarContract.Instances.EVENT_ID)
+            val titleIndex = it.getColumnIndex(CalendarContract.Instances.TITLE)
+            val startIndex = it.getColumnIndex(CalendarContract.Instances.BEGIN)
+            val endIndex = it.getColumnIndex(CalendarContract.Instances.END)
+            val locationIndex = it.getColumnIndex(CalendarContract.Instances.EVENT_LOCATION)
+            val allDayIndex = it.getColumnIndex(CalendarContract.Instances.ALL_DAY)
+            val descriptionIndex = it.getColumnIndex(CalendarContract.Events.DESCRIPTION)
+            val calendarIdIndex = it.getColumnIndex(CalendarContract.Events.CALENDAR_ID)
+            val instanceVisibleIndex = it.getColumnIndex(CalendarContract.Calendars.VISIBLE)
+            val colorIndex = it.getColumnIndex(CalendarContract.Events.EVENT_COLOR)
+            val timezoneIndex = it.getColumnIndex(CalendarContract.Events.EVENT_TIMEZONE)
+            val organizerIndex = it.getColumnIndex(CalendarContract.Events.ORGANIZER)
+            if (idIndex < 0 || startIndex < 0) return@use
+
+            var count = 0
+            while (it.moveToNext() && count < 2000) {
+                val id = cursorString(it, idIndex)
+                val start = cursorLong(it, startIndex)
+                if (id.isBlank() || start <= 0) continue
+                val calendarId = cursorString(it, calendarIdIndex)
+                val visibleFromInstance = instanceVisibleIndex < 0 ||
+                    cursorLong(it, instanceVisibleIndex) != 0L
+                if (!visibleFromInstance || (calendarCatalog.visibilityKnown &&
+                    (calendarId.isBlank() || !calendarCatalog.visibleCalendarIds.contains(calendarId))
+                )) {
+                    continue
+                }
+                val end = if (endIndex >= 0 && !it.isNull(endIndex)) {
+                    it.getLong(endIndex)
+                } else {
+                    null
+                }
+                val instanceKey = "$calendarId|$id|$start"
+                if (!seenInstanceKeys.add(instanceKey)) continue
+                instances.add(
+                    CalendarInstanceRecord(
+                        id = id,
+                        title = cursorString(it, titleIndex),
+                        start = start,
+                        end = end,
+                        location = cursorString(it, locationIndex),
+                        calendarId = calendarId,
+                        allDay = allDayIndex >= 0 && it.getInt(allDayIndex) == 1,
+                        description = cursorString(it, descriptionIndex),
+                        organizer = cursorString(it, organizerIndex),
+                        eventColor = if (colorIndex >= 0 && !it.isNull(colorIndex)) {
+                            it.getLong(colorIndex)
+                        } else {
+                            null
+                        },
+                        timeZone = cursorString(it, timezoneIndex),
+                    ),
+                )
+                count++
+            }
+        }
+
+        // The phone Calendar app's visible-instance view is authoritative. Do
+        // not supplement it from Events: that table can still contain a local
+        // or account calendar that the user hid in the Calendar app.
+        // Some OEM providers also repeat an identical row with another event
+        // id, so de-duplicate exact content while preserving real occurrences.
+        val distinctInstances = LinkedHashMap<String, CalendarInstanceRecord>()
+        for (instance in instances) {
+            val key = calendarInstanceContentKey(instance)
+            distinctInstances.putIfAbsent(key, instance)
+        }
+        val normalizedInstances = distinctInstances.values.toList()
+
+        // Instances is the correct occurrence source, but OEM providers may
+        // expose only a reduced projection there. Enrich by event ID after
+        // closing the cursor so title, source, description and custom
+        // calendar metadata are not lost when the rich projection falls back.
+        val eventDetails = queryCalendarEventDetails(normalizedInstances.map { it.id }.toSet())
+        for (instance in normalizedInstances) {
+            val detail = eventDetails[instance.id]
+            val calendarId = detail?.calendarId.orEmpty().ifBlank { instance.calendarId }
+            val source = calendarSources[calendarId]
+            val rawTitle = detail?.title.orEmpty().ifBlank { instance.title }
+            val title = rawTitle.ifBlank { "未命名日程" }
+            val description = joinCalendarText(
+                detail?.description.orEmpty(),
+                instance.description,
+            )
+            val classificationText = description
+            val organizer = detail?.organizer.orEmpty().ifBlank { instance.organizer }
+            val timeZone = detail?.timeZone.orEmpty().ifBlank { instance.timeZone }
+            val eventType = inferCalendarType(
+                title,
+                classificationText,
+                source,
+                organizer,
+                detail?.customAppPackage.orEmpty(),
+                detail?.customAppUri.orEmpty(),
+            )
+            events.add(
+                mapOf(
+                    "id" to instance.id,
+                    // Keep the title exactly as supplied by the phone calendar.
+                    // Hinge must not invent age/category text or rewrite a
+                    // title based on a private provider field.
+                    "title" to title,
+                    "start" to instance.start,
+                    "end" to instance.end,
+                    "location" to instance.location,
+                    "description" to description,
+                    "calendarName" to listOf(
+                        source?.displayName.orEmpty(),
+                        source?.name.orEmpty(),
+                    ).firstOrNull { it.isNotBlank() }.orEmpty(),
+                    "eventType" to eventType,
+                    "eventColor" to (detail?.eventColor ?: instance.eventColor),
+                    "timeZone" to timeZone,
+                    "allDay" to instance.allDay,
+                ),
+            )
+        }
+        return events.sortedBy { (it["start"] as? Number)?.toLong() ?: Long.MAX_VALUE }
+    }
+
+    private fun calendarInstanceContentKey(instance: CalendarInstanceRecord): String {
+        fun normalize(value: String): String = value
+            .trim()
+            .replace(Regex("\\s+"), " ")
+            .lowercase(Locale.ROOT)
+        return listOf(
+            instance.calendarId,
+            normalize(instance.title),
+            instance.start.toString(),
+            (instance.end ?: 0L).toString(),
+            normalize(instance.location),
+            instance.allDay.toString(),
+        ).joinToString("|")
+    }
+
+    private fun queryCalendarNames(): CalendarCatalog {
+        val names = HashMap<String, CalendarSourceInfo>()
+        val visibleCalendarIds = HashSet<String>()
+        val richProjection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.OWNER_ACCOUNT,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.VISIBLE,
+        )
+        val basicProjection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.VISIBLE,
+        )
+        val minimalProjection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+        )
+        val cursor = try {
+            contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                richProjection,
+                null,
+                null,
+                null,
+            )
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                basicProjection,
+                null,
+                null,
+                null,
+            )
+        } catch (_: Exception) {
+            try {
+                contentResolver.query(
+                    CalendarContract.Calendars.CONTENT_URI,
+                    minimalProjection,
+                    null,
+                    null,
+                    null,
+                )
+            } catch (_: Exception) {
+                null
+            }
+        }
+        var visibilityKnown = false
+        cursor?.use {
+            val idIndex = it.getColumnIndex(CalendarContract.Calendars._ID)
+            val displayNameIndex = it.getColumnIndex(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
+            val nameIndex = it.getColumnIndex(CalendarContract.Calendars.NAME)
+            val accountNameIndex = it.getColumnIndex(CalendarContract.Calendars.ACCOUNT_NAME)
+            val ownerAccountIndex = it.getColumnIndex(CalendarContract.Calendars.OWNER_ACCOUNT)
+            val accountTypeIndex = it.getColumnIndex(CalendarContract.Calendars.ACCOUNT_TYPE)
+            val visibleIndex = it.getColumnIndex(CalendarContract.Calendars.VISIBLE)
+            visibilityKnown = visibleIndex >= 0
+            while (it.moveToNext()) {
+                val id = cursorString(it, idIndex)
+                if (id.isBlank()) continue
+                val visible = visibleIndex < 0 || cursorLong(it, visibleIndex) != 0L
+                names[id] = CalendarSourceInfo(
+                    displayName = cursorString(it, displayNameIndex),
+                    name = cursorString(it, nameIndex),
+                    accountName = cursorString(it, accountNameIndex),
+                    ownerAccount = cursorString(it, ownerAccountIndex),
+                    accountType = cursorString(it, accountTypeIndex),
+                )
+                if (visible) visibleCalendarIds.add(id)
+            }
+        }
+        return CalendarCatalog(
+            sources = names,
+            visibleCalendarIds = visibleCalendarIds,
+            visibilityKnown = visibilityKnown,
+        )
+    }
+
+    private fun queryCalendarEventDetails(eventIds: Collection<String>): Map<String, CalendarEventInfo> {
+        val details = HashMap<String, CalendarEventInfo>()
+        val ids = eventIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (ids.isEmpty()) return details
+
+        val richProjection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.EVENT_COLOR,
+            CalendarContract.Events.EVENT_TIMEZONE,
+            CalendarContract.Events.ORGANIZER,
+            CalendarContract.Events.CUSTOM_APP_PACKAGE,
+            CalendarContract.Events.CUSTOM_APP_URI,
+        )
+        val coreProjection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.CALENDAR_ID,
+            CalendarContract.Events.ORGANIZER,
+        )
+        ids.chunked(100).forEach { chunk ->
+            val selection = "${CalendarContract.Events._ID} IN (${chunk.joinToString(",") { "?" }})"
+            val cursor = try {
+                contentResolver.query(
+                    CalendarContract.Events.CONTENT_URI,
+                    richProjection,
+                    selection,
+                    chunk.toTypedArray(),
+                    null,
+                )
+            } catch (_: Exception) {
+                null
+            } ?: try {
+                contentResolver.query(
+                    CalendarContract.Events.CONTENT_URI,
+                    coreProjection,
+                    selection,
+                    chunk.toTypedArray(),
+                    null,
+                )
+            } catch (_: Exception) {
+                null
+            }
+            cursor?.use {
+                val idIndex = it.getColumnIndex(CalendarContract.Events._ID)
+                if (idIndex < 0) return@use
+                val titleIndex = it.getColumnIndex(CalendarContract.Events.TITLE)
+                val descriptionIndex = it.getColumnIndex(CalendarContract.Events.DESCRIPTION)
+                val calendarIdIndex = it.getColumnIndex(CalendarContract.Events.CALENDAR_ID)
+                val colorIndex = it.getColumnIndex(CalendarContract.Events.EVENT_COLOR)
+                val timeZoneIndex = it.getColumnIndex(CalendarContract.Events.EVENT_TIMEZONE)
+                val organizerIndex = it.getColumnIndex(CalendarContract.Events.ORGANIZER)
+                val customPackageIndex = it.getColumnIndex(CalendarContract.Events.CUSTOM_APP_PACKAGE)
+                val customUriIndex = it.getColumnIndex(CalendarContract.Events.CUSTOM_APP_URI)
+                while (it.moveToNext()) {
+                    val id = cursorString(it, idIndex)
+                    if (id.isBlank()) continue
+                    details[id] = CalendarEventInfo(
+                        title = cursorString(it, titleIndex),
+                        description = cursorString(it, descriptionIndex),
+                        calendarId = cursorString(it, calendarIdIndex),
+                        eventColor = if (colorIndex >= 0 && !it.isNull(colorIndex)) {
+                            it.getLong(colorIndex)
+                        } else {
+                            null
+                        },
+                        timeZone = cursorString(it, timeZoneIndex),
+                        organizer = cursorString(it, organizerIndex),
+                        customAppPackage = cursorString(it, customPackageIndex),
+                        customAppUri = cursorString(it, customUriIndex),
+                    )
+                }
+            }
+        }
+        return details
+    }
+
+    private fun joinCalendarText(vararg values: String): String = values
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString("\n")
+        .take(2048)
+
+    private fun inferCalendarType(
+        title: String,
+        description: String,
+        calendar: CalendarSourceInfo?,
+        organizer: String,
+        customAppPackage: String,
+        customAppUri: String,
+    ): String {
+        val sourceText = listOf(
+            calendar?.displayName.orEmpty(),
+            calendar?.name.orEmpty(),
+            calendar?.accountName.orEmpty(),
+            calendar?.ownerAccount.orEmpty(),
+            calendar?.accountType.orEmpty(),
+        ).joinToString("\n")
+        val text = listOf(
+            title,
+            description,
+            sourceText,
+            organizer,
+            customAppPackage,
+            customAppUri,
+        ).joinToString("\n").lowercase(Locale.ROOT)
+        val birthdaySource = listOf(
+            calendar?.displayName.orEmpty(),
+            calendar?.name.orEmpty(),
+            calendar?.accountType.orEmpty(),
+        ).joinToString("\n").lowercase(Locale.ROOT)
+        val ageBirthday = Regex("""\d{1,3}\s*岁\s*生日""").containsMatchIn(text) ||
+            (listOf("生日", "birthday", "contacts").any(birthdaySource::contains) &&
+                Regex("""\d{1,3}\s*岁""").containsMatchIn(text))
+        val trainNumber = Regex("""\b(?:G|D|C|Z|T|K)\d{1,4}\b""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text)
+        return when {
+            listOf("生日", "birthday", "birth day", "birthdays", "诞辰").any(text::contains) ||
+                ageBirthday -> "生日"
+            listOf("纪念日", "anniversary").any(text::contains) -> "纪念日"
+            listOf("倒数日", "倒数", "countdown").any(text::contains) -> "倒数日"
+            listOf("高铁", "火车", "航班", "车票", "出行", "旅行", "travel", "flight").any(text::contains) ||
+                trainNumber -> "出行"
+            listOf("工作", "work", "会议", "meeting", "项目", "project").any(text::contains) -> "工作"
+            listOf("生活", "life", "购物", "appointment").any(text::contains) -> "生活"
+            listOf("个人", "personal").any(text::contains) -> "个人"
+            else -> ""
+        }
+    }
+
+    private fun cursorString(cursor: Cursor, index: Int): String {
+        return if (index < 0 || cursor.isNull(index)) "" else cursor.getString(index).orEmpty()
+    }
+
+    private fun cursorLong(cursor: Cursor, index: Int): Long {
+        return if (index < 0 || cursor.isNull(index)) 0L else cursor.getLong(index)
+    }
+
+    private fun openCalendarCreate(call: NativeCall, result: NativeResult) {
+        val title = call.argument<String>("title")?.trim().orEmpty()
+        val start = call.argument<Number>("start")?.toLong() ?: 0L
+        if (title.isBlank() || start <= 0L) {
+            result.error("invalid_argument", "创建日程缺少标题或开始时间", null)
+            return
+        }
+        val allDay = call.argument<Boolean>("allDay") == true
+        val end = call.argument<Number>("end")?.toLong()?.takeIf { it > start }
+            ?: if (allDay) start + 24L * 60L * 60L * 1000L else start + 60L * 60L * 1000L
+        val location = call.argument<String>("location")?.trim().orEmpty()
+        val intent = Intent(Intent.ACTION_INSERT).apply {
+            data = CalendarContract.Events.CONTENT_URI
+            putExtra(CalendarContract.Events.TITLE, title)
+            putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, start)
+            putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+            putExtra(CalendarContract.Events.ALL_DAY, allDay)
+            if (location.isNotBlank()) putExtra(CalendarContract.Events.EVENT_LOCATION, location)
+        }
+        try {
+            startActivity(intent)
+            result.success(true)
+        } catch (error: ActivityNotFoundException) {
+            result.error("calendar_unavailable", "手机没有可用的日历应用", error.message)
+        } catch (error: Exception) {
+            result.error("calendar_open_failed", "无法打开新建日程页面", error.message)
+        }
+    }
+
+    private fun hasPhotosPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
+                Manifest.permission.READ_MEDIA_IMAGES,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return true
+        }
+        if (Build.VERSION.SDK_INT >= 34 && checkSelfPermission(
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return true
+        }
+        return Build.VERSION.SDK_INT < 33 && checkSelfPermission(
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestPhotosPermission(result: NativeResult) {
+        if (hasPhotosPermission()) {
+            result.success(true)
+            return
+        }
+        if (photosPermissionResult != null) {
+            result.error("permission_in_progress", "照片权限请求正在进行", null)
+            return
+        }
+        photosPermissionResult = result
+        val permissions = when {
+            Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        requestPermissions(permissions, photosPermissionRequest)
+    }
+
+    private fun hasMediaPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33) {
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED &&
+                checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED &&
+                checkSelfPermission(Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun hasAllFilesAccess(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+            Environment.isExternalStorageManager()
+    }
+
+    private fun openAllFilesAccessSettings(result: NativeResult) {
+        if (hasAllFilesAccess()) {
+            result.success(true)
+            return
+        }
+        try {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:$packageName"),
+            )
+            startActivity(intent)
+            result.success(true)
+        } catch (error: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                result.success(true)
+            } catch (fallbackError: Exception) {
+                result.error("settings_failed", "无法打开所有文件访问设置：${fallbackError.message}", null)
+            }
+        }
+    }
+
+    private fun requestMediaPermission(result: NativeResult) {
+        if (hasMediaPermission()) {
+            result.success(true)
+            return
+        }
+        if (mediaPermissionResult != null) {
+            result.error("permission_in_progress", "媒体和文件权限请求正在进行", null)
+            return
+        }
+        mediaPermissionResult = result
+        val permissions = when {
+            Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO,
+            )
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        requestPermissions(permissions, mediaPermissionRequest)
+    }
+
+    private data class PhotoAlbumAccumulator(
+        val id: String,
+        val name: String,
+        var count: Int = 0,
+        var totalSizeBytes: Long = 0L,
+        var coverUri: String = "",
+        var latestTakenAt: Long = 0L,
+        var relativePath: String = "",
+    )
+
+    private fun readPhotoAlbums(result: NativeResult) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要读取照片权限", null)
+            return
+        }
+
+        contentExecutor.execute {
+            try {
+                val albums = LinkedHashMap<String, PhotoAlbumAccumulator>()
+                val projection = mutableListOf(
+                    MediaStore.Images.Media._ID,
+                    MediaStore.Images.Media.BUCKET_ID,
+                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+                    MediaStore.Images.Media.DATE_TAKEN,
+                    MediaStore.Images.Media.SIZE,
+                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    projection += MediaStore.Images.Media.RELATIVE_PATH
+                }
+                val cursor = contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    projection.toTypedArray(),
+                    null,
+                    null,
+                    "${MediaStore.Images.Media.DATE_TAKEN} DESC",
+                )
+
+                cursor?.use {
+                    val idIndex = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val bucketIdIndex = it.getColumnIndex(MediaStore.Images.Media.BUCKET_ID)
+                    val bucketNameIndex = it.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+                    val dateIndex = it.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
+                    val sizeIndex = it.getColumnIndex(MediaStore.Images.Media.SIZE)
+                    val relativePathIndex = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        it.getColumnIndex(MediaStore.Images.Media.RELATIVE_PATH)
+                    } else {
+                        -1
+                    }
+                    while (it.moveToNext()) {
+                        val imageId = it.getLong(idIndex)
+                        val albumId = if (bucketIdIndex >= 0) {
+                            it.getString(bucketIdIndex).orEmpty()
+                        } else {
+                            "all"
+                        }.ifBlank { "all" }
+                        val albumName = if (bucketNameIndex >= 0) {
+                            it.getString(bucketNameIndex).orEmpty()
+                        } else {
+                            ""
+                        }.ifBlank { "其他图片" }
+                        val takenAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
+                            it.getLong(dateIndex)
+                        } else {
+                            0L
+                        }
+                        val album = albums.getOrPut(albumId) {
+                            PhotoAlbumAccumulator(albumId, albumName)
+                        }
+                        album.count++
+                        if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                            album.totalSizeBytes += it.getLong(sizeIndex)
+                        }
+                        if (album.relativePath.isEmpty() && relativePathIndex >= 0) {
+                            album.relativePath = it.getString(relativePathIndex).orEmpty()
+                                .replace('\\', '/')
+                                .trim('/')
+                        }
+                        if (album.coverUri.isEmpty()) {
+                            album.coverUri = Uri.withAppendedPath(
+                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                imageId.toString(),
+                            ).toString()
+                        }
+                        if (takenAt > album.latestTakenAt) album.latestTakenAt = takenAt
+                    }
+                }
+
+                val response = albums.values.map { album ->
+                    mapOf(
+                        "id" to album.id,
+                        "name" to album.name,
+                        "count" to album.count,
+                        "totalSizeBytes" to album.totalSizeBytes,
+                        "coverUri" to album.coverUri,
+                        "latestTakenAt" to album.latestTakenAt,
+                        "relativePath" to album.relativePath,
+                    )
+                }
+                runOnUiThread { result.success(response) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取相册集失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun readPhotos(call: NativeCall, result: NativeResult) {
+        readPhotosInternal(call, result, paged = false)
+    }
+
+    private fun readPhotoPage(call: NativeCall, result: NativeResult) {
+        readPhotosInternal(call, result, paged = true)
+    }
+
+    private fun readPhotosInternal(
+        call: NativeCall,
+        result: NativeResult,
+        paged: Boolean,
+    ) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要读取照片权限", null)
+            return
+        }
+
+        val albumId = call.argument<String>("albumId")?.trim().orEmpty()
+        val offset = call.argument<Int>("offset")?.coerceAtLeast(0) ?: 0
+        val limit = call.argument<Int>("limit")?.coerceIn(1, 200) ?: 200
+        contentExecutor.execute {
+            try {
+                val photos = ArrayList<Map<String, Any?>>()
+                var total = 0
+                val projection = arrayOf(
+                    MediaStore.Images.Media._ID,
+                    MediaStore.Images.Media.DISPLAY_NAME,
+                    MediaStore.Images.Media.DATE_TAKEN,
+                    MediaStore.Images.Media.WIDTH,
+                    MediaStore.Images.Media.HEIGHT,
+                    MediaStore.Images.Media.SIZE,
+                )
+                val selection = if (albumId.isEmpty()) {
+                    null
+                } else {
+                    "${MediaStore.Images.Media.BUCKET_ID} = ?"
+                }
+                val selectionArgs = if (albumId.isEmpty()) null else arrayOf(albumId)
+                val cursor = contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    "${MediaStore.Images.Media.DATE_TAKEN} DESC",
+                )
+                cursor?.use {
+                    val idIndex = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val nameIndex = it.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
+                    val dateIndex = it.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
+                    val widthIndex = it.getColumnIndex(MediaStore.Images.Media.WIDTH)
+                    val heightIndex = it.getColumnIndex(MediaStore.Images.Media.HEIGHT)
+                    val sizeIndex = it.getColumnIndex(MediaStore.Images.Media.SIZE)
+                    while (it.moveToNext()) {
+                        val rowIndex = total++
+                        if (paged && (rowIndex < offset || photos.size >= limit)) {
+                            continue
+                        }
+                        val id = it.getLong(idIndex)
+                        val uri = Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id.toString())
+                        photos.add(
+                            mapOf(
+                                "id" to id.toString(),
+                                "name" to if (nameIndex >= 0) it.getString(nameIndex).orEmpty() else "图片 $id",
+                                "uri" to uri.toString(),
+                                "takenAt" to if (dateIndex >= 0) it.getLong(dateIndex) else 0L,
+                                "width" to if (widthIndex >= 0) it.getInt(widthIndex) else 0,
+                                "height" to if (heightIndex >= 0) it.getInt(heightIndex) else 0,
+                                "sizeBytes" to if (sizeIndex >= 0 && !it.isNull(sizeIndex)) it.getLong(sizeIndex) else 0L,
+                            ),
+                        )
+                    }
+                }
+                val response: Any = if (paged) {
+                    mapOf("items" to photos, "total" to total)
+                } else {
+                    photos
+                }
+                runOnUiThread { result.success(response) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取相册内容失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun readPhotoBytes(call: NativeCall, result: NativeResult) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要照片与视频权限", null)
+            return
+        }
+        val uriText = call.argument<String>("uri")
+        if (uriText.isNullOrBlank()) {
+            result.error("invalid_argument", "图片地址为空", null)
+            return
+        }
+        contentExecutor.execute {
+            try {
+                val bytes = contentResolver.openInputStream(Uri.parse(uriText))?.use { input ->
+                    input.readBytes()
+                }
+                runOnUiThread { result.success(bytes) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取图片失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun readPhotoThumbnailBytes(call: NativeCall, result: NativeResult) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要照片与视频权限", null)
+            return
+        }
+        val uriText = call.argument<String>("uri")
+        if (uriText.isNullOrBlank()) {
+            result.error("invalid_argument", "图片地址为空", null)
+            return
+        }
+        contentExecutor.execute {
+            try {
+                val uri = Uri.parse(uriText)
+                val bitmap = when {
+                    uri.scheme == "file" -> BitmapFactory.decodeFile(uri.path)
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
+                        contentResolver.loadThumbnail(uri, Size(512, 512), null)
+                    else -> contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+                }
+                val bytes = bitmap?.let { image ->
+                    val output = java.io.ByteArrayOutputStream()
+                    image.compress(Bitmap.CompressFormat.JPEG, 82, output)
+                    image.recycle()
+                    output.toByteArray()
+                }
+                runOnUiThread { result.success(bytes) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取图片缩略图失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun copyUriToCache(call: NativeCall, result: NativeResult) {
+        val uriText = call.argument<String>("uri")?.trim().orEmpty()
+        val requestedName = call.argument<String>("fileName")?.trim().orEmpty()
+        if (uriText.isBlank()) {
+            result.error("invalid_argument", "媒体地址为空", null)
+            return
+        }
+        val sourceUri = Uri.parse(uriText)
+        val imageCollection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val isPhoto = sourceUri.scheme == imageCollection.scheme &&
+            sourceUri.authority == imageCollection.authority &&
+            sourceUri.pathSegments.dropLast(1) == imageCollection.pathSegments &&
+            sourceUri.lastPathSegment?.toLongOrNull() != null
+        if (!(if (isPhoto) hasPhotosPermission() else hasMediaPermission())) {
+            result.error("permission_required", if (isPhoto) "需要照片访问权限" else "需要音乐与音频、照片与视频权限", null)
+            return
+        }
+        contentExecutor.execute {
+            try {
+                val safeName = requestedName
+                    .replace(Regex("[^A-Za-z0-9._-]"), "_")
+                    .ifBlank { "hinge_media" }
+                val target = File(cacheDir, "hinge_${System.currentTimeMillis()}_$safeName")
+                val input = if (sourceUri.scheme == "file") {
+                    File(sourceUri.path.orEmpty()).inputStream()
+                } else {
+                    contentResolver.openInputStream(sourceUri)
+                        ?: throw IllegalStateException("无法打开媒体内容")
+                }
+                input.use { inputStream ->
+                    target.outputStream().use { output -> inputStream.copyTo(output) }
+                }
+                runOnUiThread { result.success(target.absolutePath) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("copy_failed", "准备媒体文件失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun readPhotoPreviewBytes(call: NativeCall, result: NativeResult) {
+        if (!hasPhotosPermission()) {
+            result.error("permission_required", "需要照片与视频权限", null)
+            return
+        }
+        val uriText = call.argument<String>("uri")
+        if (uriText.isNullOrBlank()) {
+            result.error("invalid_argument", "图片地址为空", null)
+            return
+        }
+        contentExecutor.execute {
+            try {
+                val uri = Uri.parse(uriText)
+                // 预览使用原始媒体字节；缩略图接口仍然只用于列表，避免预览被
+                // 1600px 的二次压缩限制清晰度。文件管理中的图片 URI 同样来自
+                // MediaStore，因此这里也能直接读取。
+                val bytes = if (uri.scheme == "file") {
+                    java.io.File(uri.path.orEmpty()).takeIf { it.isFile }?.readBytes()
+                } else {
+                    contentResolver.openInputStream(uri)?.use { input -> input.readBytes() }
+                }
+                runOnUiThread { result.success(bytes) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取图片预览失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun readMediaMetadata(call: NativeCall, result: NativeResult) {
+        val uriText = call.argument<String>("uri")?.trim().orEmpty()
+        val name = call.argument<String>("name")?.trim().orEmpty().ifBlank { "未命名文件" }
+        val reportedMime = call.argument<String>("mimeType")?.trim().orEmpty()
+        if (uriText.isBlank()) {
+            result.error("invalid_argument", "媒体地址为空", null)
+            return
+        }
+
+        val resolvedMime = HingeMimeDetector.resolve(name, reportedMime)
+        val canRead = hasAllFilesAccess() ||
+            (resolvedMime.startsWith("image/") && hasPhotosPermission()) ||
+            hasMediaPermission()
+        if (!canRead) {
+            result.error("permission_required", "需要读取对应的媒体权限", null)
+            return
+        }
+
+        contentExecutor.execute {
+            try {
+                val uri = Uri.parse(uriText)
+                val metadata = readMediaMetadataInternal(uri, name, resolvedMime)
+                runOnUiThread { result.success(metadata) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("metadata_failed", "读取媒体参数失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun readMediaMetadataInternal(
+        uri: Uri,
+        name: String,
+        fallbackMimeType: String,
+    ): Map<String, Any?> {
+        val detectedMimeType = try {
+            openUriInputStream(uri)?.use { input ->
+                HingeMimeDetector.sniff(name, input)
+            } ?: fallbackMimeType
+        } catch (_: Exception) {
+            fallbackMimeType
+        }
+        val metadata = linkedMapOf<String, Any?>(
+            "name" to name,
+            "mimeType" to HingeMimeDetector.resolve(name, detectedMimeType),
+            "durationMs" to 0L,
+            "width" to 0,
+            "height" to 0,
+            "rotation" to 0,
+            "bitrate" to 0L,
+            "title" to "",
+            "artist" to "",
+            "album" to "",
+            "cameraMake" to "",
+            "cameraModel" to "",
+            "dateTimeOriginal" to "",
+            "orientation" to 0,
+        )
+
+        if (detectedMimeType.startsWith("image/")) {
+            openUriInputStream(uri)?.use { input ->
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(input, null, options)
+                metadata["width"] = options.outWidth.coerceAtLeast(0)
+                metadata["height"] = options.outHeight.coerceAtLeast(0)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    openUriInputStream(uri)?.use { input ->
+                        val exif = android.media.ExifInterface(input)
+                        metadata["cameraMake"] = exif.getAttribute(
+                            android.media.ExifInterface.TAG_MAKE,
+                        ).orEmpty()
+                        metadata["cameraModel"] = exif.getAttribute(
+                            android.media.ExifInterface.TAG_MODEL,
+                        ).orEmpty()
+                        metadata["dateTimeOriginal"] = exif.getAttribute(
+                            android.media.ExifInterface.TAG_DATETIME_ORIGINAL,
+                        ).orEmpty()
+                        metadata["orientation"] = exif.getAttributeInt(
+                            android.media.ExifInterface.TAG_ORIENTATION,
+                            0,
+                        )
+                    }
+                } catch (_: Exception) {
+                    // Some OEM providers expose a readable image stream but no
+                    // EXIF block. Dimensions and MIME remain useful in that case.
+                }
+            }
+        } else if (detectedMimeType.startsWith("audio/") ||
+            detectedMimeType.startsWith("video/")) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                if (uri.scheme.equals("file", ignoreCase = true)) {
+                    retriever.setDataSource(uri.path.orEmpty())
+                } else {
+                    retriever.setDataSource(this, uri)
+                }
+                metadata["durationMs"] = metadataLong(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION),
+                )
+                metadata["width"] = metadataInt(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH),
+                )
+                metadata["height"] = metadataInt(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT),
+                )
+                metadata["rotation"] = metadataInt(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION),
+                )
+                metadata["bitrate"] = metadataLong(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE),
+                )
+                metadata["title"] = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_TITLE,
+                ).orEmpty()
+                metadata["artist"] = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_ARTIST,
+                ).orEmpty()
+                metadata["album"] = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_ALBUM,
+                ).orEmpty()
+            } finally {
+                retriever.release()
+            }
+        }
+        return metadata
+    }
+
+    private fun openUriInputStream(uri: Uri): java.io.InputStream? {
+        return if (uri.scheme.equals("file", ignoreCase = true)) {
+            val path = uri.path.orEmpty()
+            if (path.isBlank()) null else File(path).inputStream()
+        } else {
+            contentResolver.openInputStream(uri)
+        }
+    }
+
+    private fun metadataLong(value: String?): Long =
+        value?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+
+    private fun metadataInt(value: String?): Int =
+        value?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+
+    private fun readFiles(result: NativeResult) {
+        if (!hasMediaPermission() && !hasAllFilesAccess()) {
+            result.error("permission_required", "需要读取文件或媒体权限", null)
+            return
+        }
+
+        val files = ArrayList<Map<String, Any?>>()
+        val collection = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.DATA,
+        )
+        val cursor = queryMediaStore(
+            collection,
+            projection,
+            "${MediaStore.Files.FileColumns._ID} IS NOT NULL",
+            null,
+            "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC",
+        )
+        cursor?.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+            val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            while (it.moveToNext()) {
+                val id = it.getLong(idIndex)
+                val uri = Uri.withAppendedPath(collection, id.toString())
+                val dataIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+                val sourcePath = if (dataIndex >= 0 && !it.isNull(dataIndex)) {
+                    it.getString(dataIndex).orEmpty()
+                } else {
+                    ""
+                }
+                val sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                    it.getLong(sizeIndex)
+                } else {
+                    0L
+                }
+                val mimeType = if (mimeIndex >= 0) {
+                    it.getString(mimeIndex).orEmpty()
+                } else {
+                    ""
+                }
+                val name = if (nameIndex >= 0) it.getString(nameIndex).orEmpty() else "未命名文件"
+                // MediaStore.Files may expose a directory-like row with a
+                // display name and a zero size. Only probe the real file
+                // system for this ambiguous case; probing every MediaStore
+                // row makes large recent lists several orders of magnitude
+                // slower on some OEM devices.
+                if (sizeBytes == 0L && mimeType.isBlank() &&
+                    isDirectoryPath(sourcePath)) {
+                    continue
+                }
+                files.add(
+                    mapOf(
+                        "id" to id.toString(),
+                        "name" to name,
+                        "relativePath" to sourcePath,
+                        "mimeType" to HingeMimeDetector.resolve(name, mimeType),
+                        "sizeBytes" to sizeBytes,
+                        "modifiedAt" to if (dateIndex >= 0) it.getLong(dateIndex) * 1000L else 0L,
+                        "uri" to uri.toString(),
+                    ),
+                )
+            }
+        }
+        result.success(files)
+    }
+
+    private fun readStorageDirectory(call: NativeCall, result: NativeResult) {
+        val category = call.argument<String>("category")
+            ?.trim()
+            ?.lowercase(Locale.ROOT)
+            .orEmpty()
+            .ifBlank { "storage" }
+        val path = call.argument<String>("path")?.trim().orEmpty()
+        val forceRefresh = call.argument<Boolean>("forceRefresh") == true
+        val cacheKey = "$category\u0000$path"
+        val now = System.currentTimeMillis()
+        if (forceRefresh) mediaTotalCache.remove(cacheKey)
+        if (!forceRefresh) {
+            val cached = storageDirectoryCache[cacheKey]
+            if (cached != null && cached.expiresAt > now) {
+                result.success(cached.entries)
+                return
+            }
+        }
+        contentExecutor.execute {
+            try {
+                val entries = when (category) {
+                    "storage" -> listStorageDirectory(path, category)
+                    "wechat", "qq" -> querySocialAlbumEntries(category)
+                    "recent", "images", "videos", "audio", "documents", "deleted" ->
+                        queryMediaCategoryEntries(category)
+                    else -> throw IllegalArgumentException("不支持的文件分类：$category")
+                }
+                storageDirectoryCache[cacheKey] = StorageCacheEntry(
+                    // Directory listings are immutable enough for a short
+                    // cache window; the explicit refresh button bypasses it.
+                    expiresAt = System.currentTimeMillis() + 10_000L,
+                    entries = entries,
+                )
+                runOnUiThread { result.success(entries) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取手机文件失败：" + error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun readStorageDirectoryPage(call: NativeCall, result: NativeResult) {
+        val category = call.argument<String>("category")
+            ?.trim()
+            ?.lowercase(Locale.ROOT)
+            .orEmpty()
+            .ifBlank { "storage" }
+        val path = call.argument<String>("path")?.trim().orEmpty()
+        val offset = (call.argument<Number>("offset")?.toInt() ?: 0).coerceAtLeast(0)
+        val limit = (call.argument<Number>("limit")?.toInt() ?: 200).coerceAtLeast(1)
+        val forceRefresh = call.argument<Boolean>("forceRefresh") == true
+        val cacheKey = "$category\u0000$path"
+        val now = System.currentTimeMillis()
+        if (forceRefresh) mediaTotalCache.remove(cacheKey)
+        if (!forceRefresh) {
+            val cached = storageDirectoryCache[cacheKey]
+            if (cached != null && cached.expiresAt > now) {
+                result.success(storageDirectoryPagePayload(cached.entries, offset, limit))
+                return
+            }
+        }
+
+        contentExecutor.execute {
+            try {
+                val payload = when (category) {
+                    "storage" -> {
+                        val entries = listStorageDirectory(path, category)
+                        storageDirectoryCache[cacheKey] = StorageCacheEntry(
+                            expiresAt = System.currentTimeMillis() + 10_000L,
+                            entries = entries,
+                        )
+                        storageDirectoryPagePayload(entries, offset, limit)
+                    }
+                    "wechat", "qq" -> querySocialAlbumPage(category, offset, limit, cacheKey)
+                    "recent", "images", "videos", "audio", "documents", "deleted" ->
+                        queryMediaCategoryPage(category, offset, limit, cacheKey)
+                    else -> throw IllegalArgumentException("不支持的文件分类：$category")
+                }
+                runOnUiThread { result.success(payload) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("read_failed", "读取手机文件失败：" + error.message, null)
+                }
+            }
+        }
+    }
+
+    /**
+     * Fetches only the requested MediaStore window. The previous implementation
+     * materialized every matching row before slicing the first 200 items, so a
+     * phone with tens of thousands of media records paid the full scan cost on
+     * every page request.
+     */
+    private fun queryMediaCategoryPage(
+        category: String,
+        offset: Int,
+        limit: Int,
+        cacheKey: String,
+    ): Map<String, Any?> {
+        if (category == "deleted" && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0, "scannedCount" to 0)
+        }
+        if (category == "images" && !hasPhotosPermission()) {
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0, "scannedCount" to 0)
+        }
+        if ((category == "videos" || category == "audio") && !hasMediaPermission()) {
+            return mapOf("items" to emptyList<Map<String, Any?>>(), "total" to 0, "scannedCount" to 0)
+        }
+
+        val collection = when (category) {
+            "images" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            "videos" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            "audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else -> MediaStore.Files.getContentUri("external")
+        }
+        val mimeColumn = MediaStore.Files.FileColumns.MIME_TYPE
+        val displayNameColumn = MediaStore.Files.FileColumns.DISPLAY_NAME
+        val selection: String
+        val selectionArgs: Array<String>?
+        when (category) {
+            "images" -> {
+                selection = "$mimeColumn LIKE ?"
+                selectionArgs = arrayOf("image/%")
+            }
+            "videos" -> {
+                selection = "$mimeColumn LIKE ?"
+                selectionArgs = arrayOf("video/%")
+            }
+            "audio" -> {
+                selection = "$mimeColumn LIKE ?"
+                selectionArgs = arrayOf("audio/%")
+            }
+            "documents" -> {
+                // Filter document names in the provider so page 1 is not
+                // consumed by unrelated images/videos before Kotlin filters.
+                val extensionSelection = documentFileExtensions.joinToString(" OR ") {
+                    "$displayNameColumn LIKE ?"
+                }
+                val mimeSelection = listOf(
+                    "$mimeColumn LIKE 'text/%'",
+                    "$mimeColumn = 'application/pdf'",
+                    "$mimeColumn LIKE '%msword%'",
+                    "$mimeColumn LIKE '%ms-excel%'",
+                    "$mimeColumn LIKE '%ms-powerpoint%'",
+                    "$mimeColumn LIKE '%opendocument%'",
+                    "$mimeColumn LIKE '%officedocument%'",
+                    "$mimeColumn = 'application/rtf'",
+                ).joinToString(" OR ")
+                selection = "($extensionSelection OR $mimeSelection)"
+                selectionArgs = documentFileExtensions.map { "%.$it" }.toTypedArray()
+            }
+            "deleted" -> {
+                selection = "$mimeColumn IS NOT NULL AND is_trashed = 1"
+                selectionArgs = null
+            }
+            else -> {
+                selection = "_id IS NOT NULL"
+                selectionArgs = null
+            }
+        }
+
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.RELATIVE_PATH,
+            MediaStore.Files.FileColumns.DATA,
+        )
+        val now = System.currentTimeMillis()
+        val total = mediaTotalCache[cacheKey]
+            ?.takeIf { it.expiresAt > now }
+            ?.total
+            ?: countMediaStoreRows(collection, selection, selectionArgs).also {
+                mediaTotalCache[cacheKey] = CountCacheEntry(
+                    expiresAt = System.currentTimeMillis() + 10_000L,
+                    total = it,
+                )
+            }
+        val entries = ArrayList<Map<String, Any?>>()
+        var scannedCount = 0
+        val cursor = queryMediaStorePage(
+            collection,
+            projection,
+            selection,
+            selectionArgs,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            offset,
+            limit,
+        )
+        cursor?.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+            val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathIndex = it.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            val dataIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+            while (it.moveToNext()) {
+                scannedCount++
+                val id = it.getLong(idIndex)
+                val name = if (nameIndex >= 0) {
+                    it.getString(nameIndex).orEmpty()
+                } else {
+                    "未命名文件"
+                }
+                val relativePath = if (pathIndex >= 0) {
+                    it.getString(pathIndex).orEmpty() + name
+                } else {
+                    name
+                }
+                val sourcePath = if (dataIndex >= 0 && !it.isNull(dataIndex)) {
+                    it.getString(dataIndex).orEmpty()
+                } else {
+                    relativePath
+                }
+                val sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                    it.getLong(sizeIndex)
+                } else {
+                    0L
+                }
+                val rawMimeType = if (mimeIndex >= 0) {
+                    it.getString(mimeIndex).orEmpty()
+                } else {
+                    ""
+                }
+                val mimeType = HingeMimeDetector.resolve(name, rawMimeType)
+                if (category == "documents" &&
+                    !HingeMimeDetector.isDocument(name, rawMimeType)) {
+                    continue
+                }
+                if (category == "recent" &&
+                    sizeBytes == 0L && rawMimeType.isBlank() &&
+                    isDirectoryPath(sourcePath, relativePath)) {
+                    continue
+                }
+                if (category == "recent" &&
+                    isRecentCacheNoise(name, sourcePath, mimeType, sizeBytes)) {
+                    continue
+                }
+                entries.add(
+                    storageEntry(
+                        id = id.toString(),
+                        name = name,
+                        relativePath = relativePath,
+                        mimeType = mimeType,
+                        sizeBytes = sizeBytes,
+                        modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
+                            it.getLong(dateIndex) * 1000L
+                        } else {
+                            0L
+                        },
+                        uri = Uri.withAppendedPath(collection, id.toString()).toString(),
+                        isDirectory = false,
+                        category = category,
+                    ),
+                )
+            }
+        }
+
+        if (category == "documents" && total == 0 && hasAllFilesAccess()) {
+            val fallback = scanDocumentFiles()
+            return storageDirectoryPagePayload(fallback, offset, limit)
+        }
+        return mapOf("items" to entries, "total" to total, "scannedCount" to scannedCount)
+    }
+
+    private fun querySocialAlbumPage(
+        category: String,
+        offset: Int,
+        limit: Int,
+        cacheKey: String,
+    ): Map<String, Any?> {
+        val collection = MediaStore.Files.getContentUri("external")
+        val pathColumn = if (Build.VERSION.SDK_INT >= 29) {
+            MediaStore.Files.FileColumns.RELATIVE_PATH
+        } else {
+            MediaStore.Files.FileColumns.DATA
+        }
+        val normalizedPathColumn = "LOWER($pathColumn)"
+        val selection: String
+        val args: Array<String>
+        if (category == "wechat") {
+            selection = "$normalizedPathColumn LIKE ? OR $normalizedPathColumn LIKE ?"
+            args = arrayOf("%pictures/weixin%", "%pictures/wechat%")
+        } else {
+            selection = "$normalizedPathColumn LIKE ? OR " +
+                "$normalizedPathColumn LIKE ? OR $normalizedPathColumn LIKE ?"
+            args = arrayOf("%pictures/qq%", "%dcim/qq%", "%tencent/qq_images%")
+        }
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            pathColumn,
+        )
+        val now = System.currentTimeMillis()
+        val total = mediaTotalCache[cacheKey]
+            ?.takeIf { it.expiresAt > now }
+            ?.total
+            ?: countMediaStoreRows(collection, selection, args).also {
+                mediaTotalCache[cacheKey] = CountCacheEntry(
+                    expiresAt = System.currentTimeMillis() + 10_000L,
+                    total = it,
+                )
+            }
+        val entries = ArrayList<Map<String, Any?>>()
+        queryMediaStorePage(
+            collection,
+            projection,
+            selection,
+            args,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            offset,
+            limit,
+        )?.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+            val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathIndex = it.getColumnIndex(pathColumn)
+            while (it.moveToNext()) {
+                val id = it.getLong(idIndex)
+                val name = if (nameIndex >= 0) {
+                    it.getString(nameIndex).orEmpty()
+                } else {
+                    "未命名文件"
+                }
+                val path = if (pathIndex >= 0) it.getString(pathIndex).orEmpty() else ""
+                entries.add(
+                    storageEntry(
+                        id = id.toString(),
+                        name = name,
+                        relativePath = path.trimEnd('/') + "/" + name,
+                        mimeType = HingeMimeDetector.resolve(
+                            name,
+                            if (mimeIndex >= 0) it.getString(mimeIndex).orEmpty() else "",
+                        ),
+                        sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                            it.getLong(sizeIndex)
+                        } else {
+                            0L
+                        },
+                        modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
+                            it.getLong(dateIndex) * 1000L
+                        } else {
+                            0L
+                        },
+                        uri = Uri.withAppendedPath(collection, id.toString()).toString(),
+                        isDirectory = false,
+                        category = category,
+                    ),
+                )
+            }
+        }
+        return mapOf("items" to entries, "total" to total)
+    }
+
+    private fun countMediaStoreRows(
+        collection: Uri,
+        selection: String?,
+        selectionArgs: Array<String>?,
+    ): Int {
+        return queryMediaStore(
+            collection,
+            arrayOf(MediaStore.Files.FileColumns._ID),
+            selection,
+            selectionArgs,
+            null,
+        )?.use { it.count } ?: 0
+    }
+
+    private fun queryMediaStorePage(
+        collection: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortColumn: String,
+        offset: Int,
+        limit: Int,
+    ): Cursor? {
+        val safeOffset = offset.coerceAtLeast(0)
+        val safeLimit = limit.coerceIn(1, 200)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val queryArgs = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(sortColumn))
+                putInt(
+                    ContentResolver.QUERY_ARG_SORT_DIRECTION,
+                    ContentResolver.QUERY_SORT_DIRECTION_DESCENDING,
+                )
+                putInt(ContentResolver.QUERY_ARG_OFFSET, safeOffset)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, safeLimit)
+            }
+            try {
+                return contentResolver.query(collection, projection, queryArgs, null)
+            } catch (_: IllegalArgumentException) {
+                // A few OEM providers do not implement Bundle query args.
+                // Fall through to the legacy LIMIT/OFFSET form.
+            }
+        }
+        return queryMediaStore(
+            collection,
+            projection,
+            selection,
+            selectionArgs,
+            "$sortColumn DESC LIMIT $safeLimit OFFSET $safeOffset",
+        )
+    }
+
+    private fun storageDirectoryPagePayload(
+        entries: List<Map<String, Any?>>,
+        offset: Int,
+        limit: Int,
+    ): Map<String, Any?> {
+        val safeOffset = offset.coerceAtMost(entries.size)
+        val end = (safeOffset + limit).coerceAtMost(entries.size)
+        return mapOf(
+            "items" to entries.subList(safeOffset, end),
+            "total" to entries.size,
+            "scannedCount" to (end - safeOffset),
+        )
+    }
+
+    private fun deleteFiles(call: NativeCall, result: NativeResult) {
+        val uris = (call.argument<List<*>>("uris") ?: emptyList<Any?>())
+            .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+        if (uris.isEmpty()) {
+            result.success(0)
+            return
+        }
+
+        contentExecutor.execute {
+            try {
+                var deleted = 0
+                uris.forEach { uriText ->
+                    val uri = Uri.parse(uriText)
+                    val wasDeleted = if (uri.scheme.equals("file", ignoreCase = true)) {
+                        val root = Environment.getExternalStorageDirectory().canonicalFile
+                        val file = File(uri.path.orEmpty()).canonicalFile
+                        val insideStorage = file.path == root.path ||
+                            file.path.startsWith(root.path + File.separator)
+                        insideStorage && file.isFile && file.delete()
+                    } else {
+                        contentResolver.delete(uri, null, null) > 0
+                    }
+                    if (wasDeleted) deleted++
+                }
+                storageDirectoryCache.clear()
+                mediaTotalCache.clear()
+                runOnUiThread { result.success(deleted) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("delete_failed", "删除文件失败：${error.message}", null)
+                }
+            }
+        }
+    }
+
+    private fun listStorageDirectory(
+        relativePath: String,
+        category: String,
+    ): List<Map<String, Any?>> {
+        val root = Environment.getExternalStorageDirectory().canonicalFile
+        val normalized = relativePath
+            .replace('\\', '/')
+            .trim('/')
+        if (normalized.split('/').any { it == ".." }) {
+            throw SecurityException("不允许访问手机存储根目录以外的路径")
+        }
+
+        val target = File(root, normalized).canonicalFile
+        val rootPath = root.path
+        if (target.path != rootPath &&
+            !target.path.startsWith(rootPath + File.separator)
+        ) {
+            throw SecurityException("不允许访问手机存储根目录以外的路径")
+        }
+        if (!target.isDirectory) {
+            throw IllegalArgumentException("目录不存在或不可读取")
+        }
+
+        return target.listFiles()
+            ?.sortedWith(
+                compareBy<File> { !it.isDirectory }
+                    .thenByDescending { it.lastModified() }
+                    .thenBy { it.name.lowercase(Locale.ROOT) },
+            )
+            ?.map { file ->
+                val entryPath = file.canonicalPath
+                    .removePrefix(rootPath)
+                    .trimStart(File.separatorChar)
+                    .replace(File.separatorChar, '/')
+                storageEntry(
+                    id = entryPath,
+                    name = file.name,
+                    relativePath = entryPath,
+                    mimeType = if (file.isDirectory) {
+                        "inode/directory"
+                    } else {
+                        mimeTypeForFile(file)
+                    },
+                    sizeBytes = if (file.isFile) file.length() else 0L,
+                    modifiedAt = file.lastModified(),
+                    uri = Uri.fromFile(file).toString(),
+                    isDirectory = file.isDirectory,
+                    category = category,
+                )
+            }
+            .orEmpty()
+    }
+
+    private fun queryMediaCategoryEntries(category: String): List<Map<String, Any?>> {
+        if (category == "deleted" && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return emptyList()
+        }
+        if (category == "images" && !hasPhotosPermission()) return emptyList()
+        if (category == "videos" && !hasMediaPermission()) return emptyList()
+        if (category == "audio" && !hasMediaPermission()) return emptyList()
+        // Query the dedicated media collections. Album/photo pages use the
+        // Images collection, so the Windows file manager must use the same
+        // source for its image category instead of a second Files view.
+        val collection = when (category) {
+            "images" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            "videos" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            "audio" -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else -> MediaStore.Files.getContentUri("external")
+        }
+        val mimeColumn = MediaStore.Files.FileColumns.MIME_TYPE
+        val selection: String
+        val selectionArgs: Array<String>?
+        when (category) {
+            "images" -> {
+                selection = mimeColumn + " LIKE ?"
+                selectionArgs = arrayOf("image/%")
+            }
+            "videos" -> {
+                selection = mimeColumn + " LIKE ?"
+                selectionArgs = arrayOf("video/%")
+            }
+            "audio" -> {
+                selection = mimeColumn + " LIKE ?"
+                selectionArgs = arrayOf("audio/%")
+            }
+            "documents" -> {
+                // Do not trust OEM MIME values for documents. A number of
+                // MediaProvider implementations return NULL or
+                // application/octet-stream for office files. Query all rows,
+                // then apply the extension/MIME predicate below in Kotlin.
+                selection = "_id IS NOT NULL"
+                selectionArgs = null
+            }
+            "deleted" -> {
+                selection = mimeColumn + " IS NOT NULL AND is_trashed = 1"
+                selectionArgs = null
+            }
+            else -> {
+                // Recent files must include files whose OEM MediaProvider did
+                // not infer a MIME type. The filename is still returned and
+                // the Windows side can display it normally.
+                selection = "_id IS NOT NULL"
+                selectionArgs = null
+            }
+        }
+
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.RELATIVE_PATH,
+            // RELATIVE_PATH is empty on several OEM providers. DATA is
+            // deprecated for general app use, but this app already requires
+            // broad file access for its file manager; when available it gives
+            // the recent-file filter the real source path.
+            MediaStore.Files.FileColumns.DATA,
+        )
+        val entries = ArrayList<Map<String, Any?>>()
+        val cursor = queryMediaStore(
+            collection,
+            projection,
+            selection,
+            selectionArgs,
+            MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC",
+        )
+        cursor?.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+            val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathIndex = it.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            val dataIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+            while (it.moveToNext()) {
+                val id = it.getLong(idIndex)
+                val name = if (nameIndex >= 0) {
+                    it.getString(nameIndex).orEmpty()
+                } else {
+                    "未命名文件"
+                }
+                val relativePath = if (pathIndex >= 0) {
+                    it.getString(pathIndex).orEmpty() + name
+                } else {
+                    name
+                }
+                val sourcePath = if (dataIndex >= 0 && !it.isNull(dataIndex)) {
+                    it.getString(dataIndex).orEmpty()
+                } else {
+                    relativePath
+                }
+                val sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
+                    it.getLong(sizeIndex)
+                } else {
+                    0L
+                }
+                val rawMimeType = if (mimeIndex >= 0) {
+                    it.getString(mimeIndex).orEmpty()
+                } else {
+                    ""
+                }
+                val mimeType = HingeMimeDetector.resolve(name, rawMimeType)
+                if (category == "documents" &&
+                    !HingeMimeDetector.isDocument(name, rawMimeType)) {
+                    continue
+                }
+                // Prefer the absolute DATA path. Only probe the filesystem for
+                // zero-byte rows without a MIME type; checking every MediaStore
+                // row turns a 20k-item query into thousands of random I/O
+                // operations on slower phone storage.
+                val directoryLikeCategory = category == "recent" || category == "documents"
+                if (directoryLikeCategory &&
+                    sizeBytes == 0L && rawMimeType.isBlank() &&
+                    isDirectoryPath(sourcePath, relativePath)) {
+                    continue
+                }
+                if (category == "recent" &&
+                    isRecentCacheNoise(name, sourcePath, mimeType, sizeBytes)) {
+                    continue
+                }
+                entries.add(
+                    storageEntry(
+                        id = id.toString(),
+                        name = name,
+                        relativePath = relativePath,
+                        mimeType = mimeType,
+                        sizeBytes = sizeBytes,
+                        modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
+                            it.getLong(dateIndex) * 1000L
+                        } else {
+                            0L
+                        },
+                        uri = Uri.withAppendedPath(collection, id.toString()).toString(),
+                        isDirectory = false,
+                        category = category,
+                    ),
+                )
+            }
+        }
+        if (category == "documents" && entries.isEmpty() && hasAllFilesAccess()) {
+            return scanDocumentFiles()
+        }
+        return entries
+    }
+
+    private fun scanDocumentFiles(): List<Map<String, Any?>> {
+        val root = Environment.getExternalStorageDirectory().canonicalFile
+        val pending = java.util.ArrayDeque<File>()
+        val entries = ArrayList<Map<String, Any?>>()
+        pending.add(root)
+        val documentExtensions = setOf(
+            "pdf", "doc", "docx", "docm", "odt", "xls", "xlsx", "xlsm", "ods",
+            "ppt", "pptx", "pptm", "odp", "txt", "md", "csv", "rtf",
+        )
+
+        while (pending.isNotEmpty()) {
+            val directory = pending.removeFirst()
+            val children = try {
+                directory.listFiles()
+            } catch (_: SecurityException) {
+                null
+            } ?: continue
+            for (file in children) {
+                if (file.isDirectory) {
+                    // Android's private app directories are not useful to a
+                    // user-facing file manager and can be unreadable even
+                    // with broad storage access.
+                    if (file.name != "Android") pending.addLast(file)
+                    continue
+                }
+                val extension = file.extension.lowercase(Locale.ROOT)
+                if (!documentExtensions.contains(extension)) continue
+                val relativePath = file.canonicalPath
+                    .removePrefix(root.path)
+                    .trimStart(File.separatorChar)
+                    .replace(File.separatorChar, '/')
+                entries.add(
+                    storageEntry(
+                        id = relativePath,
+                        name = file.name,
+                        relativePath = relativePath,
+                        mimeType = guessMimeType(file.name),
+                        sizeBytes = file.length(),
+                        modifiedAt = file.lastModified(),
+                        uri = Uri.fromFile(file).toString(),
+                        isDirectory = false,
+                        category = "documents",
+                    ),
+                )
+            }
+        }
+        entries.sortByDescending { (it["modifiedAt"] as? Long) ?: 0L }
+        return entries
+    }
+
+    private fun querySocialAlbumEntries(category: String): List<Map<String, Any?>> {
+        // 微信和 QQ 在文件管理中对应固定的公共相册目录，而不是模糊匹配
+        // 应用名/相册名。这样可以覆盖目录内的图片、视频以及其他媒体文件。
+        val collection = MediaStore.Files.getContentUri("external")
+        val pathColumn = if (Build.VERSION.SDK_INT >= 29) {
+            MediaStore.Files.FileColumns.RELATIVE_PATH
+        } else {
+            MediaStore.Files.FileColumns.DATA
+        }
+        val folder = if (category == "wechat") {
+            "Pictures/WeiXin/"
+        } else {
+            "Pictures/QQ/"
+        }
+        // RELATIVE_PATH can be case-sensitive on some OEM MediaProvider
+        // implementations, while DATA is an absolute path on older Android
+        // versions. Normalize the queried column so all case variants of the
+        // public social album folders are included, including nested folders.
+        val normalizedPathColumn = "LOWER($pathColumn)"
+        val selection: String
+        val args: Array<String>
+        if (category == "wechat") {
+            selection = "$normalizedPathColumn LIKE ? OR $normalizedPathColumn LIKE ?"
+            args = arrayOf("%pictures/weixin%", "%pictures/wechat%")
+        } else {
+            selection = "$normalizedPathColumn LIKE ? OR " +
+                "$normalizedPathColumn LIKE ? OR $normalizedPathColumn LIKE ?"
+            args = arrayOf("%pictures/qq%", "%dcim/qq%", "%tencent/qq_images%")
+        }
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            pathColumn,
+        )
+        val entries = ArrayList<Map<String, Any?>>()
+        val cursor = queryMediaStore(
+            collection,
+            projection,
+            selection,
+            args,
+            MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC",
+        )
+        cursor?.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val mimeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+            val sizeIndex = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathIndex = it.getColumnIndex(pathColumn)
+            // Social albums can contain thousands of items. Do not reuse the
+            // recent-files safety cap here; the Windows category is an
+            // explicit folder view and must expose the complete directory.
+            while (it.moveToNext()) {
+                val id = it.getLong(idIndex)
+                val name = if (nameIndex >= 0) it.getString(nameIndex).orEmpty() else "未命名文件"
+                val path = if (pathIndex >= 0) it.getString(pathIndex).orEmpty() else folder
+                entries.add(
+                    storageEntry(
+                        id = id.toString(),
+                        name = name,
+                        relativePath = path.trimEnd('/') + "/" + name,
+                        mimeType = HingeMimeDetector.resolve(
+                            name,
+                            if (mimeIndex >= 0) it.getString(mimeIndex).orEmpty() else "",
+                        ),
+                        sizeBytes = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) it.getLong(sizeIndex) else 0L,
+                        modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) it.getLong(dateIndex) * 1000L else 0L,
+                        uri = Uri.withAppendedPath(collection, id.toString()).toString(),
+                        isDirectory = false,
+                        category = category,
+                    ),
+                )
+            }
+        }
+        return entries
+    }
+
+    private fun queryMediaStore(
+        collection: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+    ): Cursor? {
+        return try {
+            contentResolver.query(collection, projection, selection, selectionArgs, sortOrder)
+        } catch (error: IllegalArgumentException) {
+            // DATA is deprecated and a few OEM MediaProvider versions reject
+            // it instead of returning a null column. Retry without DATA so a
+            // metadata query cannot turn the whole file page into "读取失败".
+            if (!projection.contains(MediaStore.Files.FileColumns.DATA)) throw error
+            val safeProjection = projection.filterNot {
+                it == MediaStore.Files.FileColumns.DATA
+            }.toTypedArray()
+            contentResolver.query(collection, safeProjection, selection, selectionArgs, sortOrder)
+        }
+    }
+
+    private fun storageEntry(
+        id: String,
+        name: String,
+        relativePath: String,
+        mimeType: String,
+        sizeBytes: Long,
+        modifiedAt: Long,
+        uri: String,
+        isDirectory: Boolean,
+        category: String,
+    ): Map<String, Any?> {
+        return mapOf(
+            "id" to id,
+            "name" to name,
+            "relativePath" to relativePath,
+            "mimeType" to mimeType,
+            "sizeBytes" to sizeBytes,
+            "modifiedAt" to modifiedAt,
+            "uri" to uri,
+            "isDirectory" to isDirectory,
+            "category" to category,
+        )
+    }
+
+    private fun guessMimeType(name: String): String = HingeMimeDetector.fromName(name)
+
+    private fun mimeTypeForFile(file: File): String {
+        val byName = HingeMimeDetector.fromName(file.name)
+        if (byName != "application/octet-stream" || !file.isFile) return byName
+        return try {
+            file.inputStream().use { input -> HingeMimeDetector.sniff(file.name, input) }
+        } catch (_: Exception) {
+            byName
+        }
+    }
+
+    private fun isRecentCacheNoise(
+        name: String,
+        relativePath: String,
+        mimeType: String,
+        sizeBytes: Long,
+    ): Boolean {
+        val fileName = name.trim().replace('\\', '/').substringAfterLast('/')
+        val lastDot = fileName.lastIndexOf('.')
+        val extensionless = lastDot <= 0 || lastDot == fileName.lastIndex
+        val smallerThanTenKiB = sizeBytes >= 0L && sizeBytes < 10L * 1024L
+        return extensionless || smallerThanTenKiB ||
+            recentCacheSuspicionScore(name, relativePath, mimeType, sizeBytes) >= 80
+    }
+
+    private fun recentCacheSuspicionScore(
+        name: String,
+        relativePath: String,
+        mimeType: String,
+        sizeBytes: Long,
+    ): Int {
+        val normalizedPath = relativePath
+            .replace('\\', '/')
+            .trim('/')
+            .lowercase(Locale.ROOT)
+        val originalFileName = name.trim().replace('\\', '/').substringAfterLast('/')
+        val fileName = originalFileName.lowercase(Locale.ROOT)
+        val segments = normalizedPath.split('/').filter { it.isNotBlank() }.toMutableList()
+        if (segments.lastOrNull() == fileName) segments.removeAt(segments.lastIndex)
+
+        val strongCachePath = segments.any {
+            it in RECENT_STRONG_CACHE_DIRECTORIES
+        }
+        val temporaryName = hasRecentTemporaryNameMarker(originalFileName)
+        val definitiveName = fileName == ".nomedia" || fileName == "cache" ||
+            fileName.startsWith(".thumbdata")
+        var score = 0
+        if (strongCachePath) score += 100
+        if (segments.any { it == "tmp" || it == "temp" }) score += 80
+        if (segments.any { it == "logs" || it == "log" }) score += 40
+        if (segments.any { it == "databases" || it == "shared_prefs" || it == "no_backup" }) score += 40
+        if (hasAdjacentPathSegments(segments, "android", RECENT_PRIVATE_DATA_DIRECTORIES)) {
+            score += 30
+        }
+        if (definitiveName) score += 100
+
+        if (fileName.startsWith("cache_") || fileName.startsWith("thumb_") ||
+            fileName.startsWith("thumbnail_") || fileName.startsWith("temp_") ||
+            fileName.startsWith("tmp_")) {
+            score += 70
+        }
+        if (fileName.contains("%3a%2f%2f") || fileName.contains("%3a%252f%252f") ||
+            fileName.contains("%2f%2f")) {
+            score += 70
+        }
+        if (RECENT_TEMPORARY_SUFFIXES.any { fileName.endsWith(it) }) {
+            score += 70
+        }
+        if (fileName.endsWith(".log") || fileName.endsWith(".trace")) score += 40
+        if (RECENT_SIDECAR_SUFFIXES.any { fileName.endsWith(it) }) {
+            score += 70
+        }
+        if (fileName.startsWith(".")) score += 30
+
+        val stem = fileName.substringBeforeLast('.', fileName)
+        if (isUuidLike(stem) || isUuidLike(fileName) || isHexLike(stem, 32, 32)) {
+            score += 25
+        }
+        if (isHexLike(stem, 16, 64)) score += 20
+        val dot = fileName.lastIndexOf('.')
+        if (dot <= 0 || dot == fileName.lastIndex) score += 10
+        if (sizeBytes >= 0L && sizeBytes < 4L * 1024L) score += 10
+
+        val normalizedMimeType = mimeType.trim().lowercase(Locale.ROOT)
+        val knownMimeType = normalizedMimeType.contains('/') &&
+            normalizedMimeType !in RECENT_GENERIC_MIME_TYPES
+        if (knownMimeType) score -= 20
+        if (segments.any { it in RECENT_USER_CONTENT_DIRECTORIES }) {
+            score -= 40
+        }
+
+        // Explicit temp markers, cache paths, and bookkeeping files are decisive;
+        // a MIME type or public parent folder must not cancel them.
+        if (strongCachePath || definitiveName || temporaryName) score = maxOf(score, 80)
+        return score
+    }
+
+    private fun hasRecentTemporaryNameMarker(fileName: String): Boolean {
+        var start = 0
+        while (start <= fileName.length - 4) {
+            val marker = fileName.indexOf("temp", startIndex = start, ignoreCase = true)
+            if (marker < 0) return false
+
+            val markerLength = if (fileName.regionMatches(marker, "temporary", 0, 9, ignoreCase = true)) 9 else 4
+            val end = marker + markerLength
+            val hasLeftBoundary = marker == 0 || !fileName[marker - 1].isLetterOrDigit() ||
+                fileName[marker - 1].isLowerCase() && fileName[marker].isUpperCase()
+            val hasRightBoundary = end == fileName.length || !fileName[end].isLetterOrDigit() ||
+                fileName[end].isDigit() ||
+                fileName[end - 1].isLowerCase() && fileName[end].isUpperCase()
+            if (hasLeftBoundary && hasRightBoundary) return true
+
+            start = marker + 4
+        }
+        return false
+    }
+
+    private fun hasAdjacentPathSegments(
+        segments: List<String>,
+        first: String,
+        following: Set<String>,
+    ): Boolean {
+        for (index in 0 until segments.lastIndex) {
+            if (segments[index] == first && segments[index + 1] in following) return true
+        }
+        return false
+    }
+
+    private fun isHexLike(value: String, minimumLength: Int, maximumLength: Int): Boolean {
+        if (value.length !in minimumLength..maximumLength) return false
+        return value.all { it in '0'..'9' || it in 'a'..'f' }
+    }
+
+    private fun isUuidLike(value: String): Boolean {
+        if (value.length != 36) return false
+        for (index in value.indices) {
+            if (index == 8 || index == 13 || index == 18 || index == 23) {
+                if (value[index] != '-') return false
+            } else if (value[index] !in '0'..'9' && value[index] !in 'a'..'f') {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun isDirectoryPath(vararg candidates: String): Boolean {
+        val root = Environment.getExternalStorageDirectory()
+        for (candidate in candidates) {
+            val value = candidate.trim()
+            if (value.isEmpty()) continue
+            val direct = File(value)
+            if (direct.isAbsolute && direct.isDirectory) return true
+            val relative = value.trimStart('/').replace('/', File.separatorChar)
+            if (File(root, relative).isDirectory) return true
+        }
+        return false
+    }
+
+    private fun readWorkspaceList(key: String): List<Map<String, Any?>> {
+        val raw = getSharedPreferences("workspace_data", MODE_PRIVATE)
+            .getString(key, "[]") ?: "[]"
+        val array = JSONArray(raw)
+        val result = ArrayList<Map<String, Any?>>()
+        for (index in 0 until array.length()) {
+            val objectValue = array.optJSONObject(index) ?: continue
+            result.add(jsonObjectToMap(objectValue))
+        }
+        return result
+    }
+
+    private fun saveWorkspaceItem(key: String, arguments: Any?, result: NativeResult) {
+        val item = arguments as? Map<*, *>
+        val id = item?.get("id")?.toString()
+        if (item == null || id.isNullOrBlank()) {
+            result.error("invalid_argument", "数据缺少 id", null)
+            return
+        }
+        val items = readWorkspaceList(key).toMutableList()
+        val normalized = item.entries.associate { (entryKey, value) -> entryKey.toString() to value }
+        val index = items.indexOfFirst { it["id"]?.toString() == id }
+        if (index >= 0) items[index] = normalized else items.add(normalized)
+        saveWorkspaceList(key, items)
+        result.success(true)
+    }
+
+    private fun deleteWorkspaceItem(key: String, arguments: Any?, result: NativeResult) {
+        val id = arguments?.toString().orEmpty()
+        val items = readWorkspaceList(key).filter { it["id"]?.toString() != id }
+        saveWorkspaceList(key, items)
+        result.success(true)
+    }
+
+    private fun saveWorkspaceList(key: String, items: List<Map<String, Any?>>) {
+        val array = JSONArray()
+        items.forEach { array.put(JSONObject(it)) }
+        getSharedPreferences("workspace_data", MODE_PRIVATE)
+            .edit()
+            .putString(key, array.toString())
+            .apply()
+    }
+
+    private fun jsonObjectToMap(value: JSONObject): Map<String, Any?> {
+        val map = HashMap<String, Any?>()
+        val keys = value.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val item = value.opt(key)
+            map[key] = if (item == JSONObject.NULL) null else item
+        }
+        return map
+    }
+
+    companion object {
+        private val RECENT_STRONG_CACHE_DIRECTORIES = setOf(
+            "cache", ".cache", "code_cache", "app_webview", ".thumbnails", "thumbnails",
+        )
+        private val RECENT_PRIVATE_DATA_DIRECTORIES = setOf("data", "obb")
+        private val RECENT_USER_CONTENT_DIRECTORIES = setOf(
+            "download", "downloads", "documents", "dcim", "pictures", "movies", "music",
+        )
+        private val RECENT_TEMPORARY_SUFFIXES = setOf(
+            ".tmp", ".temp", ".cache", ".part", ".crdownload", ".download",
+        )
+        private val RECENT_SIDECAR_SUFFIXES = setOf(".db-shm", ".db-wal", ".lock", ".lck")
+        private val RECENT_GENERIC_MIME_TYPES = setOf(
+            "application/octet-stream", "binary/octet-stream", "unknown/unknown",
+        )
+        private const val ACTION_OPEN_RECEIVED_DIRECTORY =
+            "com.hinge.office.OPEN_RECEIVED_DIRECTORY"
+        private const val ACTION_OPEN_RECEIVED_FILE =
+            HingeFileTransferNotifier.ACTION_OPEN_RECEIVED_FILE
+        private const val EXTRA_RECEIVED_FILE_PATH =
+            HingeFileTransferNotifier.EXTRA_RECEIVED_FILE_PATH
+        private const val EXTRA_RECEIVED_FILE_MIME =
+            HingeFileTransferNotifier.EXTRA_RECEIVED_FILE_MIME
+        private const val FILE_CHANNEL_ID = HingeFileTransferNotifier.CHANNEL_ID
+        private const val DEFAULT_APPS_PREFS = "default_apps"
+    }
+}

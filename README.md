@@ -1,11 +1,12 @@
 # Hinge
 
-Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，用于在手机与 Windows 电脑之间发现设备、建立会话、传输文件，并查看手机上的轻量工作区数据。
+Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，支持文件传输、双向远控，以及在电脑上查看手机工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- 最新发行版：[Hinge v2.2.0 更新说明与下载](https://github.com/Chengeeker/Hinge/releases/tag/v2.2.0)；Android `2.2.0+126`（arm64-v8a），Windows `2.2.0.0`。
+- GitHub 发行包：[Hinge v3.0.0 更新说明与下载](https://github.com/Chengeeker/Hinge/releases/tag/v3.0.0)；Android `3.0.0+188`（arm64-v8a），Windows `3.0.0.0`。
+- Android 使用 Kotlin / Jetpack Compose，构建产物为 `publish/Hinge.apk`。见[版本约定](docs/VERSIONING.md)。
 - 许可证：[MIT](LICENSE)
-- Windows 界面更新：[v2.0.2 更新日志](docs/CHANGELOG_v2.0.2.md)
+- 本版完整变更：[v3.0.0 中文更新日志](docs/CHANGELOG_v3.0.0.md)
 
 ## 这是什么
 
@@ -15,7 +16,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 - LAN-first：局域网直连优先，不把用户数据上传到项目服务器；
 - 可选 Cloud Relay：只有用户主动配置并开启自己的 Worker 后，LAN 不可用时才上传加密文件；Hinge 不托管 Relay，也不支持互联网首次配对；
-- 原生体验：Windows 桌面端与系统文件、托盘和资源管理器集成，媒体文件交给 Windows 默认关联应用打开；Android 使用 Flutter 界面和 Android 原生桥接；
+- 原生体验：Windows 桌面端与系统文件、托盘和资源管理器集成，媒体文件交给 Windows 默认关联应用打开；Android 使用 Kotlin、Jetpack Compose 和 Android 原生服务；
 - 事实优先：Mock、回环测试和真实手机验收分开记录，不把自动化测试当作所有机型都已验证。
 
 ## 当前版本包含的功能
@@ -32,7 +33,10 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 ### Android
 
-手机端“设置 → 手机服务 → 投屏与远控”统一提供两个方向的入口：手机控制电脑（桌面、触控板和游戏模式），以及电脑控制手机（系统无线调试设置）。需要 Android 11 及以上，启用无线调试并在 Windows 配对后，由电脑发起投屏或远控。可在电脑停止，或在手机系统中关闭无线调试、撤销电脑授权。
+手机端“设置 → 手机服务 → 投屏与远控”提供两个方向的入口：
+
+- **手机控制电脑**：在同一局域网连接 Windows 后，可查看桌面，使用鼠标指针、触控手势、键盘、触控板和按键映射。电脑需开启对应的共享和控制权限，首次查看桌面需核对身份码。
+- **电脑控制手机**：在 Android 11 及以上开启无线调试并与 Windows 配对，由电脑发起投屏或远控。可在电脑停止，也可在手机系统中关闭无线调试或撤销电脑授权。
 
 - 首页、工作区、设置三段式底栏；
 - 笔记、待办、日历和相册入口；
@@ -83,8 +87,8 @@ Android 首页、工作区和设置使用卡片底色与留白分组，去掉功
 
 ## 当前明确不包含的能力
 
-- 无需 ADB 的原生手机投屏、Android 控制 Windows、WebRTC 公网远控仍未交付；当前投屏使用随包组件与系统无线调试；
-- 通知回复、Hinge 自有原生屏幕编码/解码和 OCR 仍属于后续原生能力接入范围；
+- 双向远控目前面向局域网。手机向电脑投屏依赖内置组件及系统无线调试，Cloud Relay 用于异步文件中转；
+- 通知回复和 OCR 仍属于后续原生能力接入范围；
 - Android 厂商的省电、锁屏和后台回收策略无法由应用完全绕过，需要用户按系统引导放行；
 - 不保证普通第三方 Android 应用在所有厂商设备上锁屏静置数小时仍保持同一条 TCP；BLE Companion 自动唤醒也受 Windows 蓝牙适配器、Android 系统关联和厂商后台策略影响；Cloud Relay 也不保证 Android 被系统完全停止时立即下载；
 - 大型微信/QQ 媒体库、文档目录、多网卡、弱网和不同厂商后台策略仍需要更多真实设备验收。
@@ -119,28 +123,16 @@ Hinge 不会修改 `EnableLUA`，也不要求用户把它改成 `1`。保持系�
 
 ### Android
 
-```powershell
-cd android
-flutter pub get
-flutter analyze --no-pub
-flutter test --no-pub
-flutter run
-```
-
-发布 APK 需要本机签名库，不要把签名库、密码或临时转换文件提交到仓库：
-
-第一次在本机复制 `android/android/key.properties.example` 为
-`android/android/key.properties`，填写本机签名库信息即可。这个文件已被
-`.gitignore` 忽略，之后构建不再弹出签名输入窗口；其他机器只需要各自配置
-自己的签名文件，不要复制或提交他人的签名信息。
+需要 JDK 17 和 Android SDK 37.2。用 Android Studio 打开 `android-compose/` 可进行开发，或在项目根目录运行：
 
 ```powershell
-Copy-Item android/android/key.properties.example android/android/key.properties
-# 编辑 android/android/key.properties，填写 storePassword、keyAlias、keyPassword
+.\android-compose\gradlew.bat -p android-compose :app:testDebugUnitTest :app:lintRelease
 .\scripts\build_release_android.ps1
 ```
 
-脚本会读取被 Git 忽略的本机 `key.properties`，并将签名后的 ARM64 APK 固定输出为 `publish/Hinge.apk`；`android/build/app/outputs/flutter-apk/app-release.apk` 只是中间产物，不要直接分发。BKS 会在构建期间转换为临时 PKCS12，完成后立即清理。缺少签名输入时脚本会停止，不会用调试签名覆盖发布包。APK 签名后不要再次手工压缩或重打包；Windows EXE/ZIP 的压缩由 Windows 发布脚本自动完成。签名库、路径、密码和临时转换文件不会写入 README 或 Git。
+首次构建时，在本机将 `android-compose/key.properties.example` 复制为 `android-compose/key.properties`，填入自己的签名配置。签名库、口令及临时转换文件应保存在本机。
+
+发布脚本运行 Compose 的 JVM 测试、Release Lint 和构建，核验包名、版本、arm64-v8a 架构、原签名及对齐后，再更新 `publish/Hinge.apk`。`android-compose/app/build/outputs/apk/release/` 内的 Gradle 产物用于构建过程。脚本会在签名完成后清理临时 PKCS12 文件。
 
 ### Windows
 
@@ -157,7 +149,7 @@ dotnet test windows/Hinge.sln --configuration Release
 ## 仓库结构
 
 ```text
-android/                 Flutter Android 客户端与 Android 原生桥
+android-compose/         Kotlin / Jetpack Compose Android 客户端和原生服务
 windows/                 Windows 桌面客户端、核心层、平台层和测试
 protocol/                跨端协议和专题说明
 installer/               EXE 安装器源码
@@ -166,7 +158,6 @@ scripts/                 构建、防火墙和卸载脚本
 
 ## 文档入口
 
-- 开发文档：本机统一入口为 `D:\App\开发文档\Hinge.md`，不随仓库发布；
 - [第三方许可证登记](THIRD_PARTY_LICENSES.md)：实际随项目发布或参与构建的依赖清单；
 - [协议说明](protocol/protocol.md)：跨端帧和传输约定；
 - [Cloud Relay 协议说明](protocol/cloud-relay.md)：独立 Worker/R2 API、端到端加密格式和信任边界；
@@ -182,7 +173,7 @@ scripts/                 构建、防火墙和卸载脚本
 
 ## 开源组件与合规说明
 
-Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `android/pubspec.lock`、各 `.csproj` 和构建工具锁定结果为准。间接依赖由 Flutter/Dart、NuGet 和 Android 构建工具解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
+Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `android-compose/app/build.gradle.kts`、各 `.csproj` 和构建工具解析结果为准。间接依赖由 Gradle 与 NuGet解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
 Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron)（MIT）公开的 `NotifyIconHost` 消息分发实现，用于识别 `Electron_NotifyIconHostWindow`、通知图标 ID 和托盘单击回调。Hinge 没有复制或打包 Electron 源码，也没有新增 Electron 运行时依赖；详细边界见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
@@ -192,18 +183,16 @@ Windows 11 第一层资源管理器菜单的 COM 激活框架改编自 Microsoft
 
 | 组件 | 平台与版本 | 许可证 | 在 Hinge 中的用途 |
 | --- | --- | --- | --- |
-| [Flutter SDK](https://github.com/flutter/flutter) | Android / 构建环境 | BSD-3-Clause | Flutter UI、国际化和应用运行框架 |
-| [`crypto`](https://pub.dev/packages/crypto) | Android / Dart `3.0.7` | BSD-3-Clause | SHA-256、HMAC 和文件完整性校验 |
-| [`dynamic_color`](https://pub.dev/packages/dynamic_color) | Android / Dart `1.9.0` | Apache-2.0 | 接入 Android 12+ Monet 动态配色 |
-| [`material_symbols_icons`](https://pub.dev/packages/material_symbols_icons) | Android / Dart `4.2960.0` | Apache-2.0 | Material Symbols 图标 |
-| [`flutter_svg`](https://pub.dev/packages/flutter_svg) | Android / Dart `2.3.0` | MIT | 读取本地品牌 SVG 资源 |
-| [`cupertino_icons`](https://pub.dev/packages/cupertino_icons) | Android / Dart `1.0.9` | MIT | 少量兼容性图标资源 |
+| [Jetpack Compose](https://developer.android.com/jetpack/compose) / AndroidX | Android / Compose BOM `2026.09.00` | Apache-2.0 | 原生界面、Material 3 与系统集成 |
+| [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Android `1.10.2` | Apache-2.0 | 异步任务 |
+| [Material Icons / Symbols](https://github.com/google/material-design-icons) | Android / 随包字体 | Apache-2.0 | 界面图标 |
+| [liquid_glass_widgets 着色器](android-compose/tools/reference/glass-upstream/LICENSE) | Android / 上游 `1.13.0` 衍生资产 | MIT | 可选液态玻璃的着色器 |
 | [Microsoft.WindowsAppSDK](https://github.com/microsoft/WindowsAppSDK) | Windows / NuGet `2.4.0` | MIT | Windows 桌面客户端界面、窗口和系统集成基础能力 |
 | [.NET Runtime / BCL](https://github.com/dotnet/runtime) | Windows / .NET `8` | MIT | Socket、压缩、加密、文件和系统集成基础能力 |
 
 ### 仅用于开发和测试的组件
 
-Windows 测试使用 [xUnit](https://github.com/xunit/xunit) `2.5.3`、[Microsoft.NET.Test.Sdk](https://github.com/microsoft/vstest) `17.8.0`、[coverlet.collector](https://github.com/coverlet-coverage/coverlet) `6.0.0` 和 `xunit.runner.visualstudio` `2.5.3`；Android 测试与代码检查使用 Flutter SDK 内的 `flutter_test` 和 `flutter_lints`。这些组件不会被打包进最终用户运行时。
+Windows 测试使用 [xUnit](https://github.com/xunit/xunit) `2.5.3`、[Microsoft.NET.Test.Sdk](https://github.com/microsoft/vstest) `17.8.0`、[coverlet.collector](https://github.com/coverlet-coverage/coverlet) `6.0.0` 和 `xunit.runner.visualstudio` `2.5.3`；Android 使用 JUnit 和 Android Lint。这些组件不会被打包进最终用户运行时。
 
 ### 依赖选型说明
 

@@ -31,7 +31,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="产品信息" Style="{StaticResource HingeM3SectionHeaderStyle}" />
-                <TextBlock Text="Windows：Material 3　·　Android：Flutter + Material 3" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                <TextBlock Text="Windows：Material 3　·　Android：Jetpack Compose + Material 3" Style="{StaticResource HingeM3BodyVariantStyle}" />
                 <TextBlock Text="界面字体：HarmonyOS Sans SC · © 2021 Huawei Device Co., Ltd." Style="{StaticResource HingeM3BodyVariantStyle}" />
             </StackPanel>
 

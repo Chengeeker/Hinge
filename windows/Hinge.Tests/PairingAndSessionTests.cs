@@ -120,8 +120,10 @@ public class PairingAndSessionTests
         Assert.False(PairingManager.VerifyProof(code, "changed", proof));
     }
 
-    [Fact]
-    public async Task SessionManager_LocalPairingCode_AllowsCorrectRemoteCode()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionManager_LocalPairingCode_AllowsCorrectRemoteCode(bool manualConnect)
     {
         int port;
         using (var probe = new TcpListener(IPAddress.Loopback, 0))
@@ -152,7 +154,8 @@ public class PairingAndSessionTests
             using var outgoing = await client.ConnectToPeerAsync(
                 IPAddress.Loopback,
                 port,
-                remotePairingCode: "654321");
+                remotePairingCode: "654321",
+                manualConnect: manualConnect);
 
             var deadline = DateTime.UtcNow.AddSeconds(3);
             while (DateTime.UtcNow < deadline &&
@@ -166,10 +169,48 @@ public class PairingAndSessionTests
             Assert.Equal(SessionState.Connected, incoming?.State);
             Assert.True(outgoing.IsPairingAuthenticated);
             Assert.True(incoming?.IsPairingAuthenticated);
+            Assert.Equal(manualConnect, incoming?.PeerInfo?.ManualConnect);
+            Assert.False(outgoing.PeerInfo?.ManualConnect);
         }
         finally
         {
             if (File.Exists(storePath)) File.Delete(storePath);
+        }
+    }
+
+    [Fact]
+    public async Task ChangingPairingCodeRevokesOldSessionsAndRequiresNewProof()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"pairing_rotation_{Guid.NewGuid()}.json");
+        var store = new TrustStore(path);
+        using var server = new SessionManager(new DeviceIdentity { DeviceId = "rotation-host" }, store, 0,
+            localPairingCode: "123456");
+        using var client = new SessionManager(new DeviceIdentity { DeviceId = "rotation-peer" }, store, 0);
+        server.StartListener();
+
+        using var first = await client.ConnectToPeerAsync(IPAddress.Loopback, server.ListeningPort, "123456");
+        await WaitFor(() => server.ConnectionForDevice("rotation-peer") != null);
+        var original = server.ConnectionForDevice("rotation-peer")!;
+        server.LocalPairingCode = "123456";
+        Assert.Same(original, server.ConnectionForDevice("rotation-peer"));
+
+        using var pending = new TcpClient();
+        await pending.ConnectAsync(IPAddress.Loopback, server.ListeningPort);
+        await WaitFor(() => server.ActiveConnections.Count == 2);
+
+        server.LocalPairingCode = "654321";
+        Assert.Empty(server.ActiveConnections);
+        Assert.Equal(SessionState.Disconnected, original.State);
+        using var stale = await client.ConnectToPeerAsync(IPAddress.Loopback, server.ListeningPort, "123456");
+        await WaitFor(() => server.ActiveConnections.Any(connection => connection.PairingError != null));
+        Assert.Null(server.ConnectionForDevice("rotation-peer"));
+        using var fresh = await client.ConnectToPeerAsync(IPAddress.Loopback, server.ListeningPort, "654321");
+        await WaitFor(() => server.ConnectionForDevice("rotation-peer") != null);
+
+        static async Task WaitFor(Func<bool> predicate)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            while (!predicate()) await Task.Delay(15, timeout.Token);
         }
     }
 

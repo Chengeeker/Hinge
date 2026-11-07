@@ -517,8 +517,16 @@ public sealed partial class MainWindow : Window
                 _appWindow?.Show();
                 Activate();
             });
-            _trayManager.PairingRequested += (_, _) =>
-                DispatcherQueue.TryEnqueue(() => _ = StartBlePairingBeaconAsync());
+            _trayManager.TransferRequested += (_, _) => DispatcherQueue.TryEnqueue(async () =>
+            {
+                _appWindow?.Show();
+                Activate();
+                try { await PickAndSendFileAsync(); }
+                catch (Exception exception)
+                {
+                    await ShowDialogAsync("无法打开文件选择器", exception.Message, false);
+                }
+            });
             _trayManager.ExitRequested += (_, _) => DispatcherQueue.TryEnqueue(() =>
             {
                 App.LogLifecycle("tray-exit-requested");
@@ -2990,20 +2998,52 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenRemotePhotoWithDefaultAppAsync(RemotePhotoItem photo)
     {
-        var extension = Path.GetExtension(photo.Name).TrimStart('.');
+        var extension = Path.GetExtension(photo.Name).ToLowerInvariant();
+        if (extension is not (".jpg" or ".jpeg" or ".jpe" or ".jfif" or ".png" or ".webp" or ".gif" or
+            ".heic" or ".heif" or ".avif" or ".bmp" or ".dib" or ".tif" or ".tiff" or ".ico" or ".dng" or ".jxl" or ".jxr" or ".wdp"))
+        {
+            throw new InvalidOperationException("此照片的文件扩展名无法用于 Windows 图片预览。");
+        }
+
         var entry = new RemoteFileEntry
         {
             Id = photo.Id,
-            Name = photo.Name,
+            Name = Path.GetFileName(photo.Name),
             Uri = photo.Uri,
             SizeBytes = photo.SizeBytes,
             ModifiedAt = photo.TakenAt,
-            MimeType = string.IsNullOrWhiteSpace(extension)
-                ? "image/jpeg"
-                : $"image/{extension}"
+            MimeType = extension is ".jpg" or ".jpeg" or ".jpe" or ".jfif" ? "image/jpeg" : $"image/{extension[1..]}"
         };
-        var receivedPath = await ReceiveRemotePreviewFileAsync(entry, "正在读取图片预览…");
-        await LaunchMediaFileAsync(entry, receivedPath, "图片");
+        var connection = GetConnectedConnection();
+        if (connection?.IsSessionReady != true || string.IsNullOrEmpty(connection.RemoteDeviceId))
+            throw new InvalidOperationException("设备会话已断开，请重新连接手机。");
+        entry.SourceDeviceId = connection.RemoteDeviceId;
+
+        var receivedPath = await ReceiveRemotePreviewFileAsync(entry, "正在读取图片预览…", readPhotoDirectly: true);
+        if (!string.Equals(Path.GetExtension(receivedPath), extension, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("收到的文件类型与所选照片不一致。");
+
+        App.LogLifecycle("album-photo-launch-begin");
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(receivedPath);
+            if (await Launcher.LaunchFileAsync(file))
+            {
+                App.LogLifecycle("album-photo-launch-complete method=launcher");
+                return;
+            }
+        }
+        catch (Exception exception)
+        {
+            App.LogLifecycle($"album-photo-launch-fallback type={exception.GetType().Name}");
+        }
+
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = receivedPath,
+            UseShellExecute = true
+        });
+        App.LogLifecycle("album-photo-launch-complete method=shell");
     }
 
     private void ConfigureFeaturePage(FeaturePage page)
@@ -4830,15 +4870,16 @@ public sealed partial class MainWindow : Window
         string? remotePairingCode = null;
         if (device.PairingRequired)
         {
-            _remotePairingCodes.TryGetValue(device.DeviceId, out remotePairingCode);
-            if (string.IsNullOrWhiteSpace(remotePairingCode))
+            if (automatic)
             {
-                if (automatic)
+                if (!_remotePairingCodes.TryGetValue(device.DeviceId, out remotePairingCode))
                 {
                     StatusText.Text = $"{device.Name} 需要配对码，请手动连接并输入后再恢复历史连接。";
                     return;
                 }
-
+            }
+            else
+            {
                 remotePairingCode = await PromptPairingCodeAsync(device.Name);
                 if (string.IsNullOrWhiteSpace(remotePairingCode)) return;
                 _remotePairingCodes[device.DeviceId] = remotePairingCode;
@@ -4935,7 +4976,8 @@ public sealed partial class MainWindow : Window
                                 address,
                                 port,
                                 remotePairingCode,
-                                cts.Token);
+                                cts.Token,
+                                manualConnect: !automatic);
                             if (tcs.TrySetResult(direct))
                             {
                                 cts.Cancel();
@@ -5318,7 +5360,7 @@ public sealed partial class MainWindow : Window
         try
         {
             HeaderStatusText.Text = "连接中...";
-            var connection = await _sessionManager.ConnectToPeerAsync(address);
+            var connection = await _sessionManager.ConnectToPeerAsync(address, manualConnect: true);
             AttachConnection(connection);
             var device = FindDeviceForConnection(connection);
             HeaderStatusText.Text = "正在确认设备身份";
@@ -5412,8 +5454,12 @@ public sealed partial class MainWindow : Window
         // automatic reconnect cannot bypass the request-level gate.
         if (IsHistoricalReconnectSuppressed(peer.DeviceId))
         {
-            connection.Dispose();
-            return;
+            if (connection.IsOutbound || !peer.ManualConnect)
+            {
+                connection.Dispose();
+                return;
+            }
+            _manualDisconnectSuppressedDeviceIds.TryRemove(peer.DeviceId, out _);
         }
 
         // 用户主动建立的局域网连接即视为授权。保留 TrustStore 作为底层
@@ -6254,7 +6300,7 @@ public sealed partial class MainWindow : Window
             {
                 Width = 124,
                 Height = 86,
-                CornerRadius = new CornerRadius(8),
+                CornerRadius = ThemeBrushes.CornerRadius,
                 Background = ThemeBrushes.MutedSurface(PageRoot),
                 Child = thumbnail
             };
@@ -6275,7 +6321,7 @@ public sealed partial class MainWindow : Window
                 {
                     Width = 56,
                     Height = 56,
-                    CornerRadius = new CornerRadius(8),
+                    CornerRadius = ThemeBrushes.CornerRadius,
                     // 文件图标使用 Windows 的中性图标底，不把音频文件渲染成
                     // 一块突兀的蓝色卡片；文件类型仍由 glyph 区分。
                     Background = ThemeBrushes.MutedSurface(PageRoot),
@@ -6530,7 +6576,8 @@ public sealed partial class MainWindow : Window
 
     private async Task<string> ReceiveRemotePreviewFileAsync(
         RemoteFileEntry entry,
-        string progressText)
+        string progressText,
+        bool readPhotoDirectly = false)
     {
         var location = _previewCache.GetLocation(new RemoteFileEntry
         {
@@ -6545,6 +6592,33 @@ public sealed partial class MainWindow : Window
         _previewCache.Prepare(location);
         try
         {
+            // Leave room for base64 and the JSON envelope on legacy 16 MiB sessions.
+            if (readPhotoDirectly && entry.SizeBytes is > 0 and <= 8 * 1024 * 1024 &&
+                GetFileConnection(entry) is { IsSessionReady: true } connection)
+            {
+                byte[]? bytes = null;
+                App.LogLifecycle("album-photo-read-begin method=preview");
+                try
+                {
+                    bytes = await _workspaceRemoteClient.LoadPhotoPreviewBytesAsync(connection, entry.Uri);
+                }
+                catch (Exception exception)
+                {
+                    App.LogLifecycle($"album-photo-read-fallback type={exception.GetType().Name}");
+                }
+
+                if (bytes?.LongLength == entry.SizeBytes)
+                {
+                    var stagingPath = location.FilePath + "." + Guid.NewGuid().ToString("N") + ".part";
+                    await File.WriteAllBytesAsync(stagingPath, bytes);
+                    File.Move(stagingPath, location.FilePath, overwrite: true);
+                    _previewCache.Prune(location.Directory);
+                    App.LogLifecycle("album-photo-read-complete method=preview");
+                    return location.FilePath;
+                }
+            }
+
+            if (readPhotoDirectly) App.LogLifecycle("album-photo-read-begin method=transfer");
             var receivedPath = await ReceiveRemoteFileAsync(
                 entry,
                 progressText,
@@ -7276,27 +7350,39 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        var changed = _localPairingCode != code;
         _localPairingCode = code;
         SavePairingCode(code);
-        _sessionManager.LocalPairingCode = code;
         _discoveryService.PairingRequired = true;
+        ApplyLocalPairingCode(code, changed);
         _transferSettingsPage.PairingCode.Text = code;
         _transferSettingsPage.PairingCodeStatus.Text = "已启用本机配对码；其他设备连接到本机时需要验证。";
-        TransferSettingsStatusText.Text = "本机配对码已保存；新连接会要求输入配对码。";
+        TransferSettingsStatusText.Text = changed ? "配对码已更新，原有局域网连接已断开。请使用新配对码重新连接。" : "配对码未改变。";
     }
 
     private void ClearPairingCode_Click(object sender, RoutedEventArgs e)
     {
+        var changed = _localPairingCode.Length > 0;
         _localPairingCode = string.Empty;
         SavePairingCode(null);
-        _sessionManager.LocalPairingCode = string.Empty;
         _discoveryService.PairingRequired = false;
+        ApplyLocalPairingCode(string.Empty, changed);
         if (_transferSettingsPage != null)
         {
             _transferSettingsPage.PairingCode.Text = string.Empty;
             _transferSettingsPage.PairingCodeStatus.Text = "未启用本机配对码";
         }
-        TransferSettingsStatusText.Text = "本机配对码已关闭。";
+        TransferSettingsStatusText.Text = changed ? "配对码已清除，原有局域网连接已断开。" : "未启用本机配对码。";
+    }
+
+    private void ApplyLocalPairingCode(string code, bool changed)
+    {
+        if (!changed) return;
+        _connectionAttemptGeneration++;
+        CancelHistoricalReconnect();
+        _sessionManager.LocalPairingCode = code;
+        _desktopMediaServer?.DisconnectViewer();
+        _ = _discoveryService.BroadcastOnceAsync();
     }
 
     private void MinimizeToTray_Toggled(object sender, RoutedEventArgs e)
@@ -8540,7 +8626,7 @@ public sealed partial class MainWindow : Window
         dialog.Foreground = ThemeBrushes.Primary(dialog);
         dialog.BorderBrush = ThemeBrushes.Border(dialog);
         dialog.BorderThickness = new Thickness(1);
-        dialog.CornerRadius = (CornerRadius)resources["HingeM3ShapeExtraLarge"];
+        dialog.CornerRadius = ThemeBrushes.CornerRadius;
         dialog.PrimaryButtonStyle = primaryStyle;
         dialog.CloseButtonStyle = (Style)resources["HingeM3TextButtonStyle"];
         dialog.TitleTemplate = (DataTemplate)resources["HingeM3DialogTitleTemplate"];

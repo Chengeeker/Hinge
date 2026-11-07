@@ -9,7 +9,7 @@
             <TextBlock Text="设置" Style="{StaticResource HingePageTitleStyle}" />
 
             <StackPanel Spacing="12">
-                <TextBlock Text="外观与应用" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="4,0,0,0" />
+                <TextBlock Text="外观与应用" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="16,0,0,0" />
                 <Border Style="{StaticResource HingeCardStyle}" Padding="0">
                     <StackPanel>
                         <local:HandCursorButton
@@ -19,7 +19,7 @@
                             Style="{StaticResource HingeM3SettingsRowButtonStyle}"
                             ToolTipService.ToolTip="打开个性化设置"
                             AutomationProperties.Name="个性化设置">
-                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="12,8,16,8" ColumnSpacing="12" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="24" />
                                     <ColumnDefinition Width="*" />
@@ -33,7 +33,6 @@
                                 <SymbolIcon Grid.Column="2" Symbol="Forward" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" VerticalAlignment="Center" />
                             </Grid>
                         </local:HandCursorButton>
-                        <Border Height="0.5" Margin="20,0" Background="{ThemeResource HingeM3DividerBrush}" />
                         <local:HandCursorButton
                             x:Name="WindowsSettingsButton"
                             HorizontalAlignment="Stretch"
@@ -41,7 +40,7 @@
                             Style="{StaticResource HingeM3SettingsRowButtonStyle}"
                             ToolTipService.ToolTip="打开 Windows 设置"
                             AutomationProperties.Name="Windows 设置">
-                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="12,8,16,8" ColumnSpacing="12" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="24" />
                                     <ColumnDefinition Width="*" />
@@ -60,11 +59,11 @@
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="设备与服务" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="4,0,0,0" />
+                <TextBlock Text="设备与服务" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="16,0,0,0" />
                 <Border Style="{StaticResource HingeCardStyle}" Padding="0">
                     <StackPanel>
                         <local:HandCursorButton x:Name="ScreenControlSettingsButton" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="SettingsPage.ScreenControlSettingsButton" AutomationProperties.Name="投屏与远控" Style="{StaticResource HingeM3SettingsRowButtonStyle}">
-                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="12,8,16,8" ColumnSpacing="12" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <Viewbox Width="24" Height="24" VerticalAlignment="Center"><SymbolIcon Symbol="Video" Foreground="{ThemeResource HingeM3PrimaryBrush}" /></Viewbox>
                                 <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
@@ -74,7 +73,6 @@
                                 <SymbolIcon Grid.Column="2" Symbol="Forward" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" VerticalAlignment="Center" />
                             </Grid>
                         </local:HandCursorButton>
-                        <Border Height="0.5" Margin="20,0" Background="{ThemeResource HingeM3DividerBrush}" />
                         <local:HandCursorButton
                             x:Name="TransferSettingsButton"
                             HorizontalAlignment="Stretch"
@@ -82,7 +80,7 @@
                             Style="{StaticResource HingeM3SettingsRowButtonStyle}"
                             ToolTipService.ToolTip="打开传输与连接设置"
                             AutomationProperties.Name="传输与连接设置">
-                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="12,8,16,8" ColumnSpacing="12" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="24" />
                                     <ColumnDefinition Width="*" />
@@ -96,7 +94,6 @@
                                 <SymbolIcon Grid.Column="2" Symbol="Forward" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" VerticalAlignment="Center" />
                             </Grid>
                         </local:HandCursorButton>
-                        <Border Height="0.5" Margin="20,0" Background="{ThemeResource HingeM3DividerBrush}" />
                         <local:HandCursorButton
                             x:Name="CloudRelaySettingsButton"
                             HorizontalAlignment="Stretch"
@@ -104,7 +101,7 @@
                             Style="{StaticResource HingeM3SettingsRowButtonStyle}"
                             ToolTipService.ToolTip="打开 Cloud Relay 设置"
                             AutomationProperties.Name="Cloud Relay 设置">
-                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="12,8,16,8" ColumnSpacing="12" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="24" />
                                     <ColumnDefinition Width="*" />
@@ -118,14 +115,13 @@
                                 <SymbolIcon Grid.Column="2" Symbol="Forward" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" VerticalAlignment="Center" />
                             </Grid>
                         </local:HandCursorButton>
-                        <Border Height="0.5" Margin="20,0" Background="{ThemeResource HingeM3DividerBrush}" />
                         <local:HandCursorButton
                             x:Name="WebDavSettingsButton"
                             HorizontalAlignment="Stretch"
                             AutomationProperties.AutomationId="SettingsPage.WebDavSettingsButton"
                             Style="{StaticResource HingeM3SettingsRowButtonStyle}"
                             AutomationProperties.Name="WebDAV 设置">
-                            <Grid Padding="16,12" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                            <Grid Padding="12,8,16,8" ColumnSpacing="12" HorizontalAlignment="Stretch">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="24" />
                                     <ColumnDefinition Width="*" />

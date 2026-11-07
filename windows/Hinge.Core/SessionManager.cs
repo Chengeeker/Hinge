@@ -25,7 +25,8 @@ public sealed record SessionPeerInfo(
     string Model = "",
     IReadOnlyList<string>? Capabilities = null,
     bool PairingRequired = false,
-    int MaxPayloadSize = ProtocolFrame.LegacyMaxPayloadSize);
+    int MaxPayloadSize = ProtocolFrame.LegacyMaxPayloadSize,
+    bool ManualConnect = false);
 
 public class SessionMessageEventArgs : EventArgs
 {
@@ -53,6 +54,7 @@ public class SessionConnection : IDisposable
     private readonly DeviceIdentity _localIdentity;
     private readonly string _localPairingCode;
     private readonly string _remotePairingCode;
+    private readonly bool _manualConnect;
     private readonly string _localPairingChallenge = PairingManager.CreateChallenge();
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -86,11 +88,13 @@ public class SessionConnection : IDisposable
         DeviceIdentity localIdentity,
         bool isOutbound = false,
         string? localPairingCode = null,
-        string? remotePairingCode = null)
+        string? remotePairingCode = null,
+        bool manualConnect = false)
     {
         _client = client;
         _localIdentity = localIdentity;
         IsOutbound = isOutbound;
+        _manualConnect = isOutbound && manualConnect;
         _localPairingCode = PairingManager.NormalizePairingCode(localPairingCode);
         _remotePairingCode = PairingManager.NormalizePairingCode(remotePairingCode);
         try
@@ -229,6 +233,7 @@ public class SessionConnection : IDisposable
             ProtocolCompression.StreamingFileHashCapability
         },
         maxPayloadSize = ProtocolFrame.MaxPayloadSize,
+        manualConnect = _manualConnect,
         pairingRequired = _localPairingCode.Length > 0,
         pairingChallenge = _localPairingChallenge,
         pairingProof = string.Empty
@@ -252,6 +257,7 @@ public class SessionConnection : IDisposable
                 ProtocolCompression.StreamingFileHashCapability
             },
             maxPayloadSize = ProtocolFrame.MaxPayloadSize,
+            manualConnect = _manualConnect,
             pairingRequired = _localPairingCode.Length > 0,
             pairingChallenge = _localPairingChallenge,
             pairingProof = proof
@@ -391,7 +397,8 @@ public class SessionConnection : IDisposable
                 root.TryGetProperty("model", out var modelValue) ? modelValue.GetString() ?? string.Empty : string.Empty,
                 ReadCapabilities(root),
                 pairingRequired,
-                ReadMaxPayloadSize(root));
+                ReadMaxPayloadSize(root),
+                root.TryGetProperty("manualConnect", out var manual) && manual.ValueKind == JsonValueKind.True);
 
             _peerPairingRequired = pairingRequired;
             if (!string.IsNullOrWhiteSpace(pairingChallenge))
@@ -629,8 +636,20 @@ public class SessionManager : IDisposable
 
     public string LocalPairingCode
     {
-        get => _localPairingCode;
-        set => _localPairingCode = PairingManager.NormalizePairingCode(value);
+        get { lock (_lock) return _localPairingCode; }
+        set
+        {
+            var code = PairingManager.NormalizePairingCode(value);
+            SessionConnection[] previous;
+            lock (_lock)
+            {
+                if (_localPairingCode == code) return;
+                _localPairingCode = code;
+                previous = _connections.ToArray();
+                _connections.Clear();
+            }
+            foreach (var connection in previous) connection.Dispose();
+        }
     }
 
     public void StartListener()
@@ -685,7 +704,8 @@ public class SessionManager : IDisposable
         IPAddress remoteIp,
         int port = Constants.SessionTcpPort,
         string? remotePairingCode = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool manualConnect = false)
     {
         var matchingIp = NetworkInterfaceHelper.FindMatchingLocalPhysicalAddress(remoteIp);
         if (matchingIp != null)
@@ -695,7 +715,7 @@ public class SessionManager : IDisposable
             {
                 boundClient.Client.Bind(new IPEndPoint(matchingIp, 0));
                 await ConnectWithTimeoutAsync(boundClient, remoteIp, port, cancellationToken);
-                return RegisterConnection(boundClient, isOutbound: true, remotePairingCode: remotePairingCode);
+                return RegisterConnection(boundClient, isOutbound: true, remotePairingCode: remotePairingCode, manualConnect);
             }
             catch
             {
@@ -708,7 +728,7 @@ public class SessionManager : IDisposable
         try
         {
             await ConnectWithTimeoutAsync(client, remoteIp, port, cancellationToken);
-            return RegisterConnection(client, isOutbound: true, remotePairingCode: remotePairingCode);
+            return RegisterConnection(client, isOutbound: true, remotePairingCode: remotePairingCode, manualConnect);
         }
         catch
         {
@@ -762,25 +782,25 @@ public class SessionManager : IDisposable
     private SessionConnection RegisterConnection(
         TcpClient client,
         bool isOutbound,
-        string? remotePairingCode)
+        string? remotePairingCode,
+        bool manualConnect = false)
     {
-        var connection = new SessionConnection(
-            client,
-            _localIdentity,
-            isOutbound,
-            _localPairingCode,
-            remotePairingCode);
-        lock (_lock) _connections.Add(connection);
-
-        connection.FrameReceived += (_, frame) =>
-            MessageReceived?.Invoke(this, new SessionMessageEventArgs(frame, connection));
-        connection.PeerIdentified += (_, _) => RemoveDuplicateConnections(connection);
-        connection.StateChanged += (_, state) =>
+        SessionConnection connection;
+        lock (_lock)
         {
-            if (state != SessionState.Disconnected) return;
-            lock (_lock) _connections.Remove(connection);
-            connection.Dispose();
-        };
+            connection = new SessionConnection(client, _localIdentity, isOutbound,
+                _localPairingCode, remotePairingCode, manualConnect);
+            connection.FrameReceived += (_, frame) =>
+                MessageReceived?.Invoke(this, new SessionMessageEventArgs(frame, connection));
+            connection.PeerIdentified += (_, _) => RemoveDuplicateConnections(connection);
+            connection.StateChanged += (_, state) =>
+            {
+                if (state != SessionState.Disconnected) return;
+                lock (_lock) _connections.Remove(connection);
+                connection.Dispose();
+            };
+            _connections.Add(connection);
+        }
 
         if (connection.PeerInfo != null) RemoveDuplicateConnections(connection);
 

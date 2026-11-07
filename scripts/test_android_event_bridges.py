@@ -3,9 +3,10 @@ import subprocess
 
 repo = pathlib.Path(__file__).resolve().parents[1]
 cache = pathlib.Path.home() / '.gradle/caches/modules-2/files-2.1'
-work = repo / 'tmp/event-bridge-selfcheck'
+work = repo / 'tmp/compose-event-bridge-selfcheck'
 work.mkdir(exist_ok=True)
-native_root = 'android/android/app/src/main/kotlin/com/hinge/office/'
+native_root = 'android-compose/app/src/main/kotlin/com/hinge/office/'
+legacy_root = 'android/android/app/src/main/kotlin/com/hinge/office/'
 
 def jar(group, artifact, preferred):
     base = cache / group / artifact
@@ -35,17 +36,16 @@ class Handler(looper: Looper) {
 }
 object SystemClock { fun elapsedRealtime() = System.nanoTime() / 1_000_000 }
 ''', encoding='utf-8')
-(work / 'FlutterStub.kt').write_text('''package io.flutter.plugin.common
-class EventChannel { interface EventSink { fun success(event: Any?) } }
+(work / 'NativeEventSink.kt').write_text('''package com.hinge.office
+fun interface NativeEventSink { fun success(event: Any?) }
 ''', encoding='utf-8')
 (work / 'Check.kt').write_text('''package com.hinge.office
-import io.flutter.plugin.common.EventChannel
-class Sink : EventChannel.EventSink {
+class Sink : NativeEventSink {
     val received = mutableListOf<Any?>()
     override fun success(event: Any?) { received.add(event) }
 }
-fun checkBridge(name: String, attach: (EventChannel.EventSink?) -> Unit,
-                detach: (EventChannel.EventSink?) -> Unit,
+fun checkBridge(name: String, attach: (NativeEventSink?) -> Unit,
+                detach: (NativeEventSink?) -> Unit,
                 emit: (Map<String, Any?>) -> Unit, capacity: Int) {
     val a = Sink(); val b = Sink()
     attach(a); attach(b); detach(a)
@@ -76,12 +76,13 @@ def run(baseline):
     for filename in ['HingeNativeConnectionBroker.kt', 'SmsRelayBridge.kt', 'NotificationHistoryBridge.kt']:
         if baseline:
             source = subprocess.check_output(['git', '-c', f'safe.directory={repo.as_posix()}',
-                'show', f'v2.0.1:{native_root}{filename}'], cwd=repo).decode('utf-8')
+                'show', f'v2.0.1:{legacy_root}{filename}'], cwd=repo).decode('utf-8')
             source = source.replace('fun detach()', 'fun detach(expectedSink: EventChannel.EventSink?)')
+            source = source.replace('import io.flutter.plugin.common.EventChannel\n', '').replace('EventChannel.EventSink', 'NativeEventSink')
         else:
             source = (repo / native_root / filename).read_text(encoding='utf-8')
         if filename == 'HingeNativeConnectionBroker.kt':
-            source = ('package com.hinge.office\nimport io.flutter.plugin.common.EventChannel\n'
+            source = ('package com.hinge.office\n'
                       'import java.util.ArrayDeque\n' + source[source.index('object HingeNativeConnectionEvents'):source.index('private object HingeProtocol')])
         (work / filename).write_text(source, encoding='utf-8')
     output = work / ('baseline.jar' if baseline else 'patched.jar')

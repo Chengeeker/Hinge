@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $taskRepo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$taskClasses = Join-Path $taskRepo 'android/build/app/tmp/kotlin-classes/release'
+$taskClasses = Join-Path $taskRepo 'android-compose/app/build/intermediates/built_in_kotlinc/release/compileReleaseKotlin/classes'
 if (-not (Test-Path (Join-Path $taskClasses 'com/hinge/office/DesktopDecodeState.class'))) {
     throw '先构建 Android Release，以验证实际编译的解码状态类。'
 }
@@ -15,7 +15,7 @@ $taskRuntime = Get-ChildItem $taskRuntimeVersion.FullName -Recurse -Filter "kotl
 if (-not $taskRuntime) { throw 'Kotlin 标准库缓存不完整。' }
 $taskOutput = Join-Path $taskRepo 'tmp/desktop-decode-checks'
 New-Item -ItemType Directory -Path $taskOutput -Force | Out-Null
-& 'D:/jdk17/bin/javac.exe' -cp "$taskClasses;$taskRuntime" -d $taskOutput (Join-Path $taskRepo 'android/android/app/src/test/java/com/hinge/office/DesktopDecodeStateCheck.java')
+& 'D:/jdk17/bin/javac.exe' -cp "$taskClasses;$taskRuntime" -d $taskOutput (Join-Path $taskRepo 'android-compose/tools/DesktopDecodeStateCheck.java')
 if ($LASTEXITCODE -ne 0) { throw '解码状态自检编译失败。' }
 & 'D:/jdk17/bin/java.exe' -ea -cp "$taskOutput;$taskClasses;$taskRuntime" com.hinge.office.DesktopDecodeStateCheck
 if ($LASTEXITCODE -ne 0) { throw '解码状态自检失败。' }

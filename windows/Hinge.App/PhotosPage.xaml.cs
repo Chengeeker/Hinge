@@ -35,6 +35,7 @@ public sealed partial class PhotosPage : Page
     private int _photoTotal;
     private int _loadedPhotoCount;
     private bool _photoBatchLoading;
+    private bool _photoOpening;
     private CancellationTokenSource? _photoLoadingCancellation;
     private GridViewItem? _dropTargetAlbumItem;
     private bool _dropFeedbackVisible;
@@ -554,34 +555,35 @@ public sealed partial class PhotosPage : Page
         PageDescription.Text = $"{suffix}。";
     }
 
-    private async void PhotosGrid_ItemClick(object sender, ItemClickEventArgs e)
+    private async void PhotoItem_Tapped(object sender, TappedRoutedEventArgs e)
     {
-        if (e.ClickedItem is not GridViewItem { Tag: RemotePhotoItem photo }) return;
-        if (IsPhotoSelectionMode)
-        {
-            UpdatePhotoSelectionSummary();
-            return;
-        }
+        if (IsPhotoSelectionMode || sender is not GridViewItem { Tag: RemotePhotoItem photo }) return;
+        e.Handled = true;
         await ShowPhotoPreviewAsync(photo);
     }
 
-    private async void PhotoItem_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void PhotoItem_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (IsPhotoSelectionMode)
-        {
-            e.Handled = true;
-            return;
-        }
+        if (e.Key != Windows.System.VirtualKey.Enter || IsPhotoSelectionMode ||
+            sender is not GridViewItem { Tag: RemotePhotoItem photo }) return;
+        e.Handled = true;
+        await ShowPhotoPreviewAsync(photo);
+    }
 
-        if (sender is GridViewItem { Tag: RemotePhotoItem photo })
-        {
-            e.Handled = true;
-            await ShowPhotoPreviewAsync(photo);
-        }
+    private void PhotoItem_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (IsPhotoSelectionMode || sender is not GridViewItem { Tag: RemotePhotoItem photo } item) return;
+        e.Handled = true;
+        var open = new MenuFlyoutItem { Text = "打开" };
+        open.Click += async (_, _) => await ShowPhotoPreviewAsync(photo);
+        var menu = new MenuFlyout();
+        menu.Items.Add(open);
+        menu.ShowAt(item, e.GetPosition(item));
     }
 
     private async Task ShowPhotoPreviewAsync(RemotePhotoItem photo)
     {
+        if (IsPhotoSelectionMode || _photoOpening) return;
         var connection = _connectionProvider?.Invoke() ?? _connection;
         if (_client == null || connection?.IsSessionReady != true)
         {
@@ -591,13 +593,24 @@ public sealed partial class PhotosPage : Page
 
         if (_openPhoto != null)
         {
+            _photoOpening = true;
+            var version = _loadVersion;
+            const string openingTitle = "正在打开图片";
+            SetStatus(openingTitle, photo.Name, InfoBarSeverity.Informational);
             try
             {
                 await _openPhoto(photo);
+                if (version == _loadVersion && StatusInfoBar.Title == openingTitle)
+                    StatusInfoBar.IsOpen = false;
             }
             catch (Exception exception)
             {
-                SetStatus("图片打开失败", exception.Message, InfoBarSeverity.Error);
+                if (version == _loadVersion)
+                    SetStatus("图片打开失败", exception.Message, InfoBarSeverity.Error);
+            }
+            finally
+            {
+                _photoOpening = false;
             }
             return;
         }
@@ -1167,7 +1180,9 @@ public sealed partial class PhotosPage : Page
 
             var (tile, image) = BuildPhotoTile(photo);
             var item = new HandCursorGridViewItem { Tag = photo, Content = tile };
-            item.DoubleTapped += PhotoItem_DoubleTapped;
+            item.AddHandler(UIElement.TappedEvent, new TappedEventHandler(PhotoItem_Tapped), handledEventsToo: true);
+            item.RightTapped += PhotoItem_RightTapped;
+            item.KeyDown += PhotoItem_KeyDown;
             ConfigurePhotoDrag(item, photo);
             PhotosGrid.Items.Add(item);
             if (thumbnailCount++ < InitialThumbnailBudget)

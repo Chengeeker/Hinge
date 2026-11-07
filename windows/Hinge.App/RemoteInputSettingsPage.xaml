@@ -26,7 +26,7 @@
                 </Border>
                 <Border Style="{StaticResource HingeCardStyle}" Padding="0">
                     <local:HandCursorButton x:Name="GameLayoutSettingsButton" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="RemoteInputSettingsPage.GameLayoutSettingsButton" AutomationProperties.Name="游戏模式布局" Style="{StaticResource HingeM3SettingsRowButtonStyle}">
-                        <Grid Padding="20,16" ColumnSpacing="16" HorizontalAlignment="Stretch">
+                        <Grid Padding="12,8,16,8" ColumnSpacing="12" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <Viewbox Width="24" Height="24" VerticalAlignment="Center"><SymbolIcon Symbol="Keyboard" Foreground="{ThemeResource HingeM3PrimaryBrush}" /></Viewbox>
                             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">

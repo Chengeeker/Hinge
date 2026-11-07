@@ -7,7 +7,7 @@ namespace Hinge.Platform;
 public class Win32TrayManager : ITrayManager
 {
     private Forms.NotifyIcon? _notifyIcon;
-    private Forms.ContextMenuStrip? _contextMenu;
+    private TrayMenu? _contextMenu;
     private bool _isVisible;
     private string _appName = "Hinge";
     private string _currentTooltip = "Hinge — LAN Cross-Device Hub";
@@ -21,7 +21,7 @@ public class Win32TrayManager : ITrayManager
 
     public event EventHandler? OpenRequested;
     public event EventHandler? ExitRequested;
-    public event EventHandler? PairingRequested;
+    public event EventHandler? TransferRequested;
 
     public void Initialize(string appName, string initialTooltip)
     {
@@ -37,15 +37,13 @@ public class Win32TrayManager : ITrayManager
 
         try
         {
-            _contextMenu = new Forms.ContextMenuStrip();
+            _contextMenu = new TrayMenu();
             var open = new Forms.ToolStripMenuItem("打开 Hinge");
             open.Click += (_, _) => RequestOpen(bypassBalloonSuppression: true);
             _contextMenu.Items.Add(open);
-            _contextMenu.Items.Add(new Forms.ToolStripSeparator());
-            var pairing = new Forms.ToolStripMenuItem("开启手机 BLE 自动唤醒配对");
-            pairing.Click += (_, _) => PairingRequested?.Invoke(this, EventArgs.Empty);
-            _contextMenu.Items.Add(pairing);
-            _contextMenu.Items.Add(new Forms.ToolStripSeparator());
+            var transfer = new Forms.ToolStripMenuItem("传输文件");
+            transfer.Click += (_, _) => RequestTransfer();
+            _contextMenu.Items.Add(transfer);
             var exit = new Forms.ToolStripMenuItem("退出");
             exit.Click += (_, _) => RequestExit();
             _contextMenu.Items.Add(exit);
@@ -151,6 +149,8 @@ public class Win32TrayManager : ITrayManager
         }
         OpenRequested?.Invoke(this, EventArgs.Empty);
     }
+
+    public void RequestTransfer() => TransferRequested?.Invoke(this, EventArgs.Empty);
 
     public void RequestExit()
     {

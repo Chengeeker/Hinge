@@ -53,6 +53,8 @@ android/GeneratedPluginRegistrant.java
 *.jks
 *.key
 *.p12
+__pycache__/
+*.pyc
 
 # IDEs
 .idea/

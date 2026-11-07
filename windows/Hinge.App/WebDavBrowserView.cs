@@ -28,8 +28,8 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
     private readonly HandCursorListView _files = new() { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true };
     private readonly HandCursorGridView _gridFiles = new() { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true, Visibility = Visibility.Collapsed };
-    private readonly ComboBox _viewMode = new() { MinWidth = 120, Height = 36 };
-    private readonly ComboBox _sort = new() { MinWidth = 148, Height = 36 };
+    private readonly ComboBox _viewMode = new() { MinWidth = 120 };
+    private readonly ComboBox _sort = new() { MinWidth = 148 };
     private readonly HandCursorButton _select = new() { Content = "选择", Height = 36 };
     private readonly Grid _fileHeader = new() { ColumnSpacing = 12, Padding = new Thickness(12, 8, 12, 8) };
     private bool _selectionMode;
@@ -87,6 +87,9 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
         var all = new HandCursorButton { Content = "全选", Height = 36 };
         all.Click += (_, _) => { if (!_selectionMode) { _selectionMode = true; _select.Content = "取消选择"; _files.SelectionMode = _gridFiles.SelectionMode = ListViewSelectionMode.Multiple; } CurrentFiles.SelectAll(); };
         _actions.Children.Add(all);
+        var filterStyle = (Style)Application.Current.Resources["HingeM3DesktopFilterStyle"];
+        _viewMode.Style = filterStyle;
+        _sort.Style = filterStyle;
         foreach (var label in new[] { "列表", "宫格" }) _viewMode.Items.Add(new ComboBoxItem { Content = label });
         _viewMode.SelectedIndex = 0;
         _actions.Children.Add(_viewMode);

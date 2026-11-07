@@ -29,7 +29,7 @@
                         <!-- Brand artwork is often transparent. Keep a neutral
                              white backing so every vendor logo has the same
                              readable treatment. -->
-                        <Border Width="48" Height="48" CornerRadius="6" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}">
+                        <Border Width="48" Height="48" CornerRadius="{StaticResource HingeCornerRadius}" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}">
                             <ContentControl x:Name="HeroDeviceLogo" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">

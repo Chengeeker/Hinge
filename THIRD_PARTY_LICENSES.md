@@ -17,19 +17,15 @@
 | **Win32 Platform API** | Windows | 系统原生 | System | N/A (Windows OS) | user32/gdi32/shell32 模拟键鼠输入、托盘管理、系统通知 | **已核验 (合规)** |
 | **Microsoft.WindowsAppSDK** | Windows | 运行时 NuGet | 2.4.0 | MIT | WinUI 3、窗口、默认应用和 Windows App SDK 平台能力 | **已核验 (合规)** |
 | **Microsoft vscode-explorer-command** | Windows | 源码参考 / 部分改编 | 2026-09-13 获取的默认分支 | MIT | Windows 11 `IExplorerCommand` COM 激活框架；Hinge 自行实现动态设备子菜单和发送逻辑 | **已核验 (合规，保留版权头)** |
-| **Flutter SDK** | Android | 运行时 | 3.47.x | BSD-3-Clause | 跨平台 Material 3 响应式 UI 框架 | **已核验 (合规)** |
-| **crypto** | Android | 运行时 | ^3.0.7 | BSD-3-Clause | 官方标准库 SHA-256、HMAC 凭据派生与文件分块哈希校验 | **已核验 (合规)** |
-| **cryptography** | Android | 运行时 | ^2.7.0（解析为 2.9.0） | Apache-2.0 | Cloud Relay 的 AES-256-GCM 加解密 | **已核验 (合规)** |
-| **dynamic_color** | Android | 运行时 | ^1.9.0 | Apache-2.0 | Flutter 动态配色接口；Android 原生读取系统 Monet 角色 | **已核验 (合规)** |
-| **cupertino_icons** | Android | 运行时 | ^1.0.8 | MIT | 常用辅助矢量图标集 | **已核验 (合规)** |
-| **material_symbols_icons** | Android | 运行时 | 4.2960.0 | Apache-2.0 | Android 端 Material Symbols Rounded 图标字体 | **已核验 (合规)** |
-| **flutter_svg** | Android / Dart | 运行时 | ^2.0.17 | MIT | 读取本地品牌 SVG 资源 | **已核验 (合规)** |
+| **Jetpack Compose / AndroidX** | Android | 运行时 | Compose BOM 2026.09.00 | Apache-2.0 | Compose 界面、Material 3、Activity 和 Core | 见 Gradle 配置 |
+| **Kotlin Coroutines Android** | Android | 运行时 | 1.10.2 | Apache-2.0 | 异步任务与主线程调度 | 见 Gradle 配置 |
+| **desugar_jdk_libs** | Android | 构建与兼容运行时 | 2.1.5 | GPL-2.0 with Classpath Exception | 在旧版 Android 支持 Java 标准库 API | 见 Gradle 配置 |
+| **Material Icons / Symbols** | Android | 随包字体 | 随项目资源 | Apache-2.0 | 应用与导航图标 | 随包许可见 `material-symbols-LICENSE.txt` |
 | **xunit** | Windows | 开发测试 | 2.5.3 | Apache-2.0 | xUnit 单元与集成测试框架 (开发时依赖，不打包入发布二进制) | **已核验 (合规)** |
 | **Microsoft.NET.Test.Sdk** | Windows | 开发测试 | 17.8.0 | MIT | .NET 测试运行时工具集 | **已核验 (合规)** |
 | **coverlet.collector** | Windows | 开发测试 | 6.0.0 | MIT | 代码覆盖率分析收集器 | **已核验 (合规)** |
 | **xunit.runner.visualstudio** | Windows | 开发测试 | 2.5.3 | Apache-2.0 | Visual Studio / VSTest xUnit 适配器 | **已核验 (合规)** |
-| **flutter_test** | Android | 开发测试 | SDK | BSD-3-Clause | Flutter 官方单元与小部件测试套件 | **已核验 (合规)** |
-| **flutter_lints** | Android | 开发代码规范 | ^6.0.0 | BSD-3-Clause | 官方推荐代码风格静态分析规则 | **已核验 (合规)** |
+| **JUnit** | Android | 开发测试 | 4.13.2 | EPL-1.0 | JVM 单元测试 | 仅测试使用 |
 
 ## Windows 设备品牌标识
 
@@ -54,9 +50,9 @@ Windows 首页的设备品牌标识采用 Wikimedia Commons 中对应品牌的 S
 - 图片尺寸和 EXIF：Android Framework `BitmapFactory` 与 `android.media.ExifInterface`；
 - Windows 默认应用和文件处理：WinRT / .NET BCL。
 
-本次 Cloud Relay 接入新增的第三方运行时依赖为 **1 个**：Android `cryptography`（Apache-2.0）。独立的 `Hinge-Relay` Worker 依赖在其自己的 `package-lock.json` 和许可证文件中维护，不随 Hinge 客户端打包。若未来改为直接使用上述任一项目，必须在引入同一提交中补充精确版本、许可证文本和对应 NOTICE，并同步修改 README。
+Android Cloud Relay 使用 Android/JVM 的加密 API。独立的 `Hinge-Relay` Worker 依赖在其自己的 `package-lock.json` 和许可证文件中维护，不随 Hinge 客户端打包。若未来改为直接使用上述任一项目，必须在引入同一提交中补充精确版本、许可证文本和对应 NOTICE，并同步修改 README。
 
-Android 的可选液态玻璃悬浮底栏使用 `liquid_glass_widgets` 1.13.0（MIT），源码随仓库保存在 `android/packages/liquid_glass_widgets`；版权及完整许可见该目录的 `LICENSE` 和 `THIRD_PARTY_NOTICES`。
+Android 的液态玻璃底栏使用改编自 `liquid_glass_widgets` 1.13.0（MIT）的着色器，保留上游源文件及[许可证](android-compose/tools/reference/glass-upstream/LICENSE)。随包版权声明见 `android-compose/app/src/main/assets/glass/LICENSE.txt`。
 
 ## Electron 托盘兼容参考
 

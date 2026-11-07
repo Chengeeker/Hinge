@@ -7,7 +7,7 @@
         <Style x:Key="HingeM3MaterialOptionItemStyle" TargetType="ComboBoxItem" BasedOn="{StaticResource HingeM3ComboBoxItemStyle}">
             <Setter Property="Foreground" Value="{ThemeResource HingeM3OnSurfaceBrush}" />
             <Setter Property="Padding" Value="16,10" />
-            <Setter Property="CornerRadius" Value="{StaticResource HingeM3ShapeSmall}" />
+            <Setter Property="CornerRadius" Value="{StaticResource HingeCornerRadius}" />
             <Setter Property="FocusVisualPrimaryBrush" Value="{ThemeResource HingeM3PrimaryBrush}" />
             <Setter Property="FocusVisualSecondaryBrush" Value="{ThemeResource HingeM3SurfaceBrush}" />
         </Style>
@@ -116,7 +116,6 @@
                                         <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
                                         <StaticResource x:Key="ComboBoxItemForegroundSelectedDisabled" ResourceKey="HingeM3DisabledContentBrush" />
                                         <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="Transparent" />
-                                        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="HingeM3ShapeMedium" />
                                     </ResourceDictionary>
                                     <ResourceDictionary x:Key="Dark">
                                         <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
@@ -139,7 +138,6 @@
                                         <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
                                         <StaticResource x:Key="ComboBoxItemForegroundSelectedDisabled" ResourceKey="HingeM3DisabledContentBrush" />
                                         <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="Transparent" />
-                                        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="HingeM3ShapeMedium" />
                                     </ResourceDictionary>
                                     <ResourceDictionary x:Key="HighContrast">
                                         <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="HingeM3SurfaceContainerLowBrush" />
@@ -162,7 +160,6 @@
                                         <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="HingeM3DisabledContentBrush" />
                                         <StaticResource x:Key="ComboBoxItemForegroundSelectedDisabled" ResourceKey="HingeM3DisabledContentBrush" />
                                         <SolidColorBrush x:Key="ComboBoxItemPillFillBrush" Color="Transparent" />
-                                        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="HingeM3ShapeMedium" />
                                     </ResourceDictionary>
                                 </ResourceDictionary.ThemeDictionaries>
                             </ResourceDictionary>
@@ -184,7 +181,7 @@
                         <local:HandCursorButton x:Name="ImportBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ImportBackgroundButton" Content="导入图片" />
                         <local:HandCursorButton x:Name="ClearBackgroundButton" AutomationProperties.AutomationId="PersonalizationPage.ClearBackgroundButton" Content="清除背景" />
                     </StackPanel>
-                    <Border x:Name="BackgroundPreviewBorder" Height="160" CornerRadius="8" Visibility="Collapsed">
+                    <Border x:Name="BackgroundPreviewBorder" Height="160" CornerRadius="{StaticResource HingeCornerRadius}" Visibility="Collapsed">
                         <Image x:Name="BackgroundPreview" Stretch="UniformToFill" />
                     </Border>
                 </StackPanel>

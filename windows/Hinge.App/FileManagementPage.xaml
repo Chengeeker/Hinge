@@ -174,7 +174,7 @@
                                 SelectedIndex="0"
                                 SelectedValuePath="Tag"
                                 MinWidth="112"
-                                MinHeight="36">
+                                Style="{StaticResource HingeM3DesktopFilterStyle}">
                                 <ComboBoxItem Content="宫格" Tag="grid" />
                                 <ComboBoxItem Content="列表" Tag="list" />
                             </ComboBox>
@@ -189,7 +189,7 @@
                         HorizontalAlignment="Right"
                         VerticalAlignment="Center">
                         <TextBlock Text="类型" VerticalAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
-                        <ComboBox x:Name="FileTypeFilterOptions" AutomationProperties.AutomationId="FileManagementPage.FileTypeFilterOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" MinHeight="36">
+                        <ComboBox x:Name="FileTypeFilterOptions" AutomationProperties.AutomationId="FileManagementPage.FileTypeFilterOptions" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" Style="{StaticResource HingeM3DesktopFilterStyle}">
                             <ComboBoxItem Content="全部类型" Tag="all" />
                             <ComboBoxItem Content="图片" Tag="images" />
                             <ComboBoxItem Content="视频" Tag="videos" />
@@ -199,7 +199,7 @@
                             <ComboBoxItem Content="安装包" Tag="packages" />
                             <ComboBoxItem Content="其他" Tag="other" />
                         </ComboBox>
-                        <ComboBox x:Name="DocumentFilterOptions" AutomationProperties.AutomationId="FileManagementPage.DocumentFilterOptions" Visibility="Collapsed" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" MinHeight="36">
+                        <ComboBox x:Name="DocumentFilterOptions" AutomationProperties.AutomationId="FileManagementPage.DocumentFilterOptions" Visibility="Collapsed" SelectedIndex="0" SelectedValuePath="Tag" MinWidth="128" Style="{StaticResource HingeM3DesktopFilterStyle}">
                             <ComboBoxItem Content="全部文档" Tag="all" />
                             <ComboBoxItem Content="PDF" Tag="pdf" />
                             <ComboBoxItem Content="Word" Tag="doc" />
@@ -209,7 +209,7 @@
                             <ComboBoxItem Content="其他" Tag="other" />
                         </ComboBox>
                         <TextBlock Text="排序" VerticalAlignment="Center" Foreground="{ThemeResource HingeM3OnSurfaceVariantBrush}" />
-                        <ComboBox x:Name="FileSortOptions" AutomationProperties.Name="文件排序" AutomationProperties.AutomationId="FileManagementPage.FileSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" MinHeight="36">
+                        <ComboBox x:Name="FileSortOptions" AutomationProperties.Name="文件排序" AutomationProperties.AutomationId="FileManagementPage.FileSortOptions" SelectedIndex="5" SelectedValuePath="Tag" MinWidth="148" Style="{StaticResource HingeM3DesktopFilterStyle}">
                             <ComboBoxItem Content="名称" Tag="name" />
                             <ComboBoxItem Content="类型" Tag="type" />
                             <ComboBoxItem Content="大小（小到大）" Tag="sizeAsc" />
@@ -240,7 +240,7 @@
                             MaxWidth="420"
                             Spacing="12"
                             Visibility="Collapsed">
-                            <Border Width="56" Height="56" CornerRadius="28" Background="{ThemeResource HingeM3SurfaceContainerLowBrush}" HorizontalAlignment="Center">
+                            <Border Width="56" Height="56" CornerRadius="{StaticResource HingeCornerRadius}" Background="{ThemeResource HingeM3SurfaceContainerLowBrush}" HorizontalAlignment="Center">
                                 <SymbolIcon Symbol="Phone" Foreground="{ThemeResource HingeM3PrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <TextBlock Text="手机尚未连接" Style="{StaticResource HingeM3TitleMediumStyle}" FontSize="18" TextAlignment="Center" />
@@ -257,7 +257,7 @@
             </Grid>
             <Border
                 x:Name="DropHintOverlay"
-                CornerRadius="12"
+                CornerRadius="{StaticResource HingeCornerRadius}"
                 Background="{ThemeResource HingeM3PrimaryBrush}"
                 BorderBrush="{ThemeResource HingeM3PrimaryBrush}"
                 BorderThickness="2"

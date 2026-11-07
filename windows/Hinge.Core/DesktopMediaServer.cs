@@ -26,6 +26,7 @@ public sealed class DesktopMediaServer : IAsyncDisposable
     private readonly SemaphoreSlim _viewer = new(1, 1);
     private Task? _run;
     private Task? _activeTask;
+    private TcpClient? _viewerClient;
     private string? _activeDevice;
     private int _port, _disposed;
     public int Port => Volatile.Read(ref _port);
@@ -76,6 +77,7 @@ public sealed class DesktopMediaServer : IAsyncDisposable
             {
                 TcpClient client = await _listener.AcceptTcpClientAsync(_stop.Token);
                 if (!_viewer.Wait(0)) { client.Dispose(); continue; }
+                Volatile.Write(ref _viewerClient, client);
                 _activeTask = ServeAsync(client);
             }
         }
@@ -181,6 +183,7 @@ public sealed class DesktopMediaServer : IAsyncDisposable
             finally
             {
                 session.Cancel(); Volatile.Write(ref _activeDevice, null);
+                Interlocked.CompareExchange(ref _viewerClient, null, client);
                 _viewer.Release(); StatusChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -288,6 +291,8 @@ public sealed class DesktopMediaServer : IAsyncDisposable
     }
     private static bool ValidId(string id) => !string.IsNullOrWhiteSpace(id) && id.Length <= 256 && !id.Any(char.IsControl);
     private static bool ValidPin(string? pin) => pin?.Length == 64 && pin.All(c => c is >= '0' and <= '9' or >= 'A' and <= 'F');
+
+    public void DisconnectViewer() => Interlocked.Exchange(ref _viewerClient, null)?.Dispose();
 
     public async ValueTask DisposeAsync()
     {

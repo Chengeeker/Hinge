@@ -125,7 +125,18 @@
                             Background="Transparent"
                             Grid.Row="1"
                             HorizontalContentAlignment="Stretch"
-                            VerticalContentAlignment="Stretch" />
+                            VerticalContentAlignment="Stretch">
+                            <Frame.ContentTransitions>
+                                <TransitionCollection>
+                                    <!-- Keep page text stationary and fully opaque during navigation. -->
+                                    <NavigationThemeTransition>
+                                        <NavigationThemeTransition.DefaultNavigationTransitionInfo>
+                                            <SuppressNavigationTransitionInfo />
+                                        </NavigationThemeTransition.DefaultNavigationTransitionInfo>
+                                    </NavigationThemeTransition>
+                                </TransitionCollection>
+                            </Frame.ContentTransitions>
+                        </Frame>
                     </Grid>
                 </Border>
             </NavigationView.Content>

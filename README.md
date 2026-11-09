@@ -101,7 +101,7 @@ Android 首页、工作区和设置使用卡片底色与留白分组，去掉功
 
 ### Windows
 
-推荐下载 `Hinge-Setup.exe`。这是自包含 EXE 安装器，安装时可以选择目标目录；为了注册 Windows 11 第一层资源管理器菜单，首次安装会请求一次管理员确认，仅把随安装器提供的 Hinge 公钥证书加入本机受信任人，签名私钥不会随包分发。
+推荐下载 [Hinge-3.0.0-Windows-x64-Setup.exe](https://github.com/Chengeeker/Hinge/releases/download/v3.0.0/Hinge-3.0.0-Windows-x64-Setup.exe)。这是自包含 EXE 安装器，安装时可以选择目标目录；为了注册 Windows 11 第一层资源管理器菜单，首次安装会请求一次管理员确认，仅把随安装器提供的 Hinge 公钥证书加入本机受信任人，签名私钥不会随包分发。
 
 若要启用右键发送时的 BLE 自动唤醒，请在 Hinge 设置中开始 BLE 配对广播，并在 Android“保活设置”中完成 Companion 关联。BLE 自动唤醒不是文件传输通道；Windows 和 Android 仍通过局域网 TCP 传输文件，BLE 不可用时可使用 Android 常驻通知作为兜底。
 

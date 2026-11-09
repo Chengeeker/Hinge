@@ -98,7 +98,7 @@ Hinge 3.0.0 新增手机查看并操控 Windows 桌面、手机触控板、游�
 
 - Android 版本为 `3.0.0+188`，仅提供 `arm64-v8a` APK，最低 Android 7.0。
 - Windows 产品与文件版本为 `3.0.0.0`，提供 x64 安装器与便携 ZIP。
-- `Hinge.apk` 为 Android 安装包，`Hinge-Setup.exe` 为 Windows 安装器，`Hinge-Windows.zip` 为 Windows 便携版。
+- `Hinge.apk` 为 Android 安装包，`Hinge-3.0.0-Windows-x64-Setup.exe` 为 Windows 安装器，`Hinge-Windows.zip` 为 Windows 便携版。
 
 ## 验证记录
 
@@ -113,7 +113,7 @@ Hinge 3.0.0 新增手机查看并操控 Windows 桌面、手机触控板、游�
 | 文件 | 大小（字节） | SHA-256 |
 | --- | ---: | --- |
 | `Hinge.apk` | 17,137,732 | `9DAD35FC63FB0C45179550B567F09E34107AF6B3C5B64AC576DFDF4BD4188BE7` |
-| `Hinge-Setup.exe` | 230,137,833 | `92EC777EAA68233C031F74C84B55BA7751604F39299B1BD56E118195F093C1DE` |
+| `Hinge-3.0.0-Windows-x64-Setup.exe` | 230,139,257 | `118569346C60B41ED87F66A1C2070AE48372A3FE8D5EB7F516591F04F7A7B1BF` |
 | `Hinge-Windows.zip` | 161,751,612 | `09C9C1D753AD1787832B5A4C1B5AC92BC80BCFF77264AD66DB58CBB7281475F9` |
 
 ## Windows 附件更新（2026-11-08）
@@ -121,3 +121,7 @@ Hinge 3.0.0 新增手机查看并操控 Windows 桌面、手机触控板、游�
 - 关闭侧栏页面与设置子页的整页淡入、上移动画，消除转场期间内容先淡后实、文字移动的过程，针对切页后短暂模糊的反馈作出调整。实际显示效果仍待用户桌面复测。
 - Windows 安装器和便携包已重新构建并替换，显示版本保持 3.0.0。Android 附件仍为原发行版 3.0.0+188。
 - 修正源码见仓库 main 的后续提交；原 v3.0.0 标签保留发布时的源码。
+
+## Windows 安装器更新（2026-11-09）
+
+修复显示器编号变化后手机远控电脑收不到画面的问题。Windows 每次连接时重新确认采集目标。[修复源码](https://github.com/Chengeeker/Hinge/commit/98fb320950108cd18a66c8654a30274f6fa92c1e)

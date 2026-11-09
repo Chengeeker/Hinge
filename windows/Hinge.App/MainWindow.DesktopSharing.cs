@@ -202,17 +202,17 @@ public sealed partial class MainWindow
             _desktopEncoderStatus = null;
             _desktopCertificate = await DesktopCertificateStore.LoadOrCreateAsync();
             var source = new NativeDesktopVideoSource();
-            var monitors = await source.ListMonitorsAsync();
             if (_desktopSharingClosed) return;
-            var monitor = _desktopVideoSettings.MonitorDeviceName is { } name ?
-                monitors.FirstOrDefault(item => item.DeviceName == name) :
-                monitors.FirstOrDefault(item => item.Index == _desktopVideoSettings.Monitor);
-            if (monitor == null) throw new IOException("所选显示器不可用，请刷新并重新选择。");
-            var videoSettings = _desktopVideoSettings with { MonitorDeviceName = monitor.DeviceName };
+            var settings = _desktopVideoSettings;
             var server = new DesktopMediaServer(_desktopCertificate, IsDesktopPeerAllowed, ApproveDesktopPeerAsync,
-                token => source.CaptureAsync(videoSettings, token),
+                async (id, token) =>
+                {
+                    // Windows can renumber displays after sleep; capture and input must share the same current target.
+                    var videoSettings = await source.BindMonitorAsync(settings, token);
+                    var control = _remoteInputManager.BeginAuthenticatedControl(id, Win32InputInjector.ForDesktop(videoSettings.MonitorDeviceName!));
+                    return (source.CaptureAsync(videoSettings), control);
+                },
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hinge", "desktop-peer-pins.json"),
-                id => _remoteInputManager.BeginAuthenticatedControl(id, Win32InputInjector.ForDesktop(videoSettings.MonitorDeviceName)),
                 action =>
                 {
                     try { DesktopSystemActions.Execute(action); }

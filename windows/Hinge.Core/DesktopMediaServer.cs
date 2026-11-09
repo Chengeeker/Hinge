@@ -16,9 +16,8 @@ public sealed class DesktopMediaServer : IAsyncDisposable
     private readonly X509Certificate2 _certificate;
     private readonly Func<string, bool> _isConnectedTrustedPeer;
     private readonly Func<DesktopPairingRequest, CancellationToken, Task<bool>> _approve;
-    private readonly Func<CancellationToken, IAsyncEnumerable<DesktopVideoPacket>> _source;
+    private readonly Func<string, CancellationToken, ValueTask<(IAsyncEnumerable<DesktopVideoPacket> Video, RemoteInputManager.AuthenticatedControlLease? Control)>> _prepareViewer;
     private readonly string _pinsPath;
-    private readonly Func<string, RemoteInputManager.AuthenticatedControlLease?>? _beginControl;
     private readonly Action<DesktopSystemAction>? _systemAction;
     private readonly Dictionary<string, string> _pins;
     private readonly TcpListener _listener;
@@ -36,17 +35,16 @@ public sealed class DesktopMediaServer : IAsyncDisposable
 
     public DesktopMediaServer(X509Certificate2 certificate, Func<string, bool> isConnectedTrustedPeer,
         Func<DesktopPairingRequest, CancellationToken, Task<bool>> approve,
-        Func<CancellationToken, IAsyncEnumerable<DesktopVideoPacket>> source, string pinsPath,
-        Func<string, RemoteInputManager.AuthenticatedControlLease?>? beginControl = null,
+        Func<string, CancellationToken, ValueTask<(IAsyncEnumerable<DesktopVideoPacket> Video, RemoteInputManager.AuthenticatedControlLease? Control)>> prepareViewer,
+        string pinsPath,
         Action<DesktopSystemAction>? systemAction = null)
     {
         if (!certificate.HasPrivateKey) throw new ArgumentException("Desktop server certificate needs a private key.");
         _certificate = certificate;
         _isConnectedTrustedPeer = isConnectedTrustedPeer;
         _approve = approve;
-        _source = source;
+        _prepareViewer = prepareViewer;
         _pinsPath = pinsPath;
-        _beginControl = beginControl;
         _systemAction = systemAction;
         if (File.Exists(pinsPath) && new FileInfo(pinsPath).Length > 1024 * 1024)
             throw new InvalidDataException("Desktop peer trust file exceeds limit.");
@@ -157,14 +155,17 @@ public sealed class DesktopMediaServer : IAsyncDisposable
                     catch { if (known) _pins[id] = knownPin!; else _pins.Remove(id); throw; }
                 }
                 if (!_isConnectedTrustedPeer(id)) throw new AuthenticationException("Hinge peer disconnected during pairing.");
+                stage = "准备桌面显示器";
+                var viewer = await _prepareViewer(id, session.Token);
+                using var control = viewer.Control;
+                if (!_isConnectedTrustedPeer(id)) throw new AuthenticationException("Hinge peer disconnected during desktop preparation.");
                 stage = "桌面视频传输";
-                using var control = _beginControl?.Invoke(id);
                 bool mediaHeartbeat = hello.RootElement.TryGetProperty("mediaHeartbeat", out var heartbeatProperty) && heartbeatProperty.GetBoolean();
                 await WriteJsonAsync(tls, new { state = "ready", version = 1, canControl = control != null,
                     relativeMouse = control != null, absoluteMouse = control != null,
                     systemActions = control != null && _systemAction != null, mediaHeartbeat }, session.Token);
                 Volatile.Write(ref _activeDevice, id); StatusChanged?.Invoke(this, EventArgs.Empty);
-                Task video = PumpAsync(tls, mediaHeartbeat, session.Token);
+                Task video = PumpAsync(viewer.Video, tls, mediaHeartbeat, session.Token);
                 Task heartbeat = WatchViewerAsync(tls, id, control, session.Token);
                 try { await await Task.WhenAny(video, heartbeat); }
                 finally
@@ -189,10 +190,10 @@ public sealed class DesktopMediaServer : IAsyncDisposable
         }
     }
 
-    private async Task PumpAsync(Stream stream, bool mediaHeartbeat, CancellationToken cancellationToken)
+    private static async Task PumpAsync(IAsyncEnumerable<DesktopVideoPacket> video, Stream stream, bool mediaHeartbeat, CancellationToken cancellationToken)
     {
         using var sourceStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        await using var source = _source(sourceStop.Token).GetAsyncEnumerator(sourceStop.Token);
+        await using var source = video.GetAsyncEnumerator(sourceStop.Token);
         Task<bool>? pending = null;
         uint sequence = 0;
         int width = 2, height = 2;

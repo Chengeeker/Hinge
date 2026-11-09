@@ -7,6 +7,22 @@ namespace Hinge.Tests;
 public class DesktopMonitorTests
 {
     [Fact]
+    public void ReconnectResolvesCurrentDefaultButNeverReplacesAnExplicitDisplay()
+    {
+        var old = new DesktopMonitor(0, @"\\.\DISPLAY1", 2560, 1440, 0);
+        var current = new DesktopMonitor(0, @"\\.\DISPLAY21", 2560, 1440, 0);
+        var defaults = new DesktopVideoSettings();
+        var selected = defaults with { MonitorDeviceName = old.DeviceName };
+
+        Assert.Equal(old, NativeDesktopVideoSource.ResolveMonitor(defaults, [old]));
+        Assert.Equal(current, NativeDesktopVideoSource.ResolveMonitor(defaults, [current]));
+        Assert.Throws<IOException>(() => NativeDesktopVideoSource.ResolveMonitor(selected, [current]));
+        var reordered = old with { Index = 1 };
+        Assert.Equal(reordered, NativeDesktopVideoSource.ResolveMonitor(selected, [current, reordered]));
+        Assert.Throws<IOException>(() => NativeDesktopVideoSource.ResolveMonitor(defaults, []));
+    }
+
+    [Fact]
     public void MonitorListPreservesNativeOrderAndUprightDimensions()
     {
         var monitors = NativeDesktopVideoSource.ParseMonitorList("0\t\\\\.\\DISPLAY1\t1920\t1080\t0\r\n1\t\\\\.\\DISPLAY4\t1080\t1920\t1\n");

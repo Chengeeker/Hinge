@@ -13,6 +13,18 @@ public sealed class NativeDesktopVideoSource
     public NativeDesktopVideoSource(string? executable = null) =>
         _executable = executable ?? Path.Combine(AppContext.BaseDirectory, "Hinge.DesktopVideo.exe");
 
+    internal static DesktopMonitor ResolveMonitor(DesktopVideoSettings settings, IReadOnlyList<DesktopMonitor> monitors) =>
+        (settings.MonitorDeviceName is { } name
+            ? monitors.FirstOrDefault(item => item.DeviceName == name)
+            : monitors.FirstOrDefault(item => item.Index == settings.Monitor))
+        ?? throw new IOException("所选显示器不可用。请在电脑端刷新显示器列表，重新选择后保存。");
+
+    public async Task<DesktopVideoSettings> BindMonitorAsync(DesktopVideoSettings settings, CancellationToken cancellationToken)
+    {
+        var monitor = ResolveMonitor(settings, await ListMonitorsAsync(cancellationToken));
+        return settings with { Monitor = monitor.Index, MonitorDeviceName = monitor.DeviceName };
+    }
+
     public async Task<IReadOnlyList<DesktopMonitor>> ListMonitorsAsync(CancellationToken cancellationToken = default)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

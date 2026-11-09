@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Hinge.Core;
+using Hinge.Platform;
 
 namespace Hinge.Tests;
 
@@ -34,7 +35,7 @@ public class DesktopMediaServerTests
         var error = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         await using var server = new DesktopMediaServer(certificate, _ => true, (_, _) => Task.FromResult(false),
-            token => Frames(() => {}, token), path, manager.BeginAuthenticatedControl,
+            (id, token) => new((Frames(() => {}, token), manager.BeginAuthenticatedControl(id))), path,
             scenario == "unsupported" ? null : action => called.TrySetResult(action));
         server.Error += (_, message) => error.TrySetResult(message);
         try
@@ -73,7 +74,7 @@ public class DesktopMediaServerTests
         var error = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var idle = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new DesktopMediaServer(certificate, _ => true,
-            (_, _) => Task.FromResult(false), token => Frames(() => {}, token), path);
+            (_, _) => Task.FromResult(false), (_, token) => new((Frames(() => {}, token), null)), path);
         server.Error += (_, message) => error.TrySetResult(message);
         server.StatusChanged += (_, _) => { if (error.Task.IsCompleted && server.ActiveDeviceId == null) idle.TrySetResult(true); };
         try
@@ -103,7 +104,7 @@ public class DesktopMediaServerTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var error = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new DesktopMediaServer(certificate, _ => true,
-            (_, _) => Task.FromResult(false), LargeFrames, path);
+            (_, _) => Task.FromResult(false), (_, token) => new((LargeFrames(token), null)), path);
         server.Error += (_, message) => error.TrySetResult(message);
         try
         {
@@ -137,7 +138,7 @@ public class DesktopMediaServerTests
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new Dictionary<string,string> { ["phone"] = DesktopPeerIdentity.Fingerprint(identity.RawData) }));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var server = new DesktopMediaServer(certificate, _ => true,
-            (_, _) => throw new InvalidOperationException("Persisted peer must not request confirmation"), token => Frames(() => {}, token), path);
+            (_, _) => throw new InvalidOperationException("Persisted peer must not request confirmation"), (_, token) => new((Frames(() => {}, token), null)), path);
         try
         {
             server.Start(); using var socket = new TcpClient(); await socket.ConnectAsync(Socket.OSSupportsIPv6 ? "::1" : "127.0.0.1", server.Port, timeout.Token);
@@ -162,7 +163,7 @@ public class DesktopMediaServerTests
         int captures = 0;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var server = new DesktopMediaServer(certificate, _ => true, (_, _) => Task.FromResult(false),
-            token => Frames(() => Interlocked.Increment(ref captures), token), path);
+            (_, token) => new((Frames(() => Interlocked.Increment(ref captures), token), null)), path);
         server.Start();
         using var socket = new TcpClient(); await socket.ConnectAsync("127.0.0.1", server.Port, timeout.Token);
         using var tls = await ConnectAsync(socket, identity, timeout.Token);
@@ -187,12 +188,18 @@ public class DesktopMediaServerTests
         trust.AddOrUpdate(new TrustedDevice { DeviceId = "phone", Name = "Test Phone" });
         var input = new MockInputInjector();
         using var manager = new RemoteInputManager(input, trust, enabled: true, encryptionRequired: true);
-        int captures = 0, approvals = 0;
+        int captures = 0, approvals = 0, prepared = 0;
+        DesktopMonitor[] monitors = [new(0, @"\\.\DISPLAY1", 1280, 720, 0)];
         var approval = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await using var server = new DesktopMediaServer(certificate, id => id == "phone",
             (_, _) => { Interlocked.Increment(ref approvals); return approval.Task; },
-            token => Frames(() => Interlocked.Increment(ref captures), token), path, manager.BeginAuthenticatedControl);
+            (id, token) =>
+            {
+                Interlocked.Increment(ref prepared);
+                var monitor = NativeDesktopVideoSource.ResolveMonitor(new DesktopVideoSettings(), monitors);
+                return new((Frames(() => Interlocked.Increment(ref captures), token, monitor.Width), manager.BeginAuthenticatedControl(id)));
+            }, path);
         server.Start();
         server.Error += (_, message) => Console.WriteLine("Desktop server: " + message);
         try
@@ -206,6 +213,7 @@ public class DesktopMediaServerTests
                 Assert.Equal("verify", verify.RootElement.GetProperty("state").GetString());
                 Assert.Equal(DesktopPeerIdentity.VerificationCode(certificate.RawData, clientIdentity.RawData),
                     verify.RootElement.GetProperty("code").GetString());
+                Assert.Equal(0, prepared);
                 Assert.Equal(0, captures);
                 Assert.False(File.Exists(path));
                 approval.SetResult(true);
@@ -226,6 +234,7 @@ public class DesktopMediaServerTests
             }
             Assert.Equal(1, approvals);
             Assert.Equal(1, captures);
+            monitors = [new(0, @"\\.\DISPLAY21", 1920, 1080, 0)];
             using (var socket = new TcpClient())
             {
                 await socket.ConnectAsync("127.0.0.1", server.Port, timeout.Token);
@@ -233,7 +242,7 @@ public class DesktopMediaServerTests
                 await SendAsync(tls, new { version = 1, deviceId = "phone", name = "Same Phone" }, timeout.Token);
                 using var ready = await ReadAsync(tls, timeout.Token);
                 Assert.Equal("ready", ready.RootElement.GetProperty("state").GetString());
-                Assert.NotNull(await DesktopVideoProtocol.ReadAsync(tls, timeout.Token));
+                Assert.Equal(1920, (await DesktopVideoProtocol.ReadAsync(tls, timeout.Token))!.Width);
                 await SendAsync(tls, new { action = "stop" }, timeout.Token);
                 Assert.Equal(0, await tls.ReadAsync(new byte[1], timeout.Token));
             }
@@ -248,6 +257,7 @@ public class DesktopMediaServerTests
             }
             Assert.Equal(1, approvals);
             Assert.Equal(2, captures);
+            Assert.Equal(2, prepared);
         }
         finally
         {
@@ -258,10 +268,10 @@ public class DesktopMediaServerTests
     }
 
     private static async IAsyncEnumerable<DesktopVideoPacket> Frames(Action started,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken, int width = 1280)
     {
         started();
-        yield return new(DesktopVideoCodec.H264, DesktopVideoFlags.KeyFrame, 0, 0, 1280, 720, [0, 0, 0, 1, 0x65]);
+        yield return new(DesktopVideoCodec.H264, DesktopVideoFlags.KeyFrame, 0, 0, width, 720, [0, 0, 0, 1, 0x65]);
         await Task.Delay(Timeout.Infinite, cancellationToken);
     }
 

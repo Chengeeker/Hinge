@@ -59,8 +59,8 @@ import androidx.compose.ui.window.Dialog
     var status by remember{mutableStateOf<Map<String,Any?>>(emptyMap())};var opening by remember{mutableStateOf(false)}
     LaunchedEffect(model.foreground){model.run{status=model.api.call("screenControlStatus").asMap()}}
     OriginalPage{
-        OriginalCard{OriginalRow("手机控制电脑","电脑桌面、触控板与游戏模式","Icons.computer_outlined",action=open)};Spacer(Modifier.height(16.dp))
-        OriginalCard{Column(Modifier.padding(16.dp)){
+        HingeSettingsCard {OriginalRow("手机控制电脑","电脑桌面、触控板与游戏模式","Icons.computer_outlined",action=open)};Spacer(Modifier.height(16.dp))
+        HingeSettingsCard {Column(Modifier.padding(16.dp)){
             Text("电脑控制手机",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(8.dp));Text(when{status["supported"]==false->"需要 Android 11 及以上系统。";status["developerOptionsEnabled"]==false->"请先开启开发者选项和无线调试。";status["developerOptionsEnabled"]==true->"开发者选项已开启，请在系统设置确认无线调试状态。";else->"请在系统设置中开启无线调试。"})
             Spacer(Modifier.height(16.dp));HingeFilledButton(onClick={opening=true;model.run{try{if(model.api.call("openWirelessDebuggingSettings")!=true)model.message="无法打开系统设置，请手动进入开发者选项中的无线调试。"}finally{opening=false}}},enabled=status["supported"]!=false&&!opening,modifier=Modifier.fillMaxWidth()){HIcon("Icons.settings_outlined");Spacer(Modifier.width(8.dp));Text(if(opening)"正在打开…" else "打开系统调试设置")}
         }};Spacer(Modifier.height(24.dp));Text("连接说明",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(8.dp));Text("手机与电脑连接同一网络。开启无线调试后，在电脑的“投屏与远控”中完成配对并开始投屏。仅向可信电脑授权。")

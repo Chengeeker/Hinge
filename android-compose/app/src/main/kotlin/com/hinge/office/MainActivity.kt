@@ -169,6 +169,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         startConnectionService(
             if (intent?.action == HingeForegroundService.ACTION_WAKE) {
                 HingeForegroundService.ACTION_WAKE
@@ -251,12 +252,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
-        if (tapHaptics.onTouch(event, resources.displayMetrics.density) && hapticFeedbackEnabled()) {
-            window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+    internal fun componentTapFeedback(emit: () -> Unit) = tapHaptics.componentFeedback(emit)
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean =
+        tapHaptics.dispatchTouch(event, resources.displayMetrics.density, ::hapticFeedbackEnabled,
+            { window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) }) {
+            super.dispatchTouchEvent(event)
         }
-        return super.dispatchTouchEvent(event)
-    }
     override fun onResume() {
         super.onResume()
         model.foreground = true
@@ -1613,10 +1615,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
             // Monet is enabled by default. An explicit false remains false.
             "dynamicColorEnabled" to preferences.getBoolean("dynamic_color_enabled", true),
             "fontWeightLevel" to preferences.getInt("font_weight_level", 0),
+            "customFontWeight" to preferences.getBoolean("custom_font_weight", preferences.getInt("font_weight_level", 0) != 0),
+            "fontWeightDelta" to preferences.getInt("font_weight_delta", hingeLegacyWeightDelta(preferences.getInt("font_weight_level", 0))),
+            "fontScale" to hingeAppFontScale(preferences.getFloat("font_scale", 1f)),
             "seedColor" to preferences.getInt("seed_color", 0xFF6750A4.toInt()),
             "navigationStyle" to preferences.getString("navigation_style", "adaptive").orEmpty(),
             "floatingCapsuleNavigation" to preferences.getBoolean("floating_capsule_navigation", false),
             "useLiquidGlass" to preferences.getBoolean("use_liquid_glass", false),
+            "translucentNavigationGlass" to preferences.getBoolean("translucent_navigation_glass", false),
             "phoneRemoteControlEnabled" to preferences.getBoolean("phone_remote_control_enabled", false),
             "imageStoragePath" to preferences.getString("image_storage_path", "").orEmpty(),
             "videoStoragePath" to preferences.getString("video_storage_path", "").orEmpty(),
@@ -1643,10 +1649,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
             .putBoolean("pure_black_dark_mode", values["pureBlackDarkMode"] as? Boolean ?: false)
             .putBoolean("dynamic_color_enabled", values["dynamicColorEnabled"] as? Boolean ?: false)
             .putInt("font_weight_level", (values["fontWeightLevel"] as? Number)?.toInt() ?: 0)
+            .putBoolean("custom_font_weight", values["customFontWeight"] as? Boolean ?: false)
+            .putInt("font_weight_delta", (values["fontWeightDelta"] as? Number)?.toInt()?.coerceIn(-300, 300) ?: 0)
+            .putFloat("font_scale", hingeAppFontScale(values["fontScale"]))
             .putInt("seed_color", (values["seedColor"] as? Number)?.toInt() ?: 0xFF6750A4.toInt())
             .putString("navigation_style", values["navigationStyle"]?.toString() ?: "adaptive")
             .putBoolean("floating_capsule_navigation", values["floatingCapsuleNavigation"] as? Boolean ?: false)
             .putBoolean("use_liquid_glass", values["useLiquidGlass"] as? Boolean ?: false)
+            .putBoolean("translucent_navigation_glass", values["translucentNavigationGlass"] as? Boolean ?: false)
             .putBoolean("phone_remote_control_enabled", values["phoneRemoteControlEnabled"] as? Boolean ?: false)
             .putString("image_storage_path", values["imageStoragePath"]?.toString() ?: "")
             .putString("video_storage_path", values["videoStoragePath"]?.toString() ?: "")

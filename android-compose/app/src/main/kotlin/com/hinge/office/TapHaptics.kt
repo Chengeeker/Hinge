@@ -10,6 +10,31 @@ import androidx.compose.ui.input.pointer.motionEventSpy
 import androidx.compose.ui.platform.LocalView
 
 internal class TapHaptics {
+    private var gestureActive = false
+    private var componentFeedbackEmitted = false
+
+    // The gesture owns its feedback; no time gate that could swallow the next tap.
+    fun dispatchTouch(event: MotionEvent, density: Float, enabled: () -> Boolean,
+        emit: () -> Unit, dispatch: () -> Boolean): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            gestureActive = true
+            componentFeedbackEmitted = false
+        }
+        val tap = onTouch(event, density)
+        try {
+            val handled = dispatch()
+            if (tap && enabled() && !componentFeedbackEmitted) emit()
+            return handled
+        } finally {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) gestureActive = false
+        }
+    }
+
+    fun componentFeedback(emit: () -> Unit) {
+        if (gestureActive) componentFeedbackEmitted = true
+        emit()
+    }
+
     private var tracking = false
     private var moved = false
     private var startX = 0f
@@ -61,4 +86,31 @@ internal fun Modifier.hingeWindowTapFeedback(): Modifier = composed {
             view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
     }
+}
+
+
+internal val LocalHingeSettingsClickFeedback = staticCompositionLocalOf<(android.view.View) -> Unit> {
+    { it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+}
+
+@androidx.compose.runtime.Composable
+internal fun ProvideHingeTapFeedback(enabled: () -> Boolean, emit: (() -> Unit) -> Unit,
+    content: @androidx.compose.runtime.Composable () -> Unit) {
+    val enabledNow = androidx.compose.runtime.rememberUpdatedState(enabled)
+    val emitNow = androidx.compose.runtime.rememberUpdatedState(emit)
+    val platform = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val feedback = remember(platform) { object : androidx.compose.ui.hapticfeedback.HapticFeedback {
+        override fun performHapticFeedback(hapticFeedbackType: androidx.compose.ui.hapticfeedback.HapticFeedbackType) {
+            if (enabledNow.value()) emitNow.value { platform.performHapticFeedback(hapticFeedbackType) }
+        }
+    } }
+    val click = remember { { view: android.view.View ->
+        if (enabledNow.value()) emitNow.value { view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+    } }
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalHingeTapFeedbackEnabled provides enabled,
+        LocalHingeSettingsClickFeedback provides click,
+        androidx.compose.ui.platform.LocalHapticFeedback provides feedback,
+        content = content,
+    )
 }

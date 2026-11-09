@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$KeystorePath = '',
     [string]$KeyAlias = '',
     [string]$StorePassword = '',
@@ -8,7 +8,7 @@
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$preferredJavaHome = 'D:\jdk17'
+$preferredJavaHome = Join-Path $env:USERPROFILE '.gradle/jdks/eclipse_adoptium-21-amd64-windows.2'
 $gradleRoot = $PSScriptRoot
 $keyPropertiesPath = Join-Path $gradleRoot 'key.properties'
 
@@ -77,7 +77,7 @@ $sourceStoreType = if ($signingProperties.ContainsKey('storeType') -and
 }
 
 # Gradle must not inherit the machine-wide Java 26 shim. Prefer the
-# verified local JDK 17, then fall back to a valid caller-provided JAVA_HOME.
+# verified local JDK 21, then fall back to a valid caller-provided JAVA_HOME.
 $androidJavaHome = if (Test-Path -LiteralPath (Join-Path $preferredJavaHome 'bin\java.exe') -PathType Leaf) {
     $preferredJavaHome
 } elseif (-not [string]::IsNullOrWhiteSpace($env:JAVA_HOME) -and
@@ -87,7 +87,7 @@ $androidJavaHome = if (Test-Path -LiteralPath (Join-Path $preferredJavaHome 'bin
     $null
 }
 if ($null -eq $androidJavaHome) {
-    throw '未找到可用的 JDK 17。请安装 JDK 17，或通过 JAVA_HOME 指定包含 bin\java.exe 的 JDK。'
+    throw '未找到可用的 JDK 21。请安装 JDK 21，或通过 JAVA_HOME 指定包含 bin\java.exe 的 JDK。'
 }
 
 if ([string]::IsNullOrWhiteSpace($KeystorePath)) {

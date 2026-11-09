@@ -1,0 +1,1 @@
+<resources><style name="UnifiedGlassChoiceAnimation"><item name="android:windowEnterAnimation">@anim/glass_choice_fade_in</item><item name="android:windowExitAnimation">@anim/glass_choice_fade_out</item></style></resources>

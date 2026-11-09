@@ -108,12 +108,12 @@ private fun Modifier.capsuleShadow(dark:Boolean)=drawWithCache {
 @Composable fun PhoneRemoteSettings(model:HingeModel,open:(String)->Unit)=OriginalPage(topPadding=12.dp,bottomPadding=24.dp) {
     val enabled=model.settings["phoneRemoteControlEnabled"]==true
     val computers=model.ready.filter{it.text("platform").contains("windows",true)}
-    OriginalCard { OriginalRow("启用手机远控电脑","开启后，可用此手机控制已连接的 Windows 电脑。","Icons.touch_app_outlined",trailing={Switch(enabled,{model.run{model.saveSetting("phoneRemoteControlEnabled",it)}})}) }
-    Spacer(Modifier.height(12.dp));OriginalCard{Column(Modifier.padding(16.dp)){Text("当前状态",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(8.dp));Text(if(!enabled)"已关闭" else if(computers.isEmpty())"已开启 · 等待 Windows 电脑连接" else "已开启 · ${computers.size} 台电脑在线",style=MaterialTheme.typography.bodyLarge);Spacer(Modifier.height(8.dp));Text("单指滑动移鼠标，轻点左键，双指右键/滚动。电脑桌面长按后移动可拖拽，抬手即松开。")}}
+    HingeSettingsCard { OriginalRow("启用手机远控电脑","开启后，可用此手机控制已连接的 Windows 电脑。","Icons.touch_app_outlined",trailing={Switch(enabled,{model.run{model.saveSetting("phoneRemoteControlEnabled",it)}})}) }
+    Spacer(Modifier.height(12.dp));HingeSettingsCard {Column(Modifier.padding(16.dp)){Text("当前状态",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(8.dp));Text(if(!enabled)"已关闭" else if(computers.isEmpty())"已开启 · 等待 Windows 电脑连接" else "已开启 · ${computers.size} 台电脑在线",style=MaterialTheme.typography.bodyLarge);Spacer(Modifier.height(8.dp));Text("单指滑动移鼠标，轻点左键，双指右键/滚动。电脑桌面长按后移动可拖拽，抬手即松开。")}}
     Spacer(Modifier.height(20.dp));Text("已连接的 Windows 电脑",Modifier.padding(horizontal=16.dp),style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(8.dp))
-    if(computers.isEmpty())OriginalCard{OriginalRow("没有已连接的 Windows 电脑","请先在 Hinge 首页连接电脑，再返回此处打开触控板。","Icons.computer_outlined")}
+    if(computers.isEmpty())HingeSettingsCard {OriginalRow("没有已连接的 Windows 电脑","请先在 Hinge 首页连接电脑，再返回此处打开触控板。","Icons.computer_outlined")}
     computers.forEach{peer->
-        OriginalCard {
+        HingeSettingsCard {
             var menu by remember{mutableStateOf(false)}
             OriginalRow(connectedDeviceLabel(peer, computers),"已连接 · 等待开始控制","Icons.computer_outlined",trailing={Box{IconButton(onClick={menu=true}){HIcon("Icons.more_vert","电脑设置")};DropdownMenu(menu,{menu=false},modifier=Modifier.hingeWindowTapFeedback()){
                 DropdownMenuItem(text={Text("清除此电脑的桌面身份")},onClick={menu=false;model.run{model.api.call("forgetPeer",mapOf("peerId" to peer.text("deviceId")),"hinge/desktop_video")}})

@@ -61,16 +61,21 @@ fun MainActivity.setComposeContent() = setContent {
     if (dark && model.settings["pureBlackDarkMode"] == true) scheme = scheme.copy(background=Color.Black,surface=Color.Black,surfaceDim=Color.Black,surfaceBright=Color(0xff1a1a1a),surfaceContainerLowest=Color.Black,surfaceContainerLow=Color(0xff080808),surfaceContainer=Color(0xff101010),surfaceContainerHigh=Color(0xff181818),surfaceContainerHighest=Color(0xff222222))
     val lightBars = scheme.surface.luminance() > .5f
     LaunchedEffect(model.activity, lightBars) { model.activity.applySystemBarAppearance(lightBars) }
+    val baseDensity = androidx.compose.ui.platform.LocalDensity.current
+    val appScale = hingeAppFontScale(model.settings["fontScale"])
+    val fontDensity = remember(baseDensity, appScale) { hingeFontDensity(baseDensity, appScale) }
+    ProvideHingeTapFeedback(model.activity::hapticFeedbackEnabled, model.activity::componentTapFeedback) {
     CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalDensity provides fontDensity,
         LocalRippleConfiguration provides null,
         LocalOverscrollFactory provides null,
-        LocalHingeTapFeedbackEnabled provides model.activity::hapticFeedbackEnabled,
     ) {
-        MaterialTheme(colorScheme = scheme, typography = hingeTypography(model.settings.number("fontWeightLevel").toInt(), scheme)) {
+        MaterialTheme(colorScheme = scheme, typography = hingeTypography(model.settings.number("fontWeightLevel").toInt(), scheme, if (model.settings["customFontWeight"] as? Boolean ?: (model.settings.number("fontWeightLevel").toInt() != 0)) model.settings.number("fontWeightDelta", hingeLegacyWeightDelta(model.settings.number("fontWeightLevel").toInt()).toLong()).toInt().coerceIn(-300, 300) else 0)) {
             Surface(Modifier.fillMaxSize(), color = scheme.surface, contentColor = scheme.onSurface) {
                 ProvideTextStyle(MaterialTheme.typography.bodyMedium, content)
             }
         }
+    }
     }
 }
 

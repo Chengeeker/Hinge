@@ -25,7 +25,7 @@ import java.security.SecureRandom
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
         Text("可选的异步文件中转",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(8.dp))
         Text("局域网连接仍然优先。Cloud Relay 只对已经在 Hinge 中信任过的设备生效；Worker 和 R2 只保存加密内容。");Spacer(Modifier.height(16.dp))
-        OriginalCard { OriginalRow("启用 Cloud Relay",if(token.isNotEmpty())"当前设备已注册，可在局域网不可用时使用" else "完成 Worker 注册后才能发送或接收",trailing={Switch(enabled,{enabled=it;model.run{model.saveSetting("cloudRelay",values())}},enabled=!busy)}) }
+        HingeSettingsCard { OriginalRow("启用 Cloud Relay",if(token.isNotEmpty())"当前设备已注册，可在局域网不可用时使用" else "完成 Worker 注册后才能发送或接收",trailing={Switch(enabled,{enabled=it;model.run{model.saveSetting("cloudRelay",values())}},enabled=!busy)}) }
         Spacer(Modifier.height(12.dp));HingeTextField(endpoint,{endpoint=it},keyboardOptions=androidx.compose.foundation.text.KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Uri),label={Text("Worker 地址")},placeholder={Text("https://hinge-relay.example.workers.dev")},modifier=Modifier.fillMaxWidth())
         Spacer(Modifier.height(12.dp));HingeTextField(key,{key=it},label={Text("Relay 加密密钥")},supportingText={Text("两台已信任设备必须使用同一密钥；密钥不会上传 Worker。")},modifier=Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp));FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){

@@ -3,7 +3,7 @@
 Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，支持文件传输、双向远控，以及在电脑上查看手机工作区数据。
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
-- GitHub 发行包：[Hinge v3.0.0 更新说明与下载](https://github.com/Chengeeker/Hinge/releases/tag/v3.0.0)；Android `3.0.0+188`（arm64-v8a），Windows `3.0.0.0`。
+- Android `3.0.0+192`（arm64-v8a）和 Windows `3.0.0.0` 安装包见 [Hinge v3.0.0 发行页](https://github.com/Chengeeker/Hinge/releases/tag/v3.0.0)。
 - Android 使用 Kotlin / Jetpack Compose，构建产物为 `publish/Hinge.apk`。见[版本约定](docs/VERSIONING.md)。
 - 许可证：[MIT](LICENSE)
 - 本版完整变更：[v3.0.0 中文更新日志](docs/CHANGELOG_v3.0.0.md)
@@ -123,7 +123,7 @@ Hinge 不会修改 `EnableLUA`，也不要求用户把它改成 `1`。保持系�
 
 ### Android
 
-需要 JDK 17 和 Android SDK 37.2。用 Android Studio 打开 `android-compose/` 可进行开发，或在项目根目录运行：
+需要 JDK 21 和 Android SDK 37.2。用 Android Studio 打开 `android-compose/` 可进行开发，或在项目根目录运行：
 
 ```powershell
 .\android-compose\gradlew.bat -p android-compose :app:testDebugUnitTest :app:lintRelease

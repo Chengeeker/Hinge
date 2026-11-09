@@ -102,132 +102,49 @@ fun GlassNavigation(model: HingeModel, width: Dp, selected: Int, tabBacking: Sta
         animationSpec = glassPressureAnimation(longPressed, reducedMotion),
         label = "glass-pressure",
     )
-    var image by remember { mutableStateOf<Bitmap?>(null) }
-    var hardwareCanvas by remember(view) { mutableStateOf<Boolean?>(null) }
-    val liveMotion = remember { mutableStateOf<GlassMotion?>(null) }
-    val liveShaders = remember(hardwareCanvas, model.activity) {
-        if (Build.VERSION.SDK_INT >= 33 && hardwareCanvas == true) {
-            runCatching { LiveGlassShaders(model.activity) }.onFailure {
-                android.util.Log.w("HingeGlass", "Live shader unavailable; using GLES", it)
-            }.getOrNull()
-        } else null
-    }
-
-    LaunchedEffect(backdrop, width, density, layout, surface, hardwareCanvas, liveShaders) {
-        if (Build.VERSION.SDK_INT >= 33 && hardwareCanvas == null) return@LaunchedEffect
-        val dispatcher = if (liveShaders == null) Executors.newSingleThreadExecutor { work ->
-            Thread(work, "Hinge-Glass").apply { isDaemon = true }
-        }.asCoroutineDispatcher() else null
-        var renderer: GlassRenderer? = null
-        try {
-            if (dispatcher != null) withContext(dispatcher) { renderer = GlassRenderer(model.activity) }
-            val barWidth = width.value
-            val fullWidth = barWidth + 2f * GLASS_MARGIN_X
-            val fullHeight = GLASS_HEIGHT + 2f * GLASS_MARGIN_Y
-            val surfaceLimit = renderer?.maxSurfaceSize?.toFloat() ?: Float.MAX_VALUE
-            // The GLES fallback reads a bitmap each frame; cap its pixel cost on high-DPR devices.
-            val ratio = minOf(density.density, 2f, surfaceLimit / fullWidth, surfaceLimit / fullHeight)
-            val captureSize = IntSize((fullWidth * ratio).roundToInt(), (fullHeight * ratio).roundToInt())
-            val downsample = ratio / density.density
-            val margins = Offset(GLASS_MARGIN_X, GLASS_MARGIN_Y) * density.density
-            val position = GlassSpring(selectedSlot.toFloat())
-            var settlingDrag = false
-            var previousTime = 0L
-            var previousFrame: GlassFrame? = null
-            var pageKey: PageCapture? = null
-            var artKey: Pair<Long, Long>? = null
-            var pageImage: Bitmap? = null
-            var inactiveImage: Bitmap? = null
-            var activeImage: Bitmap? = null
-
-            suspend fun capture(draw: DrawScope.() -> Unit): Bitmap {
-                crop.record(density, layout, captureSize) { scale(downsample, Offset.Zero, draw) }
-                val bitmap = crop.toImageBitmap().asAndroidBitmap()
-                return if (bitmap.config != Bitmap.Config.ARGB_8888) {
-                    requireNotNull(bitmap.copy(Bitmap.Config.ARGB_8888, false))
-                } else bitmap
-            }
-
-            while (isActive) {
-                if (!drawing) {
-                    snapshotFlow { drawing }.first { it }
-                    previousTime = 0L
-                }
-                val time = withFrameNanos { it }
-                if (!drawing) continue
-                val seconds = if (previousTime == 0L) 0f else ((time - previousTime) / 1e9).toFloat()
-                previousTime = time
-                if (backdrop.layer.size.width == 0 || active.layer.size.width == 0 ||
-                    inactive.layer.size.width == 0) continue
-
-                val drag = dragTarget
-                val selectedPosition = selectedSlot.toFloat()
-                val backing = tabBacking.value.let { if (rtl) 2f - it else it }
-                if (drag != null) settlingDrag = true
-                if (settlingDrag && !reduceMotion) {
-                    position.step(drag ?: selectedPosition, seconds,
-                        if (drag != null) .15f else .35f, if (drag != null) .86f else .85f)
-                    if (drag == null && position.value == selectedPosition && backing == selectedPosition) {
-                        settlingDrag = false
-                    }
-                } else {
-                    position.snap(drag ?: backing)
-                    if (drag == null) settlingDrag = false
-                }
-                val motion = GlassMotion(position.value, position.velocity, pressure.value)
-                if (dispatcher == null) {
-                    liveMotion.value = motion
-                    continue
-                }
-                val key = PageCapture(backdrop.version, origin - backdrop.origin - margins)
-                val textKey = inactive.version to active.version
-                val frame = GlassFrame(motion, key, textKey)
-                if (frame == previousFrame) continue
-
-                if (pageKey != key) {
-                    pageImage = capture {
-                        drawRect(surface)
-                        translate(-key.offset.x, -key.offset.y) { drawLayer(backdrop.layer) }
-                    }
-                    pageKey = key
-                }
-                if (artKey != textKey) {
-                    inactiveImage = capture { translate(margins.x, margins.y) { drawLayer(inactive.layer) } }
-                    activeImage = capture { translate(margins.x, margins.y) { drawLayer(active.layer) } }
-                    artKey = textKey
-                }
-                image = withContext(dispatcher) {
-                    requireNotNull(renderer).render(requireNotNull(pageImage), requireNotNull(inactiveImage),
-                        requireNotNull(activeImage), ratio, barWidth, dark, motion)
-                }
-                previousFrame = frame
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            model.message = "液态玻璃渲染失败：${error.message}"
-        } finally {
-            if (dispatcher != null) {
-                withContext(NonCancellable + dispatcher) { renderer?.close() }
-                dispatcher.close()
-            }
+    val liveMotion = remember { mutableStateOf(GlassMotion(selected.toFloat(), 0f, 0f)) }
+    LaunchedEffect(backdrop, width, density, layout) {
+        val spring = GlassSpring(selectedSlot.toFloat())
+        var settlingDrag = false
+        var previousTime = 0L
+        while (isActive) {
+            if (!drawing) { snapshotFlow { drawing }.first { it }; previousTime = 0L }
+            val time = withFrameNanos { it }
+            if (!drawing) continue
+            val seconds = if (previousTime == 0L) 0f else ((time - previousTime) / 1e9).toFloat()
+            previousTime = time
+            val drag = dragTarget
+            val target = selectedSlot.toFloat()
+            val backing = tabBacking.value.let { if (rtl) 2f - it else it }
+            if (drag != null) settlingDrag = true
+            if (settlingDrag && !reduceMotion) {
+                spring.step(drag ?: target, seconds, if (drag != null) .15f else .35f, if (drag != null) .86f else .85f)
+                if (drag == null && spring.value == target && backing == target) settlingDrag = false
+            } else { spring.snap(drag ?: backing); if (drag == null) settlingDrag = false }
+            liveMotion.value = GlassMotion(spring.value, spring.velocity, pressure.value)
         }
     }
 
     if (!visible) return
     Box(Modifier.width(width).height(GLASS_HEIGHT.dp).onGloballyPositioned {
         origin = it.positionInRoot()
-        if (Build.VERSION.SDK_INT >= 33) hardwareCanvas = view.isHardwareAccelerated
     }) {
         val keyboardFocus = focused.takeIf { inputMode.inputMode == InputMode.Keyboard }
-        GlassTabArt(inactive, inactiveColor, selectedStyle = false,
-            visible = liveShaders == null && image == null, keyboardFocus, dark)
-        GlassTabArt(active, activeColor, selectedStyle = true, visible = false, focused = null, dark = dark)
-        val drawingArea = Modifier.requiredSize(width + (2f * GLASS_MARGIN_X).dp,
-            (GLASS_HEIGHT + 2f * GLASS_MARGIN_Y).dp).align(Alignment.Center)
-        if (Build.VERSION.SDK_INT >= 33 && liveShaders != null) {
-            LiveGlassBar(liveShaders, liveMotion, width.value, surface, dark, backdrop, inactive, active, origin, drawingArea)
-        } else image?.let { Image(it.asImageBitmap(), null, drawingArea) }
+        val normal = rememberGraphicsLayer()
+        val selectedArt = rememberGraphicsLayer()
+        val drawingArea = Modifier.requiredSize(width + 40.dp, (GLASS_HEIGHT + 30f).dp).align(Alignment.Center)
+        Box(drawingArea) {
+            Box(Modifier.fillMaxSize().drawWithContent { normal.record { this@drawWithContent.drawContent() } }, contentAlignment = Alignment.Center) {
+                Box(Modifier.size(width, GLASS_HEIGHT.dp)) { GlassTabArt(inactive, inactiveColor, false, true, keyboardFocus, dark) }
+            }
+            Box(Modifier.fillMaxSize().drawWithContent { selectedArt.record { this@drawWithContent.drawContent() } }, contentAlignment = Alignment.Center) {
+                Box(Modifier.size(width, GLASS_HEIGHT.dp)) { GlassTabArt(active, activeColor, true, true, null, dark) }
+            }
+            val motion = liveMotion.value
+            NavigationGlassMaterial(backdrop.layer, { backdrop.origin }, { backdrop.version }, normal, selectedArt,
+                motion.position, motion.pressure, dark, surface, model.settings["translucentNavigationGlass"] as? Boolean ?: false,
+                glassTabs.size, Modifier.fillMaxSize())
+        }
         Row(Modifier.fillMaxSize().selectableGroup().glassTabGestures(width, layout, { selectedSlot },
             onDrag = { dragTarget = it }, onLongPress = { longPressed = it },
             onGestureStarted = model.activity::onGlassGestureStarted,

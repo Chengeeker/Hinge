@@ -66,8 +66,10 @@ internal val OriginalRowStartInset = 16.dp
         outline=c("outline"), outlineVariant=c("outlineVariant"), inverseSurface=c("inverseSurface"), inverseOnSurface=c("inverseOnSurface"), inversePrimary=c("inversePrimary"),
         error=c("error"), onError=c("onError"), errorContainer=c("errorContainer"), onErrorContainer=c("onErrorContainer"), scrim=c("scrim"))
 }
-fun hingeTypography(level: Int, scheme: ColorScheme? = null): Typography {
-    val delta = listOf(0, -100, 50, 100, 200).getOrElse(level) { 0 }
+fun hingeLegacyWeightDelta(level: Int) = listOf(0, -100, 50, 100, 200).getOrElse(level) { 0 }
+
+fun hingeTypography(level: Int, scheme: ColorScheme? = null, adjustment: Int? = null): Typography {
+    val delta = adjustment ?: hingeLegacyWeightDelta(level)
     fun role(size: Int, line: Float, weight: Int, spacing: Float = 0f, secondary: Boolean = false) =
         TextStyle(
             fontSize = size.sp,
@@ -94,6 +96,10 @@ fun hingeTypography(level: Int, scheme: ColorScheme? = null): Typography {
         labelSmall = role(11, 16f, 550, .5f),
     )
 }
+@Composable
+internal fun HingeSettingsCard(content: @Composable ColumnScope.() -> Unit) =
+    OriginalCard(color = MaterialTheme.colorScheme.settingsCardColor(MaterialTheme.colorScheme.surface), content = content)
+
 @Composable fun OriginalCard(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.surfaceContainer, content: @Composable ColumnScope.() -> Unit) = Surface(modifier.fillMaxWidth(), shape=RoundedCornerShape(20.dp),color=color) { Column(content=content) }
 @Composable fun OriginalRow(title: String, subtitle: String? = null, icon: String? = null, iconSlot: Dp = if(LocalHingeCompact.current)20.dp else 24.dp, action: (() -> Unit)? = null, trailing: @Composable (() -> Unit)? = null, titleStyle: TextStyle = MaterialTheme.typography.bodyLarge, subtitleStyle: TextStyle = MaterialTheme.typography.bodySmall, iconColor: Color = MaterialTheme.colorScheme.onSurfaceVariant, verticalInset: Dp = 0.dp, startPadding: Dp = if(LocalHingeCompact.current)12.dp else OriginalRowStartInset, endPadding: Dp = if(LocalHingeCompact.current)12.dp else 24.dp, leading: @Composable (() -> Unit)? = null, minHeight:Dp?=null, modifier: Modifier = Modifier, showActionChevron: Boolean = true) {
     val rowGap=if(LocalHingeCompact.current)10.dp else 16.dp
@@ -200,7 +206,7 @@ internal fun sectionHeadingStyle(typography: androidx.compose.material3.Typograp
 }
 @Composable fun OriginalSettings(model:HingeModel,open:(String)->Unit)=OriginalPage(model.settings["floatingCapsuleNavigation"]==true) {
     @Composable fun section(title:String, content:@Composable ColumnScope.()->Unit) {
-        Text(title,Modifier.padding(start=24.dp),style=MaterialTheme.typography.titleSmall.copy(fontSize=15.sp),color=MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(8.dp)); OriginalCard(content=content); Spacer(Modifier.height(32.dp))
+        Text(title,Modifier.padding(start=24.dp),style=MaterialTheme.typography.titleSmall.copy(fontSize=15.sp),color=MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(8.dp)); HingeSettingsCard(content); Spacer(Modifier.height(32.dp))
     }
     @Composable fun row(title:String,subtitle:String?,icon:String,target:String=title)=OriginalRow(title,subtitle,"Symbols.${icon}_rounded",40.dp,action={open(target)},titleStyle=MaterialTheme.typography.bodyLarge,endPadding=16.dp)
     section("常规") {

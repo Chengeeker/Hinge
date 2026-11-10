@@ -27,7 +27,7 @@ void main() {
 
   for (final platform in [TargetPlatform.android, TargetPlatform.windows]) {
     testWidgets(
-      'splash policy follows $platform without changing tap actions',
+      'ordinary controls disable pressed ink on $platform without changing taps',
       (tester) async {
         debugDefaultTargetPlatformOverride = platform;
         try {
@@ -54,11 +54,43 @@ void main() {
           );
           await tester.pump();
           final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-          final factory = platform == TargetPlatform.android
-              ? NoSplash.splashFactory
-              : InkRipple.splashFactory;
-          expect(app.theme!.splashFactory, same(factory));
-          expect(app.darkTheme!.splashFactory, same(factory));
+          for (final theme in [app.theme!, app.darkTheme!]) {
+            expect(theme.splashFactory, same(NoSplash.splashFactory));
+            expect(theme.splashColor, Colors.transparent);
+            expect(theme.highlightColor, Colors.transparent);
+            final overlays = [
+              theme.filledButtonTheme.style?.overlayColor,
+              theme.outlinedButtonTheme.style?.overlayColor,
+              theme.textButtonTheme.style?.overlayColor,
+              theme.elevatedButtonTheme.style?.overlayColor,
+              theme.iconButtonTheme.style?.overlayColor,
+              theme.segmentedButtonTheme.style?.overlayColor,
+              theme.checkboxTheme.overlayColor,
+              theme.radioTheme.overlayColor,
+              theme.switchTheme.overlayColor,
+              theme.navigationBarTheme.overlayColor,
+            ];
+            for (final overlay in overlays) {
+              expect(
+                overlay?.resolve({WidgetState.pressed}),
+                Colors.transparent,
+              );
+              expect(
+                overlay?.resolve({WidgetState.focused}),
+                isNull,
+                reason: 'keyboard focus uses the component default',
+              );
+            }
+            final slider = theme.sliderTheme.overlayColor;
+            expect(
+              WidgetStateProperty.resolveAs(slider, {WidgetState.dragged}),
+              Colors.transparent,
+            );
+            expect(
+              WidgetStateProperty.resolveAs(slider, {WidgetState.focused}),
+              isNot(Colors.transparent),
+            );
+          }
           if (platform == TargetPlatform.android) {
             state.setTabIndex(6);
             await tester.pumpAndSettle();

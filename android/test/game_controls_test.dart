@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +7,66 @@ import 'package:hinge/core/remote_input_cipher.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'preset import appends with a fresh identity and rolls back failed writes',
+    () async {
+      final original = GamePreset.basic();
+      final store = GamePresetStore()
+        ..presets = [original]
+        ..selected = original.id;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var fail = false;
+      messenger.setMockMethodCallHandler(GamePresetStore.channel, (call) async {
+        if (fail) throw PlatformException(code: 'disk-full');
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(GamePresetStore.channel, null),
+      );
+      await store.importPreset(jsonEncode(original.toJson()));
+      expect(store.presets.length, 2);
+      expect(store.current.id, isNot(original.id));
+      expect(store.presets.first, same(original));
+      expect(
+        store.current.controls.first.toJson(),
+        original.controls.first.toJson(),
+      );
+      final selected = store.selected;
+      fail = true;
+      await expectLater(
+        store.importPreset(jsonEncode(original.toJson())),
+        throwsA(isA<PlatformException>()),
+      );
+      expect(store.presets.length, 2);
+      expect(store.selected, selected);
+      await expectLater(
+        store.importPreset(
+          jsonEncode({
+            ...original.toJson(),
+            'controls': List.generate(
+              65,
+              (_) => original.controls.first.toJson(),
+            ),
+          }),
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        store.importPreset(
+          jsonEncode({
+            ...original.toJson(),
+            'controls': [
+              original.controls.first.toJson(),
+              original.controls.first.toJson(),
+            ],
+          }),
+        ),
+        throwsFormatException,
+      );
+      expect(store.presets.length, 2);
+    },
+  );
   test(
     'desktop selection persists without changing the shared game selection',
     () async {

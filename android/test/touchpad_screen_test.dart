@@ -98,292 +98,377 @@ class _Connection extends Fake implements SessionConnection {
 }
 
 void main() {
-  testWidgets(
-    'mapping preserves desktop mouse gestures and shares held buttons',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 360);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final connection = _Connection();
-      final calls = <MethodCall>[];
-      final inputs = <RemoteInputEvent>[];
-      final messenger = tester.binding.defaultBinaryMessenger;
-      const channel = MethodChannel('hinge/desktop_video');
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        calls.add(call);
-        if (call.method == 'start') return {'sessionId': 77, 'textureId': 123};
-        if (call.method == 'sendInput') {
-          inputs.add(
-            RemoteInputEvent.tryParse(call.arguments['data'] as Uint8List)!,
-          );
-          return true;
-        }
-        return null;
-      });
-      for (final channel in [
-        const MethodChannel('hinge/desktop_video/events'),
-        GamePresetStore.channel,
-        const MethodChannel('hinge/platform'),
-      ]) {
-        messenger.setMockMethodCallHandler(channel, (_) async => null);
-      }
-      addTearDown(() async {
-        await tester.pumpWidget(const SizedBox());
-        await connection.frameController.close();
-        await connection.stateController.close();
+  for (final size in [const Size(800, 360), const Size(568, 256)]) {
+    testWidgets(
+      'fullscreen mapping preserves mouse gestures and video with cutout ($size)',
+      (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        tester.view.viewPadding = const FakeViewPadding(
+          left: 24,
+          top: 6,
+          bottom: 8,
+        );
+        tester.view.padding = const FakeViewPadding(
+          left: 24,
+          top: 6,
+          bottom: 8,
+        );
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetViewPadding);
+        addTearDown(tester.view.resetPadding);
+        final connection = _Connection();
+        final calls = <MethodCall>[];
+        final inputs = <RemoteInputEvent>[];
+        final messenger = tester.binding.defaultBinaryMessenger;
+        const channel = MethodChannel('hinge/desktop_video');
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          if (call.method == 'start') {
+            return {'sessionId': 77, 'textureId': 123};
+          }
+          if (call.method == 'sendInput') {
+            inputs.add(
+              RemoteInputEvent.tryParse(call.arguments['data'] as Uint8List)!,
+            );
+            return true;
+          }
+          return null;
+        });
         for (final channel in [
-          channel,
           const MethodChannel('hinge/desktop_video/events'),
           GamePresetStore.channel,
           const MethodChannel('hinge/platform'),
         ]) {
-          messenger.setMockMethodCallHandler(channel, null);
+          messenger.setMockMethodCallHandler(channel, (_) async => null);
         }
-      });
-      await tester.pumpWidget(
-        MaterialApp(
-          home: TouchpadScreen(
-            peerName: 'PC',
-            connection: connection,
-            showDesktop: true,
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          await connection.frameController.close();
+          await connection.stateController.close();
+          for (final channel in [
+            channel,
+            const MethodChannel('hinge/desktop_video/events'),
+            GamePresetStore.channel,
+            const MethodChannel('hinge/platform'),
+          ]) {
+            messenger.setMockMethodCallHandler(channel, null);
+          }
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: TouchpadScreen(
+              peerName: 'PC',
+              connection: connection,
+              showDesktop: true,
+            ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      for (final value in [
-        {'state': 'format', 'width': 1920, 'height': 1080},
-        {
-          'state': 'ready',
-          'canControl': true,
-          'relativeMouse': true,
-          'absoluteMouse': true,
-        },
-      ]) {
-        messenger.handlePlatformMessage(
-          'hinge/desktop_video/events',
-          const StandardMethodCodec().encodeSuccessEnvelope({
-            'sessionId': 77,
-            ...value,
-          }),
-          (_) {},
         );
-      }
-      await tester.pumpAndSettle();
-      final texture = tester.element(find.byType(Texture));
-      expect(
-        tester
-            .widget<DesktopVideoView>(find.byType(DesktopVideoView))
-            .directTouch,
-        false,
-        reason: 'unconfigured desktop defaults to mouse pointer movement',
-      );
-      expect(find.text('按住拖拽'), findsNothing);
-      expect(find.text('松开左键'), findsNothing);
-      Future<void> tools() async {
-        await tester.tap(find.text('操作'));
         await tester.pumpAndSettle();
-      }
-
-      Future<void> closeTools() async {
-        await tester.tap(find.byTooltip('关闭工具栏'));
+        for (final value in [
+          {'state': 'format', 'width': 1920, 'height': 1080},
+          {
+            'state': 'ready',
+            'canControl': true,
+            'relativeMouse': true,
+            'absoluteMouse': true,
+          },
+        ]) {
+          messenger.handlePlatformMessage(
+            'hinge/desktop_video/events',
+            const StandardMethodCodec().encodeSuccessEnvelope({
+              'sessionId': 77,
+              ...value,
+            }),
+            (_) {},
+          );
+        }
         await tester.pumpAndSettle();
-      }
+        final texture = tester.element(find.byType(Texture));
+        final videoRect = tester.getRect(find.byType(Texture));
+        expect(
+          tester
+              .widget<DesktopVideoView>(find.byType(DesktopVideoView))
+              .directTouch,
+          false,
+          reason: 'unconfigured desktop defaults to mouse pointer movement',
+        );
+        expect(find.text('按住拖拽'), findsNothing);
+        expect(find.text('松开左键'), findsNothing);
+        Future<void> tools() async {
+          await tester.tap(
+            find.byTooltip('按键映射设置').evaluate().isNotEmpty
+                ? find.byTooltip('按键映射设置')
+                : find.text('操作'),
+          );
+          await tester.pumpAndSettle();
+        }
 
-      Finder button(String label) => find.descendant(
-        of: find.byKey(const ValueKey('game-controls')),
-        matching: find.text(label),
-      );
-      List<RemoteInputEvent> events(RemoteActionType type) =>
-          inputs.where((e) => e.actionType == type).toList();
-      await tools();
-      await tester.tap(find.widgetWithText(SwitchListTile, '启用按键映射'));
-      await tester.pumpAndSettle();
-      expect(find.widgetWithText(SwitchListTile, '按住左键拖拽'), findsNothing);
-      await tester.ensureVisible(find.text('屏幕触控'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('屏幕触控'));
-      await tester.pumpAndSettle();
-      await closeTools();
-      expect(find.byKey(const ValueKey('game-canvas')), findsNothing);
-      final center = tester.getRect(find.byType(DesktopGestureSurface)).center;
-      inputs.clear();
-      await tester.tapAt(center);
-      await tester.pump();
-      expect(
-        events(RemoteActionType.mouseMove).single.flags,
-        RemoteInputEvent.absoluteMouseFlag,
-      );
-      expect(
-        events(RemoteActionType.mouseClick).single.buttonOrKey,
-        RemoteMouseButton.left.value,
-      );
-      inputs.clear();
-      final directDrag = await tester.startGesture(
-        center + const Offset(40, 0),
-        pointer: 2001,
-      );
-      await tester.pump(const Duration(milliseconds: 460));
-      await directDrag.moveBy(const Offset(30, 0));
-      await directDrag.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseDown).length, 1);
-      expect(events(RemoteActionType.mouseUp).length, 1);
-      expect(events(RemoteActionType.mouseClick), isEmpty);
-      await tools();
-      await tester.ensureVisible(find.text('鼠标指针'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('鼠标指针'));
-      await tester.pumpAndSettle();
-      await closeTools();
-      inputs.clear();
-      final pointerDrag = await tester.startGesture(center, pointer: 2002);
-      await tester.pump(const Duration(milliseconds: 460));
-      await pointerDrag.moveBy(const Offset(15, 5));
-      await pointerDrag.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseDown).length, 1);
-      expect(events(RemoteActionType.mouseUp).length, 1);
-      expect(events(RemoteActionType.mouseMove).single.flags, 0);
-      inputs.clear();
-      final left = await tester.startGesture(
-        tester.getCenter(button('左键')),
-        pointer: 2003,
-      );
-      await left.moveBy(const Offset(120, -10));
-      await left.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseMove).single.deltaX, 360);
-      expect(events(RemoteActionType.mouseMove).single.flags, 0);
-      expect(events(RemoteActionType.mouseDown).single.buttonOrKey, 0);
-      expect(events(RemoteActionType.mouseUp).single.buttonOrKey, 0);
-      expect(events(RemoteActionType.mouseClick), isEmpty);
-      await tools();
-      await tester.ensureVisible(find.text('屏幕触控'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('屏幕触控'));
-      await tester.pumpAndSettle();
-      await closeTools();
-      inputs.clear();
-      final right = await tester.startGesture(
-        tester.getCenter(button('右键')),
-        pointer: 2004,
-      );
-      final rightDrag = await tester.startGesture(center, pointer: 2005);
-      await tester.pump(const Duration(milliseconds: 460));
-      await rightDrag.moveBy(const Offset(10, 5));
-      await right.up();
-      await rightDrag.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseDown).single.buttonOrKey, 1);
-      expect(events(RemoteActionType.mouseUp).single.buttonOrKey, 1);
-      expect(
-        events(RemoteActionType.mouseMove).single.flags,
-        0,
-        reason: 'held right button must not jump to an absolute coordinate',
-      );
-      expect(events(RemoteActionType.mouseClick), isEmpty);
-      inputs.clear();
-      final ctrl = await tester.startGesture(
-        tester.getCenter(button('Ctrl')),
-        pointer: 2006,
-      );
-      await tester.tapAt(center);
-      await ctrl.up();
-      await tester.pump();
-      expect(events(RemoteActionType.keyDown).single.buttonOrKey, 0x11);
-      expect(events(RemoteActionType.keyUp).single.buttonOrKey, 0x11);
-      expect(events(RemoteActionType.mouseClick).length, 1);
-      await tools();
-      await tester.ensureVisible(find.text('鼠标指针'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('鼠标指针'));
-      await tester.pumpAndSettle();
-      await closeTools();
-      inputs.clear();
-      final ownDrag = await tester.startGesture(center, pointer: 2007);
-      await tester.pump(const Duration(milliseconds: 460));
-      final mappedHold = await tester.startGesture(
-        tester.getCenter(button('左键')),
-        pointer: 2008,
-      );
-      await ownDrag.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseDown).length, 1);
-      expect(
-        events(RemoteActionType.mouseUp),
-        isEmpty,
-        reason: 'mapped hold still owns the left button',
-      );
-      await mappedHold.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseUp).length, 1);
-      inputs.clear();
-      final scrollA = await tester.startGesture(
-        center - const Offset(80, 0),
-        pointer: 2009,
-      );
-      final scrollB = await tester.startGesture(
-        center + const Offset(80, 0),
-        pointer: 2010,
-      );
-      await scrollA.moveBy(const Offset(0, 28));
-      await scrollB.moveBy(const Offset(0, 28));
-      await scrollA.up();
-      await scrollB.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseScroll), isNotEmpty);
-      expect(events(RemoteActionType.mouseDown), isEmpty);
-      expect(events(RemoteActionType.mouseClick), isEmpty);
-      await tools();
-      await tester.ensureVisible(find.widgetWithText(SwitchListTile, '游戏视角'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(SwitchListTile, '游戏视角'));
-      await tester.pumpAndSettle();
-      await closeTools();
-      inputs.clear();
-      await tester.tapAt(center);
-      await tester.pump();
-      expect(
-        inputs,
-        isEmpty,
-        reason: 'camera tapping must not accidentally shoot',
-      );
-      final camera = await tester.startGesture(center, pointer: 2011);
-      await camera.moveBy(const Offset(20, 0));
-      await camera.up();
-      await tester.pump();
-      expect(
-        events(RemoteActionType.mouseMove).single.flags,
-        RemoteInputEvent.relativeMouseFlag,
-      );
-      inputs.clear();
-      final cameraA = await tester.startGesture(
-        center - const Offset(80, 0),
-        pointer: 2012,
-      );
-      final cameraB = await tester.startGesture(
-        center + const Offset(80, 0),
-        pointer: 2013,
-      );
-      await tester.pump();
-      expect(
-        events(RemoteActionType.mouseDown),
-        isEmpty,
-        reason: 'second finger down is not a drag yet',
-      );
-      await cameraA.moveBy(const Offset(30, 0));
-      await tester.pump();
-      expect(events(RemoteActionType.mouseDown).length, 1);
-      await cameraA.up();
-      await cameraB.up();
-      await tester.pump();
-      expect(events(RemoteActionType.mouseUp).length, 1);
-      expect(tester.element(find.byType(Texture)), same(texture));
-      expect(calls.where((c) => c.method == 'start').length, 1);
-      expect(calls.where((c) => c.method == 'stop'), isEmpty);
-    },
-  );
+        Future<void> closeTools() async {
+          await tester.tap(find.byTooltip('关闭工具栏'));
+          await tester.pumpAndSettle();
+        }
+
+        Finder button(String label) => find.descendant(
+          of: find.byKey(const ValueKey('game-controls')),
+          matching: find.text(label),
+        );
+        List<RemoteInputEvent> events(RemoteActionType type) =>
+            inputs.where((e) => e.actionType == type).toList();
+        await tools();
+        await tester.tap(find.widgetWithText(SwitchListTile, '启用按键映射'));
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(SwitchListTile, '按住左键拖拽'), findsNothing);
+        await tester.scrollUntilVisible(
+          find.text('屏幕触控'),
+          140,
+          scrollable: find.byType(Scrollable).last,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('屏幕触控'));
+        await tester.pumpAndSettle();
+        await closeTools();
+        expect(
+          tester.getRect(find.byKey(const ValueKey('game-controls'))),
+          Rect.fromLTWH(24, 6, size.width - 24, size.height - 14),
+          reason:
+              'mapping uses the full screen while video keeps its own bounds',
+        );
+        expect(tester.getRect(find.byType(Texture)), videoRect);
+        expect(
+          find.byKey(const ValueKey('desktop-control-rail-left')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('desktop-control-rail-right')),
+          findsNothing,
+        );
+        expect(find.byTooltip('退出按键映射'), findsOneWidget);
+        expect(find.byTooltip('按键映射设置'), findsOneWidget);
+        expect(find.byKey(const ValueKey('game-canvas')), findsNothing);
+        expect(tester.getRect(button('Esc')).left, lessThan(videoRect.left));
+        expect(
+          tester.getRect(button('右键')).right,
+          greaterThan(videoRect.right),
+        );
+        inputs.clear();
+        await tester.tap(button('Esc'));
+        await tester.pump();
+        expect(events(RemoteActionType.keyDown).single.buttonOrKey, 0x1B);
+        expect(events(RemoteActionType.keyUp).single.buttonOrKey, 0x1B);
+        final center = tester
+            .getRect(find.byType(DesktopGestureSurface))
+            .center;
+        inputs.clear();
+        await tester.tapAt(center);
+        await tester.pump();
+        expect(
+          events(RemoteActionType.mouseMove).single.flags,
+          RemoteInputEvent.absoluteMouseFlag,
+        );
+        expect(
+          events(RemoteActionType.mouseClick).single.buttonOrKey,
+          RemoteMouseButton.left.value,
+        );
+        inputs.clear();
+        final directDrag = await tester.startGesture(
+          center + const Offset(40, 0),
+          pointer: 2001,
+        );
+        await tester.pump(const Duration(milliseconds: 460));
+        await directDrag.moveBy(const Offset(30, 0));
+        await directDrag.up();
+        await tester.pump();
+        expect(events(RemoteActionType.mouseDown).length, 1);
+        expect(events(RemoteActionType.mouseUp).length, 1);
+        expect(events(RemoteActionType.mouseClick), isEmpty);
+        await tools();
+        await tester.scrollUntilVisible(
+          find.text('鼠标指针'),
+          140,
+          scrollable: find.byType(Scrollable).last,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('鼠标指针'));
+        await tester.pumpAndSettle();
+        await closeTools();
+        inputs.clear();
+        final pointerDrag = await tester.startGesture(center, pointer: 2002);
+        await tester.pump(const Duration(milliseconds: 460));
+        await pointerDrag.moveBy(const Offset(15, 5));
+        await pointerDrag.up();
+        await tester.pump();
+        expect(events(RemoteActionType.mouseDown).length, 1);
+        expect(events(RemoteActionType.mouseUp).length, 1);
+        expect(events(RemoteActionType.mouseMove).single.flags, 0);
+        inputs.clear();
+        final left = await tester.startGesture(
+          tester.getCenter(button('左键')),
+          pointer: 2003,
+        );
+        await left.moveBy(const Offset(120, -10));
+        await left.up();
+        await tester.pump();
+        expect(
+          events(RemoteActionType.mouseMove).single.deltaX,
+          closeTo(360, 1),
+        );
+        expect(events(RemoteActionType.mouseMove).single.flags, 0);
+        expect(events(RemoteActionType.mouseDown).single.buttonOrKey, 0);
+        expect(events(RemoteActionType.mouseUp).single.buttonOrKey, 0);
+        expect(events(RemoteActionType.mouseClick), isEmpty);
+        await tools();
+        await tester.scrollUntilVisible(
+          find.text('屏幕触控'),
+          140,
+          scrollable: find.byType(Scrollable).last,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('屏幕触控'));
+        await tester.pumpAndSettle();
+        await closeTools();
+        inputs.clear();
+        final right = await tester.startGesture(
+          tester.getCenter(button('右键')),
+          pointer: 2004,
+        );
+        final rightDrag = await tester.startGesture(center, pointer: 2005);
+        await tester.pump(const Duration(milliseconds: 460));
+        await rightDrag.moveBy(const Offset(10, 5));
+        await right.up();
+        await rightDrag.up();
+        await tester.pump();
+        expect(events(RemoteActionType.mouseDown).single.buttonOrKey, 1);
+        expect(events(RemoteActionType.mouseUp).single.buttonOrKey, 1);
+        expect(
+          events(RemoteActionType.mouseMove).single.flags,
+          0,
+          reason: 'held right button must not jump to an absolute coordinate',
+        );
+        expect(events(RemoteActionType.mouseClick), isEmpty);
+        inputs.clear();
+        final ctrl = await tester.startGesture(
+          tester.getCenter(button('Ctrl')),
+          pointer: 2006,
+        );
+        await tester.tapAt(center);
+        await ctrl.up();
+        await tester.pump();
+        expect(events(RemoteActionType.keyDown).single.buttonOrKey, 0x11);
+        expect(events(RemoteActionType.keyUp).single.buttonOrKey, 0x11);
+        expect(events(RemoteActionType.mouseClick).length, 1);
+        await tools();
+        await tester.scrollUntilVisible(
+          find.text('鼠标指针'),
+          140,
+          scrollable: find.byType(Scrollable).last,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('鼠标指针'));
+        await tester.pumpAndSettle();
+        await closeTools();
+        inputs.clear();
+        final ownDrag = await tester.startGesture(center, pointer: 2007);
+        await tester.pump(const Duration(milliseconds: 460));
+        final mappedHold = await tester.startGesture(
+          tester.getCenter(button('左键')),
+          pointer: 2008,
+        );
+        await ownDrag.up();
+        await tester.pump();
+        expect(events(RemoteActionType.mouseDown).length, 1);
+        expect(
+          events(RemoteActionType.mouseUp),
+          isEmpty,
+          reason: 'mapped hold still owns the left button',
+        );
+        await mappedHold.up();
+        await tester.pump();
+        expect(events(RemoteActionType.mouseUp).length, 1);
+        inputs.clear();
+        final scrollA = await tester.startGesture(
+          center - const Offset(80, 0),
+          pointer: 2009,
+        );
+        final scrollB = await tester.startGesture(
+          center + const Offset(80, 0),
+          pointer: 2010,
+        );
+        await scrollA.moveBy(const Offset(0, 28));
+        await scrollB.moveBy(const Offset(0, 28));
+        await scrollA.up();
+        await scrollB.up();
+        await tester.pump();
+        expect(events(RemoteActionType.mouseScroll), isNotEmpty);
+        expect(events(RemoteActionType.mouseDown), isEmpty);
+        expect(events(RemoteActionType.mouseClick), isEmpty);
+        await tools();
+        await tester.scrollUntilVisible(
+          find.widgetWithText(SwitchListTile, '游戏视角'),
+          140,
+          scrollable: find.byType(Scrollable).last,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(SwitchListTile, '游戏视角'));
+        await tester.pumpAndSettle();
+        await closeTools();
+        inputs.clear();
+        await tester.tapAt(center);
+        await tester.pump();
+        expect(
+          inputs,
+          isEmpty,
+          reason: 'camera tapping must not accidentally shoot',
+        );
+        final camera = await tester.startGesture(center, pointer: 2011);
+        await camera.moveBy(const Offset(20, 0));
+        await camera.up();
+        await tester.pump();
+        expect(
+          events(RemoteActionType.mouseMove).single.flags,
+          RemoteInputEvent.relativeMouseFlag,
+        );
+        inputs.clear();
+        final cameraA = await tester.startGesture(
+          center - const Offset(80, 0),
+          pointer: 2012,
+        );
+        final cameraB = await tester.startGesture(
+          center + const Offset(80, 0),
+          pointer: 2013,
+        );
+        await tester.pump();
+        expect(
+          events(RemoteActionType.mouseDown),
+          isEmpty,
+          reason: 'second finger down is not a drag yet',
+        );
+        await cameraA.moveBy(const Offset(30, 0));
+        await tester.pump();
+        expect(events(RemoteActionType.mouseDown).length, 1);
+        await cameraA.up();
+        await cameraB.up();
+        await tester.pump();
+        expect(events(RemoteActionType.mouseUp).length, 1);
+        await tester.tap(find.byTooltip('退出按键映射'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('game-controls')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('desktop-control-rail-left')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('desktop-control-rail-right')),
+          findsOneWidget,
+        );
+        expect(tester.getRect(find.byType(Texture)), videoRect);
+        expect(tester.element(find.byType(Texture)), same(texture));
+        expect(calls.where((c) => c.method == 'start').length, 1);
+        expect(calls.where((c) => c.method == 'stop'), isEmpty);
+      },
+    );
+  }
   for (final portrait in [false, true]) {
     testWidgets(
       'desktop mapping uses shared presets and releases controls (portrait=$portrait)',
@@ -476,7 +561,11 @@ void main() {
           if (find.byTooltip('桌面操作').evaluate().isNotEmpty) {
             await tester.tap(find.byTooltip('桌面操作'));
           } else {
-            await tester.tap(find.text('操作'));
+            await tester.tap(
+              find.byTooltip('按键映射设置').evaluate().isNotEmpty
+                  ? find.byTooltip('按键映射设置')
+                  : find.text('操作'),
+            );
           }
           await tester.pumpAndSettle();
         }

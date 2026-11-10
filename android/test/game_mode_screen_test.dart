@@ -42,6 +42,251 @@ class _Sender extends RemoteInputSender {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final viewport in [const Size(800, 360), const Size(568, 256)]) {
+    testWidgets('editor keeps tools outside complete canvas $viewport', (
+      tester,
+    ) async {
+      tester.view.physicalSize = viewport;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final previewFont = Platform.environment['HINGE_EDITOR_PREVIEW_FONT'];
+      if (previewFont != null) {
+        await tester.runAsync(() async {
+          final loader = FontLoader('EditorPreview')
+            ..addFont(
+              File(previewFont)
+                  .readAsBytes()
+                  .then((bytes) => ByteData.sublistView(bytes)),
+            );
+          await loader.load();
+          final icons = FontLoader('MaterialIcons')
+            ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+          await icons.load();
+        });
+      }
+      final preset = GamePreset.basic();
+      final store = GamePresetStore()
+        ..presets = [preset]
+        ..selected = preset.id;
+      String? saved;
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(GamePresetStore.channel, (call) async {
+        if (call.method == 'load') return store.toJsonString();
+        if (call.method == 'save') saved = call.arguments as String;
+        return null;
+      });
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('hinge/platform'),
+        (_) async => false,
+      );
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(GamePresetStore.channel, null);
+        messenger.setMockMethodCallHandler(
+          const MethodChannel('hinge/platform'),
+          null,
+        );
+      });
+      final conn = _Connection();
+      final sender = _Sender(conn);
+      final key = GlobalKey<GameModeScreenState>();
+      const capture = ValueKey('editor-capture');
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              fontFamily: previewFont == null ? null : 'EditorPreview',
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: const Color(0xff8a90c0),
+                brightness: Brightness.dark,
+              ),
+            ),
+            home: GameModeScreen(key: key, sender: sender, connection: conn),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      key.currentState!.editCurrentPreset();
+      await tester.pumpAndSettle();
+      final canvasFinder = find.byKey(const ValueKey('game-controls'));
+      final canvas = tester.getRect(canvasFinder);
+      final dock = tester.getRect(find.byKey(const ValueKey('editor-dock')));
+      expect(canvas.right, lessThan(dock.left));
+      expect(canvas.width / canvas.height, closeTo(viewport.aspectRatio, .001));
+      expect(dock.contains(tester.getCenter(find.text('保存布局'))), isTrue);
+      expect(dock.contains(tester.getCenter(find.text('添加按键'))), isTrue);
+      for (final control in preset.controls) {
+        final face = find.descendant(
+          of: canvasFinder,
+          matching: find.text(control.label),
+        );
+        expect(canvas.contains(tester.getCenter(face)), isTrue);
+      }
+      final plus = find.descendant(of: canvasFinder, matching: find.text('+'));
+      await tester.tap(plus);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('control-resize-handle')),
+        findsOneWidget,
+      );
+      if (viewport.width == 800) {
+        await tester.runAsync(() async {
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(capture),
+          );
+          final image = await boundary.toImage(pixelRatio: 2);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await File('../tmp/editor-workspace-preview.png')
+              .writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+      await tester.ensureVisible(find.text('属性'));
+      await tester.tap(find.text('属性'));
+      await tester.pumpAndSettle();
+      expect(dock.contains(tester.getCenter(find.text('编辑按钮'))), isTrue);
+      expect(tester.getRect(canvasFinder), canvas);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('完成'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('放大画布'));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(canvasFinder).width, greaterThan(canvas.width));
+      await tester.tap(find.byTooltip('适应画布'));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(canvasFinder), canvas);
+      await tester.tap(find.text('保存布局'));
+      await tester.pumpAndSettle();
+      expect(
+        jsonDecode(saved!)['presets'][0]['controls'],
+        preset.toJson()['controls'],
+      );
+      expect(sender.events, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      sender.dispose();
+      await conn.states.close();
+    });
+  }
+  testWidgets(
+    'editor selects without a sheet, moves, resizes circles and undoes',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 360);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final preset = GamePreset('test', '测试', [
+        GameControl(
+          id: 'q',
+          label: 'Q',
+          x: .4,
+          y: .45,
+          size: .2,
+          shape: 'circle',
+        ),
+      ]);
+      final store = GamePresetStore()
+        ..presets = [preset]
+        ..selected = preset.id;
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        GamePresetStore.channel,
+        (call) async => call.method == 'load' ? store.toJsonString() : null,
+      );
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('hinge/platform'),
+        (_) async => false,
+      );
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(GamePresetStore.channel, null);
+        messenger.setMockMethodCallHandler(
+          const MethodChannel('hinge/platform'),
+          null,
+        );
+      });
+      final conn = _Connection();
+      final sender = _Sender(conn);
+      final key = GlobalKey<GameModeScreenState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GameModeScreen(key: key, sender: sender, connection: conn),
+        ),
+      );
+      await tester.pumpAndSettle();
+      key.currentState!.editCurrentPreset();
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('game-controls')),
+          matching: find.text('Q'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('编辑按钮'), findsNothing);
+      expect(find.text('属性'), findsOneWidget);
+      expect(sender.events, isEmpty);
+      final before = tester.getCenter(
+        find.descendant(
+          of: find.byKey(const ValueKey('game-controls')),
+          matching: find.text('Q'),
+        ),
+      );
+      await tester.drag(
+        find.descendant(
+          of: find.byKey(const ValueKey('game-controls')),
+          matching: find.text('Q'),
+        ),
+        const Offset(60, 20),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .getCenter(
+              find.descendant(
+                of: find.byKey(const ValueKey('game-controls')),
+                matching: find.text('Q'),
+              ),
+            )
+            .dx,
+        greaterThan(before.dx),
+      );
+      await tester.tap(find.byTooltip('撤销'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getCenter(
+          find.descendant(
+            of: find.byKey(const ValueKey('game-controls')),
+            matching: find.text('Q'),
+          ),
+        ),
+        before,
+      );
+      final face = find
+          .ancestor(
+            of: find.descendant(
+              of: find.byKey(const ValueKey('game-controls')),
+              matching: find.text('Q'),
+            ),
+            matching: find.byType(GestureDetector),
+          )
+          .first;
+      final size = tester.getSize(face);
+      await tester.drag(
+        find.byKey(const ValueKey('control-resize-handle')),
+        const Offset(30, 35),
+      );
+      await tester.pumpAndSettle();
+      final resized = tester.getSize(face);
+      expect(resized.height, greaterThan(size.height));
+      expect(resized.width, closeTo(resized.height, .001));
+      expect(sender.events, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+      sender.dispose();
+      await conn.states.close();
+    },
+  );
   testWidgets(
     'desktop default leaves the center clear and can edit the same preset',
     (tester) async {
@@ -103,6 +348,11 @@ void main() {
           expect(rects[i].contains(canvas.center), false);
           expect(rects[i].width, greaterThanOrEqualTo(48));
           expect(rects[i].height, greaterThanOrEqualTo(48));
+          for (final tooltip in ['退出按键映射', '按键映射设置']) {
+            final toolbar = tester.getRect(find.byTooltip(tooltip));
+            expect(rects[i].overlaps(toolbar), false);
+          }
+
           for (var j = i + 1; j < rects.length; j++) {
             expect(rects[i].overlaps(rects[j]), false);
           }

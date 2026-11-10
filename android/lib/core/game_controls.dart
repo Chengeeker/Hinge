@@ -341,6 +341,28 @@ class GamePresetStore {
     return _saveJson(json);
   }
 
+  Future<void> importPreset(String raw) async {
+    if (utf8.encode(raw).length > 1024 * 1024) {
+      throw const FormatException('预设数据过大');
+    }
+    final json = jsonDecode(raw) as Map<String, dynamic>;
+    if (json['controls'] is! List || (json['controls'] as List).length > 64) {
+      throw const FormatException('每套预设最多64个控件');
+    }
+    final incoming = GamePreset.fromJson(json).copy(id: GamePreset.newId());
+    if (presets.length >= 32) throw const FormatException('最多保存32套预设');
+    final oldSelection = selected;
+    presets.add(incoming);
+    selected = incoming.id;
+    try {
+      await save();
+    } catch (_) {
+      presets.remove(incoming);
+      selected = oldSelection;
+      rethrow;
+    }
+  }
+
   Future<void> replaceWithJson(String raw) async {
     final incoming = GamePresetStore.fromJsonString(raw);
     await _saveJson(incoming.toJsonString());

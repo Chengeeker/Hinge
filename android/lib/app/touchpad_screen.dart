@@ -857,19 +857,25 @@ class _TouchpadScreenState extends State<TouchpadScreen>
                 width: actionWidth,
                 child: FilledButton.tonal(
                   onPressed: onTap,
-                  style: FilledButton.styleFrom(
-                    minimumSize: Size(actionWidth, compact ? 64 : 96),
-                    padding: EdgeInsets.all(compact ? 8 : 12),
-                    backgroundColor: selected
-                        ? scheme.primaryContainer
-                        : scheme.surfaceContainerHigh,
-                    foregroundColor: selected
-                        ? scheme.onPrimaryContainer
-                        : scheme.onSurface,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(compact ? 14 : 20),
-                    ),
-                  ),
+                  style:
+                      FilledButton.styleFrom(
+                        minimumSize: Size(actionWidth, compact ? 64 : 96),
+                        padding: EdgeInsets.all(compact ? 8 : 12),
+                        backgroundColor: selected
+                            ? scheme.primaryContainer
+                            : scheme.surfaceContainerHigh,
+                        foregroundColor: selected
+                            ? scheme.onPrimaryContainer
+                            : scheme.onSurface,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            compact ? 14 : 20,
+                          ),
+                        ),
+                      ).copyWith(
+                        overlayColor:
+                            theme.filledButtonTheme.style?.overlayColor,
+                      ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -1448,6 +1454,30 @@ class _TouchpadScreenState extends State<TouchpadScreen>
     ),
   );
 
+  Widget _desktopMappingLayer() => Positioned.fill(
+    child: Visibility(
+      visible: _desktopMappingEnabled,
+      maintainState: true,
+      child: GameModeScreen(
+        key: _desktopMappingKey,
+        desktop: true,
+        gameCamera: _desktopGameCamera,
+        mouseSensitivity: _sensitivity,
+        onSensitivityChanged: (value) => setState(() => _sensitivity = value),
+        onMouseButton: _setMappedMouseButton,
+        sender: _sender,
+        connection: widget.connection,
+        inputEnabled:
+            _desktopMappingEnabled &&
+            !_desktopToolsOpen &&
+            _canSend &&
+            !_desktopViewOnly,
+        onSettings: _showDesktopActions,
+        onExit: () => unawaited(_setDesktopMapping(false)),
+      ),
+    ),
+  );
+
   Widget _buildDesktopFullscreen(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final safe = MediaQuery.viewPaddingOf(context);
@@ -1465,89 +1495,112 @@ class _TouchpadScreenState extends State<TouchpadScreen>
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: Row(
+        body: Stack(
+          fit: StackFit.expand,
           children: [
-            _desktopControlRail(
-              key: const ValueKey('desktop-control-rail-left'),
-              width: railExtent,
-              contentWidth: railWidth,
-              left: true,
-              actions: [
-                if (_desktopMouseButtons) ...[
-                  _desktopRailButton(
-                    icon: Icons.mouse,
-                    label: '左键',
-                    onTap: canSendMouse
-                        ? () => _clickDesktopMouse(RemoteMouseButton.left)
-                        : null,
+            Row(
+              children: [
+                Visibility(
+                  visible: !mappingActive,
+                  replacement: SizedBox(width: railExtent),
+                  child: _desktopControlRail(
+                    key: const ValueKey('desktop-control-rail-left'),
+                    width: railExtent,
+                    contentWidth: railWidth,
+                    left: true,
+                    actions: [
+                      if (_desktopMouseButtons) ...[
+                        _desktopRailButton(
+                          icon: Icons.mouse,
+                          label: '左键',
+                          onTap: canSendMouse
+                              ? () => _clickDesktopMouse(RemoteMouseButton.left)
+                              : null,
+                        ),
+                        _desktopRailButton(
+                          icon: Icons.mouse_outlined,
+                          label: '右键',
+                          onTap: canSendMouse
+                              ? () =>
+                                    _clickDesktopMouse(RemoteMouseButton.right)
+                              : null,
+                        ),
+                      ],
+                      _desktopRailButton(
+                        icon: _desktopZoom ? Icons.mouse : Icons.zoom_in,
+                        label: _desktopZoom ? '鼠标操作' : '缩放画面',
+                        onTap:
+                            _canSend &&
+                                !(_desktopMappingEnabled && _desktopGameCamera)
+                            ? () {
+                                _cancelGesture();
+                                setState(() => _desktopZoom = !_desktopZoom);
+                              }
+                            : null,
+                      ),
+                    ],
                   ),
-                  _desktopRailButton(
-                    icon: Icons.mouse_outlined,
-                    label: '右键',
-                    onTap: canSendMouse
-                        ? () => _clickDesktopMouse(RemoteMouseButton.right)
-                        : null,
+                ),
+                Expanded(
+                  child: _touchSurface(
+                    context,
+                    landscape: true,
+                    fullscreen: true,
                   ),
-                ],
-                _desktopRailButton(
-                  icon: _desktopZoom ? Icons.mouse : Icons.zoom_in,
-                  label: _desktopZoom ? '鼠标操作' : '缩放画面',
-                  onTap:
-                      _canSend &&
-                          !(_desktopMappingEnabled && _desktopGameCamera)
-                      ? () {
-                          _cancelGesture();
-                          setState(() => _desktopZoom = !_desktopZoom);
-                        }
-                      : null,
+                ),
+                Visibility(
+                  visible: !mappingActive,
+                  replacement: SizedBox(width: railExtent),
+                  child: _desktopControlRail(
+                    key: const ValueKey('desktop-control-rail-right'),
+                    width: railExtent,
+                    contentWidth: railWidth,
+                    left: false,
+                    actions: [
+                      _desktopRailButton(
+                        icon: Icons.tune,
+                        label: '操作',
+                        onTap: _desktopReady ? _showDesktopActions : null,
+                      ),
+                      _desktopRailButton(
+                        icon: Icons.monitor,
+                        label: '显示',
+                        onTap: _desktopReady
+                            ? () => _showDesktopActions(initialPage: '显示')
+                            : null,
+                      ),
+                      _desktopRailButton(
+                        icon: Icons.keyboard,
+                        label: '键盘',
+                        onTap: _canSend && !_desktopViewOnly
+                            ? _showTextInputDialog
+                            : null,
+                      ),
+                      _desktopRailButton(
+                        icon: Icons.desktop_windows_outlined,
+                        label: '显示桌面',
+                        onTap: canSendMouse
+                            ? () => _sendDesktopShortcut(0x44)
+                            : null,
+                      ),
+                      _desktopRailButton(
+                        icon: Icons.grid_view,
+                        label: '所有窗口',
+                        onTap: canSendMouse
+                            ? () => _sendDesktopShortcut(0x09)
+                            : null,
+                      ),
+                      _desktopRailButton(
+                        icon: Icons.fullscreen_exit,
+                        label: '退出全屏',
+                        onTap: _toggleDesktopFullscreen,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            Expanded(
-              child: _touchSurface(context, landscape: true, fullscreen: true),
-            ),
-            _desktopControlRail(
-              key: const ValueKey('desktop-control-rail-right'),
-              width: railExtent,
-              contentWidth: railWidth,
-              left: false,
-              actions: [
-                _desktopRailButton(
-                  icon: Icons.tune,
-                  label: '操作',
-                  onTap: _desktopReady ? _showDesktopActions : null,
-                ),
-                _desktopRailButton(
-                  icon: Icons.monitor,
-                  label: '显示',
-                  onTap: _desktopReady
-                      ? () => _showDesktopActions(initialPage: '显示')
-                      : null,
-                ),
-                _desktopRailButton(
-                  icon: Icons.keyboard,
-                  label: '键盘',
-                  onTap: _canSend && !_desktopViewOnly
-                      ? _showTextInputDialog
-                      : null,
-                ),
-                _desktopRailButton(
-                  icon: Icons.desktop_windows_outlined,
-                  label: '显示桌面',
-                  onTap: canSendMouse ? () => _sendDesktopShortcut(0x44) : null,
-                ),
-                _desktopRailButton(
-                  icon: Icons.grid_view,
-                  label: '所有窗口',
-                  onTap: canSendMouse ? () => _sendDesktopShortcut(0x09) : null,
-                ),
-                _desktopRailButton(
-                  icon: Icons.fullscreen_exit,
-                  label: '退出全屏',
-                  onTap: _toggleDesktopFullscreen,
-                ),
-              ],
-            ),
+            if (_desktopMappingCreated) _desktopMappingLayer(),
           ],
         ),
       ),
@@ -1755,31 +1808,8 @@ class _TouchpadScreenState extends State<TouchpadScreen>
                             }
                           },
                         ),
-                        if (_desktopMappingCreated)
-                          Positioned.fill(
-                            child: Visibility(
-                              visible: _desktopMappingEnabled,
-                              maintainState: true,
-                              child: GameModeScreen(
-                                key: _desktopMappingKey,
-                                desktop: true,
-                                gameCamera: _desktopGameCamera,
-                                mouseSensitivity: _sensitivity,
-                                onSensitivityChanged: (value) =>
-                                    setState(() => _sensitivity = value),
-                                onMouseButton: _setMappedMouseButton,
-                                sender: _sender,
-                                connection: widget.connection,
-                                inputEnabled:
-                                    _desktopMappingEnabled &&
-                                    !_desktopToolsOpen &&
-                                    _canSend &&
-                                    !_desktopViewOnly,
-                                onExit: () =>
-                                    unawaited(_setDesktopMapping(false)),
-                              ),
-                            ),
-                          ),
+                        if (_desktopMappingCreated && !fullscreen)
+                          _desktopMappingLayer(),
                       ],
                     )
                   : landscape
@@ -1850,7 +1880,7 @@ class _TouchpadScreenState extends State<TouchpadScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (widget.showDesktop && _desktopFullscreen) {
+    if (widget.showDesktop && (_desktopFullscreen || _desktopMappingEnabled)) {
       return _buildDesktopFullscreen(context);
     }
     if (MediaQuery.orientationOf(context) == Orientation.landscape) {

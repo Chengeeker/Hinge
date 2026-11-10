@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -15,6 +16,7 @@ class GameModeScreen extends StatefulWidget {
   final SessionConnection connection;
   final List<DeviceOrientation> restoreOrientations;
   final VoidCallback? onExit;
+  final VoidCallback? onSettings;
   final bool inputEnabled;
   final bool desktop;
   final bool gameCamera;
@@ -27,6 +29,7 @@ class GameModeScreen extends StatefulWidget {
     required this.connection,
     this.restoreOrientations = const [],
     this.onExit,
+    this.onSettings,
     this.inputEnabled = true,
     this.desktop = false,
     this.gameCamera = false,
@@ -47,6 +50,9 @@ class GameModeScreenState extends State<GameModeScreen>
   String? _error;
   GamePreset? _draft;
   String? _selectedControl;
+  bool _editorProperties = false;
+  final TransformationController _editorView = TransformationController();
+  final List<GamePreset> _undo = [];
   int _epoch = 0;
   Orientation? _orientation;
   final Map<int, Offset> _camera = {};
@@ -67,6 +73,9 @@ class GameModeScreenState extends State<GameModeScreen>
     _release();
     setState(() {
       _draft ??= _store.current.copy();
+      _undo.clear();
+      _editorProperties = false;
+      _editorView.value = Matrix4.identity();
       _selectedControl = null;
       _editing = true;
     });
@@ -275,6 +284,7 @@ class GameModeScreenState extends State<GameModeScreen>
 
   @override
   void dispose() {
+    _editorView.dispose();
     _release();
     GamePresetStore.syncRevision.removeListener(_externalPresetSync);
     widget.sender.removeListener(_connectionChanged);
@@ -425,6 +435,29 @@ class GameModeScreenState extends State<GameModeScreen>
                   ),
                   const SizedBox(height: 8),
                   if (!preferencesOnly) ...[
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.file_open_outlined),
+                      label: const Text('导入预设文件'),
+                      onPressed: () async {
+                        if (_store.presets.length >= 32) {
+                          _snack('最多保存32套预设');
+                          return;
+                        }
+                        try {
+                          final raw = await GamePresetStore.channel
+                              .invokeMethod<String>('importPreset');
+                          if (raw == null || !mounted) return;
+                          await _store.importPreset(raw);
+                          if (mounted && ctx.mounted) {
+                            setState(() {});
+                            refresh(() {});
+                            _snack('已导入为新预设，原有方案保留');
+                          }
+                        } on Object {
+                          if (mounted) _snack('无法导入，请使用有效的 Hinge 预设文件并检查存储空间');
+                        }
+                      },
+                    ),
                     for (final preset in _store.presets)
                       ListTile(
                         leading: Icon(
@@ -445,6 +478,21 @@ class GameModeScreenState extends State<GameModeScreen>
                         },
                         trailing: PopupMenuButton<String>(
                           onSelected: (action) async {
+                            if (action == 'export') {
+                              try {
+                                final saved = await GamePresetStore.channel
+                                    .invokeMethod<bool>(
+                                      'exportPreset',
+                                      jsonEncode(preset.toJson()),
+                                    );
+                                if (saved == true && mounted) {
+                                  _snack('预设已导出，可发送此文件给其他设备或用户');
+                                }
+                              } on Object {
+                                if (mounted) _snack('导出失败，请检查图片或保存位置后重试');
+                              }
+                              return;
+                            }
                             if (action == 'delete') {
                               if (_store.presets.length == 1) {
                                 _snack('至少保留一套预设');
@@ -499,6 +547,10 @@ class GameModeScreenState extends State<GameModeScreen>
                             }
                           },
                           itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'export',
+                              child: Text('导出预设文件'),
+                            ),
                             PopupMenuItem(value: 'rename', child: Text('重命名')),
                             PopupMenuItem(value: 'copy', child: Text('复制为新预设')),
                             PopupMenuItem(value: 'delete', child: Text('删除')),
@@ -714,192 +766,186 @@ class GameModeScreenState extends State<GameModeScreen>
   }
 
   Future<void> _editControl(GameControl control) async {
-    final text = TextEditingController(text: control.label);
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (ctx, refresh) => SizedBox(
-          height: MediaQuery.sizeOf(ctx).height * .92,
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              12,
-              20,
-              12 + MediaQuery.viewInsetsOf(ctx).bottom,
+    _rememberEdit();
+    setState(() {
+      _selectedControl = control.id;
+      _editorProperties = true;
+    });
+  }
+
+  Widget _controlFields(BuildContext ctx, GameControl control) {
+    void refresh(VoidCallback change) => setState(change);
+    void close() => setState(() => _editorProperties = false);
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                control.joystick ? '方向摇杆' : '编辑按钮',
+                style: Theme.of(ctx).textTheme.titleLarge,
+              ),
             ),
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      control.joystick ? '方向摇杆' : '编辑按钮',
-                      style: Theme.of(ctx).textTheme.titleLarge,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '完成',
-                    onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.check),
-                  ),
-                ],
-              ),
-              TextField(
-                controller: text,
-                maxLength: 64,
-                decoration: const InputDecoration(labelText: '显示文字 / 字母 / 数字'),
-                onChanged: (value) => setState(() => control.label = value),
-              ),
-              if (!control.joystick)
-                ListTile(
-                  title: const Text('电脑按键'),
-                  subtitle: Text(gameKeyName(control.binding)),
-                  trailing: const Icon(Icons.keyboard),
-                  onTap: () async {
-                    final key = await _chooseKey(control.binding);
-                    if (key != null && mounted && ctx.mounted) {
-                      setState(() => control.binding = key);
-                      refresh(() {});
-                    }
-                  },
-                ),
-              if (control.joystick)
-                for (int i = 0; i < 4; i++)
-                  ListTile(
-                    title: Text(['向上', '向左', '向下', '向右'][i]),
-                    subtitle: Text(gameKeyName(control.directions[i])),
-                    onTap: () async {
-                      final key = await _chooseKey(
-                        control.directions[i],
-                        keyboardOnly: true,
-                      );
-                      if (key != null && mounted && ctx.mounted) {
-                        setState(() => control.directions[i] = key);
-                        refresh(() {});
-                      }
-                    },
-                  ),
-              if (!control.joystick)
-                DropdownButtonFormField<String>(
-                  initialValue: control.shape,
-                  decoration: const InputDecoration(labelText: '控件外观'),
-                  items: const [
-                    DropdownMenuItem(value: 'auto', child: Text('按原布局')),
-                    DropdownMenuItem(value: 'circle', child: Text('圆形（锁定比例）')),
-                    DropdownMenuItem(value: 'rounded', child: Text('圆角矩形')),
-                    DropdownMenuItem(value: 'rect', child: Text('直角矩形')),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      control.shape = value;
-                      if (value == 'circle') {
-                        control.aspect = 1;
-                        control.cornerRadius = .5;
-                      }
-                    });
-                    refresh(() {});
-                  },
-                ),
-              if (!control.joystick && control.shape == 'rounded') ...[
-                Text('圆角比例 ${(control.cornerRadius * 100).round()}%'),
-                Slider(
-                  value: control.cornerRadius,
-                  min: 0,
-                  max: .5,
-                  onChanged: (value) {
-                    setState(() => control.cornerRadius = value);
-                    refresh(() {});
-                  },
-                ),
-              ],
-              Text('大小 ${(control.size * 100).round()}%'),
-              Slider(
-                value: control.size,
-                min: .10,
-                max: .48,
-                onChanged: (value) {
-                  setState(() => control.size = value);
-                  refresh(() {});
-                },
-              ),
-              if (!control.joystick && control.shape != 'circle') ...[
-                const Text('宽高比'),
-                Slider(
-                  value: control.aspect,
-                  min: .5,
-                  max: 3,
-                  onChanged: (value) {
-                    setState(() => control.aspect = value);
-                    refresh(() {});
-                  },
-                ),
-              ],
-              const Text('位置也可返回编辑画布后直接拖动'),
-              Text('水平 ${(control.x * 100).round()}%'),
-              Slider(
-                value: control.x,
-                onChanged: (value) {
-                  setState(() => control.x = value);
-                  refresh(() {});
-                },
-              ),
-              Text('垂直 ${(control.y * 100).round()}%'),
-              Slider(
-                value: control.y,
-                onChanged: (value) {
-                  setState(() => control.y = value);
-                  refresh(() {});
-                },
-              ),
-              Wrap(
-                spacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.image),
-                    label: const Text('选择图片'),
-                    onPressed: () async {
-                      try {
-                        final path = await GamePresetStore.channel
-                            .invokeMethod<String>('icon');
-                        if (path != null && mounted && ctx.mounted) {
-                          setState(() => control.image = path);
-                          refresh(() {});
-                        }
-                      } on Object {
-                        _snack('无法导入图片，请换一张图片重试。');
-                      }
-                    },
-                  ),
-                  if (control.image != null)
-                    TextButton(
-                      onPressed: () {
-                        setState(() => control.image = null);
-                        refresh(() {});
-                      },
-                      child: const Text('移除图片'),
-                    ),
-                  TextButton.icon(
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('删除控件'),
-                    onPressed: () {
-                      setState(() {
-                        _draft!.controls.remove(control);
-                        _selectedControl = null;
-                      });
-                      Navigator.pop(ctx);
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
+            IconButton(
+              tooltip: '完成',
+              onPressed: () => close(),
+              icon: const Icon(Icons.check),
+            ),
+          ],
         ),
-      ),
+        TextFormField(
+          key: ValueKey('label-${control.id}'),
+          initialValue: control.label,
+          maxLength: 64,
+          decoration: const InputDecoration(labelText: '显示文字 / 字母 / 数字'),
+          onChanged: (value) => setState(() => control.label = value),
+        ),
+        if (!control.joystick)
+          ListTile(
+            title: const Text('电脑按键'),
+            subtitle: Text(gameKeyName(control.binding)),
+            trailing: const Icon(Icons.keyboard),
+            onTap: () async {
+              final key = await _chooseKey(control.binding);
+              if (key != null && mounted && ctx.mounted) {
+                setState(() => control.binding = key);
+                refresh(() {});
+              }
+            },
+          ),
+        if (control.joystick)
+          for (int i = 0; i < 4; i++)
+            ListTile(
+              title: Text(['向上', '向左', '向下', '向右'][i]),
+              subtitle: Text(gameKeyName(control.directions[i])),
+              onTap: () async {
+                final key = await _chooseKey(
+                  control.directions[i],
+                  keyboardOnly: true,
+                );
+                if (key != null && mounted && ctx.mounted) {
+                  setState(() => control.directions[i] = key);
+                  refresh(() {});
+                }
+              },
+            ),
+        if (!control.joystick)
+          DropdownButtonFormField<String>(
+            initialValue: control.shape,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: '控件外观'),
+            items: const [
+              DropdownMenuItem(value: 'auto', child: Text('按原布局')),
+              DropdownMenuItem(value: 'circle', child: Text('圆形（锁定比例）')),
+              DropdownMenuItem(value: 'rounded', child: Text('圆角矩形')),
+              DropdownMenuItem(value: 'rect', child: Text('直角矩形')),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                control.shape = value;
+                if (value == 'circle') {
+                  control.aspect = 1;
+                  control.cornerRadius = .5;
+                }
+              });
+              refresh(() {});
+            },
+          ),
+        if (!control.joystick && control.shape == 'rounded') ...[
+          Text('圆角比例 ${(control.cornerRadius * 100).round()}%'),
+          Slider(
+            value: control.cornerRadius,
+            min: 0,
+            max: .5,
+            onChanged: (value) {
+              setState(() => control.cornerRadius = value);
+              refresh(() {});
+            },
+          ),
+        ],
+        Text('大小 ${(control.size * 100).round()}%'),
+        Slider(
+          value: control.size,
+          min: .10,
+          max: .48,
+          onChanged: (value) {
+            setState(() => control.size = value);
+            refresh(() {});
+          },
+        ),
+        if (!control.joystick && control.shape != 'circle') ...[
+          const Text('宽高比'),
+          Slider(
+            value: control.aspect,
+            min: .5,
+            max: 3,
+            onChanged: (value) {
+              setState(() => control.aspect = value);
+              refresh(() {});
+            },
+          ),
+        ],
+        const Text('位置也可返回编辑画布后直接拖动'),
+        Text('水平 ${(control.x * 100).round()}%'),
+        Slider(
+          value: control.x,
+          onChanged: (value) {
+            setState(() => control.x = value);
+            refresh(() {});
+          },
+        ),
+        Text('垂直 ${(control.y * 100).round()}%'),
+        Slider(
+          value: control.y,
+          onChanged: (value) {
+            setState(() => control.y = value);
+            refresh(() {});
+          },
+        ),
+        Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton.icon(
+              icon: const Icon(Icons.image),
+              label: const Text('选择图片'),
+              onPressed: () async {
+                try {
+                  final path = await GamePresetStore.channel
+                      .invokeMethod<String>('icon');
+                  if (path != null && mounted && ctx.mounted) {
+                    setState(() => control.image = path);
+                    refresh(() {});
+                  }
+                } on Object {
+                  _snack('无法导入图片，请换一张图片重试。');
+                }
+              },
+            ),
+            if (control.image != null)
+              TextButton(
+                onPressed: () {
+                  setState(() => control.image = null);
+                  refresh(() {});
+                },
+                child: const Text('移除图片'),
+              ),
+            TextButton.icon(
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('删除控件'),
+              onPressed: () {
+                setState(() {
+                  _draft!.controls.remove(control);
+                  _selectedControl = null;
+                });
+                close();
+              },
+            ),
+          ],
+        ),
+      ],
     );
-    await Future<void>.delayed(Duration.zero);
-    text.dispose();
   }
 
   Future<void> _saveDraft() async {
@@ -947,6 +993,300 @@ class GameModeScreenState extends State<GameModeScreen>
     }
   }
 
+  void _rememberEdit() {
+    if (_draft == null) return;
+    _undo.add(_draft!.copy());
+    if (_undo.length > 20) _undo.removeAt(0);
+  }
+
+  List<Widget> _editorTools(Size area) {
+    final matches = _preset.controls.where((c) => c.id == _selectedControl);
+    final control = matches.isEmpty ? null : matches.first;
+
+    final rect = control == null ? null : _rect(control, area);
+    var resizeWidth = rect?.width ?? 0.0;
+    var resizeHeight = rect?.height ?? 0.0;
+    return [
+      if (control != null)
+        Positioned(
+          left: (rect!.right - 24).clamp(0, area.width - 48),
+          top: (rect.bottom - 24).clamp(0, area.height - 48),
+          child: Semantics(
+            label: '拖动调整大小',
+            child: GestureDetector(
+              key: const ValueKey('control-resize-handle'),
+              behavior: HitTestBehavior.opaque,
+              onScaleStart: (_) {
+                _rememberEdit();
+                resizeWidth = rect.width;
+                resizeHeight = rect.height;
+              },
+              onScaleUpdate: (event) => setState(() {
+                if (event.pointerCount != 1) return;
+                resizeWidth += event.focalPointDelta.dx / _editorScale;
+                resizeHeight += event.focalPointDelta.dy / _editorScale;
+                final round =
+                    control.joystick ||
+                    control.shape == 'circle' ||
+                    control.shape == 'auto' && (control.aspect - 1).abs() < .02;
+                final height = resizeHeight.clamp(
+                  48.0,
+                  math.min(area.width, area.height) * .48,
+                );
+                control.size = (height / math.min(area.width, area.height))
+                    .clamp(.10, .48);
+                if (!round) {
+                  control.aspect =
+                      (resizeWidth.clamp(48.0, area.width) / height).clamp(
+                        .5,
+                        3,
+                      );
+                }
+              }),
+              child: SizedBox(
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(Icons.open_in_full, size: 16),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+    ];
+  }
+
+  Widget _buildEditor(Size area) {
+    final theme = Theme.of(context);
+    final selected = _preset.controls.where((c) => c.id == _selectedControl);
+    final control = selected.isEmpty ? null : selected.first;
+    void nudge(double x, double y) {
+      if (control == null) return;
+      _rememberEdit();
+      setState(() {
+        control.x = (control.x + x / area.width).clamp(0, 1);
+        control.y = (control.y + y / area.height).clamp(0, 1);
+      });
+    }
+
+    Widget action(String label, IconData icon, VoidCallback? onPressed) =>
+        Tooltip(
+          message: label,
+          child: TextButton.icon(
+            onPressed: onPressed,
+            icon: Icon(icon, size: 20),
+            label: Text(label),
+          ),
+        );
+    final dock = Theme(
+      data: theme.copyWith(
+        textTheme: theme.textTheme.copyWith(
+          titleLarge: theme.textTheme.titleLarge?.copyWith(fontSize: 16),
+          titleMedium: theme.textTheme.titleMedium?.copyWith(fontSize: 14),
+          bodyLarge: theme.textTheme.bodyLarge?.copyWith(fontSize: 13),
+          bodyMedium: theme.textTheme.bodyMedium?.copyWith(fontSize: 13),
+        ),
+        listTileTheme: const ListTileThemeData(
+          dense: true,
+          minTileHeight: 48,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+      child: Material(
+        key: const ValueKey('editor-dock'),
+        color: theme.colorScheme.surfaceContainer,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  tooltip: '取消编辑',
+                  onPressed: _exit,
+                  icon: const Icon(Icons.close, size: 20),
+                ),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: _saveDraft,
+                    icon: const Icon(Icons.check, size: 20),
+                    label: const Text('保存布局'),
+                  ),
+                ),
+              ],
+            ),
+            Expanded(
+              child: _editorProperties && control != null
+                  ? Builder(
+                      key: ValueKey('properties-${control.id}'),
+                      builder: (ctx) => _controlFields(ctx, control),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      children: [
+                        action('添加按键', Icons.add, () {
+                          if (_draft!.controls.length >= 64) {
+                            _snack('每套预设最多64个控件');
+                            return;
+                          }
+                          _rememberEdit();
+                          final added = GameControl(
+                            id: GamePreset.newId(),
+                            label: '新按键',
+                            x: .5,
+                            y: .5,
+                          );
+                          setState(() {
+                            _draft!.controls.add(added);
+                            _selectedControl = added.id;
+                          });
+                        }),
+                        action(
+                          '撤销',
+                          Icons.undo,
+                          _undo.isEmpty
+                              ? null
+                              : () => setState(() {
+                                  _draft = _undo.removeLast();
+                                  if (!_draft!.controls.any(
+                                    (c) => c.id == _selectedControl,
+                                  )) {
+                                    _selectedControl = null;
+                                  }
+                                }),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              tooltip: '放大画布',
+                              icon: const Icon(Icons.zoom_in),
+                              onPressed: () {
+                                final scale = _editorView.value
+                                    .getMaxScaleOnAxis();
+                                if (scale < 3) {
+                                  final factor = (3 / scale).clamp(1.0, 1.25);
+                                  _editorView.value = Matrix4.copy(
+                                    _editorView.value,
+                                  )..scaleByDouble(factor, factor, 1, 1);
+                                }
+                              },
+                            ),
+                            IconButton(
+                              tooltip: '适应画布',
+                              icon: const Icon(Icons.fit_screen),
+                              onPressed: () =>
+                                  _editorView.value = Matrix4.identity(),
+                            ),
+                          ],
+                        ),
+                        if (control != null) ...[
+                          Text(
+                            control.label.isEmpty ? '未命名按键' : control.label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          action('属性', Icons.tune, () => _editControl(control)),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            children: [
+                              IconButton(
+                                tooltip: '向左微调',
+                                onPressed: () => nudge(-1, 0),
+                                icon: const Icon(Icons.arrow_back),
+                              ),
+                              IconButton(
+                                tooltip: '向右微调',
+                                onPressed: () => nudge(1, 0),
+                                icon: const Icon(Icons.arrow_forward),
+                              ),
+                              IconButton(
+                                tooltip: '向上微调',
+                                onPressed: () => nudge(0, -1),
+                                icon: const Icon(Icons.arrow_upward),
+                              ),
+                              IconButton(
+                                tooltip: '向下微调',
+                                onPressed: () => nudge(0, 1),
+                                icon: const Icon(Icons.arrow_downward),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            '位置 ${(control.x * 100).round()}%, ${(control.y * 100).round()}%',
+                          ),
+                        ] else
+                          const Text('轻点选中按键'),
+                        const SizedBox(height: 12),
+                        const Text('拖动按键移动，角标调整大小。空白处双指缩放、单指移动画布。'),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+    final preview = Expanded(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: ClipRect(
+          key: const ValueKey('editor-viewport'),
+          child: LayoutBuilder(
+            builder: (_, constraints) {
+              _editorFitScale = math.min(
+                constraints.maxWidth / area.width,
+                constraints.maxHeight / area.height,
+              );
+              return InteractiveViewer(
+                transformationController: _editorView,
+                minScale: 1,
+                maxScale: 3,
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: SizedBox(
+                      width: area.width,
+                      height: area.height,
+                      child: Material(
+                        color: theme.colorScheme.surface,
+                        child: Stack(
+                          key: const ValueKey('game-controls'),
+                          children: [
+                            for (final item in _preset.controls)
+                              Positioned.fromRect(
+                                rect: _rect(item, area),
+                                child: _control(item, _rect(item, area)),
+                              ),
+                            ..._editorTools(area),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    return Material(
+      color: theme.colorScheme.surfaceContainerLow,
+      child: Row(
+        children: [
+          preview,
+          SizedBox(width: area.width < 650 ? 176 : 208, child: dock),
+        ],
+      ),
+    );
+  }
+
   Rect _rect(GameControl control, Size area) {
     final short = math.min(area.width, area.height);
     final h = (short * control.size).clamp(48.0, area.height);
@@ -965,13 +1305,16 @@ class GameModeScreenState extends State<GameModeScreen>
       w.toDouble(),
       h,
     );
+    if (_editing) return rect;
     // Reserve only the fixed toolbar targets, leaving the other top buttons in one row.
     final toolbarWidth = widget.onExit == null ? 64.0 : 56.0;
-    if ((!widget.desktop || _editing) &&
-        (rect.overlaps(Rect.fromLTWH(area.width / 2 - 28, 0, 56, 56)) ||
-            rect.overlaps(
-              Rect.fromLTWH(area.width - toolbarWidth, 0, toolbarWidth, 56),
-            ))) {
+    final overlapsToolbar = widget.desktop && !_editing
+        ? rect.overlaps(Rect.fromLTWH(area.width / 2 - 56, 0, 112, 56))
+        : rect.overlaps(Rect.fromLTWH(area.width / 2 - 28, 0, 56, 56)) ||
+              rect.overlaps(
+                Rect.fromLTWH(area.width - toolbarWidth, 0, toolbarWidth, 56),
+              );
+    if (overlapsToolbar) {
       rect = Rect.fromLTWH(rect.left, 60, rect.width, rect.height);
     }
     return rect;
@@ -1052,13 +1395,21 @@ class GameModeScreenState extends State<GameModeScreen>
       return GestureDetector(
         onTap: () {
           setState(() => _selectedControl = control.id);
-          _editControl(control);
         },
-        onPanStart: (_) => setState(() => _selectedControl = control.id),
-        onPanUpdate: (event) => setState(() {
+        onScaleStart: (_) {
+          _rememberEdit();
+          setState(() => _selectedControl = control.id);
+        },
+        onScaleUpdate: (event) => setState(() {
+          if (event.pointerCount != 1) return;
           final area = _area!;
-          control.x = (control.x + event.delta.dx / area.width).clamp(0, 1);
-          control.y = (control.y + event.delta.dy / area.height).clamp(0, 1);
+          control.x =
+              (control.x + event.focalPointDelta.dx / _editorScale / area.width)
+                  .clamp(0, 1);
+          control.y =
+              (control.y +
+                      event.focalPointDelta.dy / _editorScale / area.height)
+                  .clamp(0, 1);
         }),
         child: face(false, Offset.zero),
       );
@@ -1095,6 +1446,9 @@ class GameModeScreenState extends State<GameModeScreen>
   }
 
   Size? _area;
+  double _editorFitScale = 1;
+  double get _editorScale =>
+      _editorFitScale * _editorView.value.getMaxScaleOnAxis();
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -1118,6 +1472,7 @@ class GameModeScreenState extends State<GameModeScreen>
               builder: (context, constraints) {
                 final area = constraints.biggest;
                 _area = area;
+                if (_editing) return _buildEditor(area);
                 return Stack(
                   key: const ValueKey('game-controls'),
                   fit: StackFit.expand,
@@ -1137,7 +1492,7 @@ class GameModeScreenState extends State<GameModeScreen>
                                   ? const SizedBox.shrink()
                                   : Text(
                                       _editing
-                                          ? '拖动控件调整位置 · 轻点修改按键和外观'
+                                          ? '轻点选中 · 拖动移动 · 角标缩放 · 属性修改映射'
                                           : '单指滑动移动视角 · 双指按住并移动可拖拽（鼠标左键）',
                                       style: Theme.of(context)
                                           .textTheme
@@ -1165,7 +1520,27 @@ class GameModeScreenState extends State<GameModeScreen>
                         rect: _rect(control, area),
                         child: _control(control, _rect(control, area)),
                       ),
-                    if (!widget.desktop || _editing)
+                    if (widget.desktop && !_editing)
+                      Positioned(
+                        top: 2,
+                        left: area.width / 2 - 52,
+                        child: Row(
+                          children: [
+                            IconButton.filledTonal(
+                              tooltip: '退出按键映射',
+                              onPressed: _exit,
+                              icon: const Icon(Icons.close),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton.filledTonal(
+                              tooltip: '按键映射设置',
+                              onPressed: widget.onSettings ?? openSettings,
+                              icon: const Icon(Icons.settings_outlined),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
                       Positioned(
                         top: 2,
                         left: area.width / 2 - 24,
@@ -1175,42 +1550,7 @@ class GameModeScreenState extends State<GameModeScreen>
                           icon: const Icon(Icons.close),
                         ),
                       ),
-                    if (_editing) ...[
-                      Positioned(
-                        top: 2,
-                        left: 8,
-                        child: TextButton.icon(
-                          onPressed: () {
-                            if (_draft!.controls.length >= 64) {
-                              _snack('每套预设最多64个控件');
-                              return;
-                            }
-                            final control = GameControl(
-                              id: GamePreset.newId(),
-                              label: '新按键',
-                              x: .5,
-                              y: .5,
-                            );
-                            setState(() {
-                              _draft!.controls.add(control);
-                              _selectedControl = control.id;
-                            });
-                            _editControl(control);
-                          },
-                          icon: const Icon(Icons.add),
-                          label: const Text('添加按键'),
-                        ),
-                      ),
-                      Positioned(
-                        top: 2,
-                        right: 8,
-                        child: FilledButton.icon(
-                          onPressed: _saveDraft,
-                          icon: const Icon(Icons.save_outlined),
-                          label: const Text('保存布局'),
-                        ),
-                      ),
-                    ] else if (!widget.desktop)
+                    if (!widget.desktop)
                       Positioned(
                         top: 2,
                         right: 8,

@@ -735,6 +735,11 @@ ThemeData _hingeTheme(
     );
   }
 
+  final pressedOverlay = WidgetStateProperty.resolveWith<Color?>(
+    (states) =>
+        states.contains(WidgetState.pressed) ? Colors.transparent : null,
+  );
+  final quietButtonStyle = ButtonStyle(overlayColor: pressedOverlay);
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
@@ -746,9 +751,28 @@ ThemeData _hingeTheme(
             },
           )
         : null,
-    splashFactory: defaultTargetPlatform == TargetPlatform.android
-        ? NoSplash.splashFactory
-        : InkRipple.splashFactory,
+    splashFactory: NoSplash.splashFactory,
+    splashColor: Colors.transparent,
+    highlightColor: Colors.transparent,
+    checkboxTheme: CheckboxThemeData(overlayColor: pressedOverlay),
+    radioTheme: RadioThemeData(overlayColor: pressedOverlay),
+    switchTheme: SwitchThemeData(overlayColor: pressedOverlay),
+    sliderTheme: SliderThemeData(
+      overlayColor: WidgetStateColor.resolveWith((states) {
+        if (states.contains(WidgetState.pressed) ||
+            states.contains(WidgetState.dragged)) {
+          return Colors.transparent;
+        }
+        return states.contains(WidgetState.focused) ||
+                states.contains(WidgetState.hovered)
+            ? scheme.primary.withValues(alpha: .12)
+            : Colors.transparent;
+      }),
+    ),
+    textButtonTheme: TextButtonThemeData(style: quietButtonStyle),
+    elevatedButtonTheme: ElevatedButtonThemeData(style: quietButtonStyle),
+    iconButtonTheme: IconButtonThemeData(style: quietButtonStyle),
+    segmentedButtonTheme: SegmentedButtonThemeData(style: quietButtonStyle),
     // Windows does not ship Roboto as a system font.  Use the native Chinese
     // UI font there; Flutter's null family keeps Android on its system font.
     fontFamily: Platform.isWindows ? 'Microsoft YaHei' : null,
@@ -794,6 +818,7 @@ ThemeData _hingeTheme(
       tileHeight: 64,
     ),
     navigationBarTheme: NavigationBarThemeData(
+      overlayColor: pressedOverlay,
       backgroundColor: scheme.surface,
       indicatorColor: scheme.secondaryContainer,
       surfaceTintColor: Colors.transparent,
@@ -819,13 +844,13 @@ ThemeData _hingeTheme(
       style: FilledButton.styleFrom(
         minimumSize: const Size(0, 52),
         shape: const StadiumBorder(),
-      ),
+      ).copyWith(overlayColor: pressedOverlay),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(0, 52),
         shape: const StadiumBorder(),
-      ),
+      ).copyWith(overlayColor: pressedOverlay),
     ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
       backgroundColor: scheme.primaryContainer,

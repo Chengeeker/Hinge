@@ -25,21 +25,63 @@ internal static class WirelessAdbClient
     {
         ValidateCode(code);
         var target = await ResolvePairingEndpointAsync(host, pairingPort, cancellationToken);
-        var result = await RunAsync(cancellationToken, "pair", target.Endpoint, code);
-        EnsureSuccess(result);
-        if (!IsSuccessfulPairingResult(result.ExitCode, result.Output))
-            throw new InvalidOperationException("ADB 未返回配对成功确认，未更新 Hinge 的配对记录。请检查手机配对码和 adb pair 输出后重试。");
-        var pairingGuid = ParsePairingGuid(result.Output);
-        using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
-        var previousGuid = key?.GetValue(PairingGuidSetting) as string;
-        if (!string.IsNullOrWhiteSpace(pairingGuid) && !string.Equals(previousGuid, pairingGuid, StringComparison.OrdinalIgnoreCase))
+        return await PairEndpointAsync(target.Host, target.Port, code, resetConnectionEndpoint: false, cancellationToken);
+    }
+
+    internal static (string Instance, string Secret, string Payload) CreateQrPairing()
+    {
+        var instance = "hinge-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+        var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+        return (instance, secret, $"WIFI:T:ADB;S:{instance};P:{secret};;");
+    }
+
+    internal static async Task<WirelessAdbPairingResult> PairUsingQrAsync(
+        string instance, string secret, CancellationToken cancellationToken)
+    {
+        while (true)
         {
-            key?.DeleteValue(VerifiedIdentitySetting, throwOnMissingValue: false);
-            key?.DeleteValue(HingeDeviceIdSetting, throwOnMissingValue: false);
+            var services = await ReadMdnsServicesAsync(cancellationToken);
+            var endpoints = ParseQrPairingEndpoints(services, instance);
+            if (endpoints.Length > 1)
+                throw new InvalidOperationException("发现多个相同的扫码配对服务，请重新生成二维码后再试。");
+            if (endpoints.Length == 1 && TryParseEndpoint(endpoints[0], out var host, out var port))
+                return await PairEndpointAsync(host, port, secret, resetConnectionEndpoint: true, cancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
-        key?.SetValue(PairedSetting, 1);
-        if (!string.IsNullOrWhiteSpace(pairingGuid)) key?.SetValue(PairingGuidSetting, pairingGuid);
-        return new WirelessAdbPairingResult(target.Host, target.Port, pairingGuid);
+    }
+
+    private static async Task<WirelessAdbPairingResult> PairEndpointAsync(
+        string host, int port, string secret, bool resetConnectionEndpoint, CancellationToken cancellationToken)
+    {
+        await ConnectionGate.WaitAsync(cancellationToken);
+        try
+        {
+            var result = await RunWithInputAsync(cancellationToken, secret, ["pair", Endpoint(host, port.ToString())]);
+            if (!IsSuccessfulPairingResult(result.ExitCode, result.Output))
+                throw new InvalidOperationException("ADB 未确认配对成功。请保持手机的无线调试配对页面开启后重试。");
+            var pairingGuid = ParsePairingGuid(result.Output);
+            if (resetConnectionEndpoint && string.IsNullOrWhiteSpace(pairingGuid))
+                throw new InvalidOperationException("ADB 未返回设备身份。请更新 Android Platform-Tools 后重新配对。");
+            using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
+            var previousGuid = key?.GetValue(PairingGuidSetting) as string;
+            if (!string.IsNullOrWhiteSpace(pairingGuid) && !string.Equals(previousGuid, pairingGuid, StringComparison.OrdinalIgnoreCase))
+            {
+                key?.DeleteValue(VerifiedIdentitySetting, throwOnMissingValue: false);
+                key?.DeleteValue(HingeDeviceIdSetting, throwOnMissingValue: false);
+            }
+            if (resetConnectionEndpoint)
+            {
+                key?.SetValue("WirelessAdbHost", host);
+                key?.DeleteValue("WirelessAdbConnectPort", throwOnMissingValue: false);
+            }
+            key?.SetValue(PairedSetting, 1);
+            if (!string.IsNullOrWhiteSpace(pairingGuid)) key?.SetValue(PairingGuidSetting, pairingGuid);
+            return new WirelessAdbPairingResult(host, port, pairingGuid);
+        }
+        finally
+        {
+            ConnectionGate.Release();
+        }
     }
 
     public static async Task<string> ConnectAsync(string host, string connectPort)
@@ -342,7 +384,8 @@ internal static class WirelessAdbClient
         .Where(device => device.State == "device").Select(device => device.Transport).Distinct().ToArray();
 
     internal static bool IsSuccessfulPairingResult(int exitCode, string output) => exitCode == 0 &&
-        Regex.IsMatch(output, @"(?:^|\r?\n)\s*Successfully paired\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        Regex.IsMatch(output, @"(?:^|\r?\n)\s*(?:Enter pairing code:[ \t]*)?Successfully paired\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     internal static string[] BuildConnectionCandidates(
         IEnumerable<string> discoveredEndpoints, string? endpoint, IEnumerable<string>? trustedHostEndpoints = null)
@@ -421,6 +464,12 @@ internal static class WirelessAdbClient
                 (portFilter.Length == 0 || TryParseEndpoint(service.Endpoint, out _, out var port) &&
                     port.ToString() == portFilter))
             .Select(service => service.Endpoint).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    internal static string[] ParseQrPairingEndpoints(string output, string instance) => ParseMdnsEndpointEntries(output)
+        .Where(service => service.ServiceType == "_adb-tls-pairing._tcp" &&
+            (service.Instance.TrimEnd('.').Equals(instance, StringComparison.OrdinalIgnoreCase) ||
+             service.Instance.TrimEnd('.').Equals(instance + "._adb-tls-pairing._tcp", StringComparison.OrdinalIgnoreCase)))
+        .Select(service => service.Endpoint).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     internal static MdnsEndpoint[] ParseMdnsEndpointEntries(string output)
     {
@@ -574,13 +623,13 @@ internal static class WirelessAdbClient
         key?.SetValue("WirelessAdbConnectPort", port.ToString());
     }
 
-    private static async Task<(string Host, int Port, string Endpoint)> ResolvePairingEndpointAsync(
+    private static async Task<(string Host, int Port)> ResolvePairingEndpointAsync(
         string host, string pairingPort, CancellationToken cancellationToken)
     {
         host = host.Trim();
         pairingPort = pairingPort.Trim();
-        if (TryEndpoint(host, pairingPort) is { } endpoint && IPAddress.TryParse(host, out _))
-            return (host, int.Parse(pairingPort), endpoint);
+        if (TryEndpoint(host, pairingPort) != null && IPAddress.TryParse(host, out _))
+            return (host, int.Parse(pairingPort));
 
         var services = await ReadMdnsServicesAsync(cancellationToken);
         var matches = ParsePairingEndpoints(services, host, pairingPort);
@@ -593,7 +642,7 @@ internal static class WirelessAdbClient
         }
         if (!TryParseEndpoint(matches[0], out var resolvedHost, out var resolvedPort))
             throw new InvalidOperationException("无法解析手机公布的无线 ADB 配对服务地址。");
-        return (resolvedHost, resolvedPort, matches[0]);
+        return (resolvedHost, resolvedPort);
     }
 
     private static async Task<string> ReadMdnsServicesAsync(CancellationToken cancellationToken)
@@ -667,17 +716,23 @@ internal static class WirelessAdbClient
     private static async Task<AdbResult> RunAsync(params string[] arguments)
         => await RunAsync(CancellationToken.None, arguments);
 
-    private static async Task<AdbResult> RunAsync(CancellationToken cancellationToken, params string[] arguments)
+    private static Task<AdbResult> RunAsync(CancellationToken cancellationToken, params string[] arguments)
+        => RunWithInputAsync(cancellationToken, null, arguments);
+
+    private static async Task<AdbResult> RunWithInputAsync(
+        CancellationToken cancellationToken, string? input, string[] arguments)
     {
         using var process = new Process { StartInfo = CreateStartInfo(arguments) };
         AdbProcessGate.Shared.Start(process, cancellationToken, "无法启动 ADB。");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        process.StandardInput.Close();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(arguments.FirstOrDefault() == "connect" ? 8 : 15));
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
+            if (input != null)
+                await process.StandardInput.WriteAsync((input + "\n").AsMemory(), linkedCancellation.Token);
+            process.StandardInput.Close();
             await process.WaitForExitAsync(linkedCancellation.Token);
         }
         catch (OperationCanceledException)
@@ -731,6 +786,7 @@ internal static class WirelessAdbClient
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };

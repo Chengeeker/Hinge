@@ -177,12 +177,12 @@
                                     OnContent="开启" />
                                 <TextBlock Text="ADB 自动连接独立运行；剪贴板桥异常退出时只重启剪贴板桥。内容仅经已授权电脑的 ADB shell 通道传输，不写入日志或文件。" Style="{StaticResource HingeM3BodyVariantStyle}" />
                                 <TextBlock Text="首次配对" Style="{StaticResource HingeM3TitleMediumStyle}" />
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="180" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
+                                <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="False">
+                                    <local:HandCursorButton
+                                        x:Name="WirelessAdbQrPairButton"
+                                        AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbQrPairButton"
+                                        Content="扫描二维码配对"
+                                        Style="{StaticResource HingeM3FilledButtonStyle}" />
                                     <PasswordBox
                                         x:Name="WirelessAdbPairingCodeTextBox"
                                         AutomationProperties.Name="无线 ADB 配对码"
@@ -194,10 +194,9 @@
                                     <local:HandCursorButton
                                         x:Name="WirelessAdbPairButton"
                                         AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPairButton"
-                                        Grid.Column="1"
-                                        Content="配对此手机"
-                                        Style="{StaticResource HingeM3FilledButtonStyle}" />
-                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                        Content="使用配对码"
+                                        Style="{StaticResource HingeM3TonalButtonStyle}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
                                         <local:HandCursorButton
                                             x:Name="WirelessAdbConnectButton"
                                             AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbConnectButton"
@@ -208,10 +207,10 @@
                                             AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbPullLogsButton"
                                             Content="提取 Hinge 日志" />
                                     </StackPanel>
-                                </Grid>
+                                </local:HingeWrapPanel>
                                 <StackPanel Spacing="10" HorizontalAlignment="Stretch">
                                         <TextBlock Text="目标 IP 和端口" Style="{StaticResource HingeM3TitleMediumStyle}" />
-                                        <TextBlock Text="通常只需输入配对码。多台手机或网络不支持 mDNS 时，可填写手机 IP 与系统显示的端口。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                                        <TextBlock Text="扫码会自动发现手机。使用六位配对码时，如果网络不支持 mDNS，可填写手机 IP 与系统显示的端口。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                                         <TextBox
                                             x:Name="WirelessAdbHostTextBox"
                                             AutomationProperties.Name="手机 IP 地址"

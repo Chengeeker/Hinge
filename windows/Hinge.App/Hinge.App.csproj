@@ -39,9 +39,11 @@
     <Content Include="Assets\Brands\android-default.jpg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\*.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\Licenses\*.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <ProjectReference Include="..\Hinge.Core\Hinge.Core.csproj" />
     <ProjectReference Include="..\Hinge.Platform\Hinge.Platform.csproj" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Net.Codecrete.QrCodeGenerator" Version="3.2.1" />
   </ItemGroup>
 
   <Target Name="PrepareScreenTools" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">

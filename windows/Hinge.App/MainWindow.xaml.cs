@@ -107,6 +107,7 @@ public sealed partial class MainWindow : Window
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _historicalReconnectTimer;
     private CancellationTokenSource? _wirelessAdbClipboardSyncCancellation;
     private CancellationTokenSource? _adbConsoleCancellation;
+    private CancellationTokenSource? _wirelessAdbQrCancellation;
     private int _adbConsoleRevision;
     private Task? _wirelessAdbClipboardSyncTask;
     private WirelessAdbClipboardBridge? _wirelessAdbClipboardBridge;
@@ -1349,11 +1350,16 @@ public sealed partial class MainWindow : Window
         page.SetWirelessAdbClipboardStatus(_wirelessAdbClipboardStatus);
         page.WirelessAdbClipboardSync.Toggled += WirelessAdbClipboardSync_Toggled;
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
+        page.WirelessAdbQrPair.Click += WirelessAdbQrPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
         page.WirelessAdbPullLogs.Click += WirelessAdbPullLogs_Click;
         page.WirelessAdbCommandRun.Click += WirelessAdbCommandRun_Click;
         page.WirelessAdbCommandStop.Click += (_, _) => _adbConsoleCancellation?.Cancel();
-        page.Unloaded += (_, _) => _adbConsoleCancellation?.Cancel();
+        page.Unloaded += (_, _) =>
+        {
+            _adbConsoleCancellation?.Cancel();
+            _wirelessAdbQrCancellation?.Cancel();
+        };
         UpdateScreenStatus(_screenStatus);
     }
 
@@ -1461,6 +1467,7 @@ public sealed partial class MainWindow : Window
         if (_transferSettingsPage is { } diagnostics)
         {
             diagnostics.WirelessAdbPair.IsEnabled = !running && !_wirelessAdbBusy;
+            diagnostics.WirelessAdbQrPair.IsEnabled = !running && !_wirelessAdbBusy;
             diagnostics.WirelessAdbConnect.IsEnabled = !running && !_wirelessAdbBusy;
         }
         if (_screenControlPage is not { } page) return;
@@ -1493,18 +1500,8 @@ public sealed partial class MainWindow : Window
                 host,
                 page.WirelessAdbPairingPort.Text,
                 code);
-            page.WirelessAdbHost.Text = pairing.Host;
             page.WirelessAdbPairingPort.Text = pairing.Port.ToString();
-            SaveWirelessAdbEndpoint(pairing.Host, connectPort);
-            if (FindTrustedAndroidDeviceId(pairing.Host) is { } hingeDeviceId)
-                WirelessAdbClient.SaveHingeDeviceId(hingeDeviceId);
-            _wirelessAdbConnectionStatus = "已完成无线 ADB 配对，正在等待设备自动连接。配对码已清除。";
-            page.SetWirelessAdbStatus(_wirelessAdbConnectionStatus);
-            StartWirelessAdbConnectionManager();
-            if (page.WirelessAdbClipboardSync.IsOn)
-            {
-                await ConfigureWirelessAdbClipboardSyncAsync(true, host, connectPort);
-            }
+            await CompleteWirelessAdbPairingAsync(page, pairing, connectPort);
         }
         catch (Exception exception)
         {
@@ -1514,6 +1511,114 @@ public sealed partial class MainWindow : Window
         {
             SetWirelessAdbBusy(page, false);
         }
+    }
+
+    private async void WirelessAdbQrPair_Click(object sender, RoutedEventArgs e)
+    {
+        if (_transferSettingsPage is not { } page || _wirelessAdbBusy || AdbProcessGate.Shared.SessionEnding) return;
+        using var cancellation = new CancellationTokenSource();
+        _wirelessAdbQrCancellation = cancellation;
+        SetWirelessAdbBusy(page, true);
+        Task? pairingTask = null;
+        try
+        {
+            var (instance, secret, payload) = WirelessAdbClient.CreateQrPairing();
+            var qr = Net.Codecrete.QrCodeGenerator.QrCode.EncodeText(
+                payload, Net.Codecrete.QrCodeGenerator.QrCode.Ecc.Medium);
+            using var stream = new InMemoryRandomAccessStream();
+            await stream.WriteAsync(qr.ToPngBitmap(border: 4, scale: 8).AsBuffer());
+            stream.Seek(0);
+            var bitmap = new BitmapImage();
+            await bitmap.SetSourceAsync(stream);
+            if (cancellation.IsCancellationRequested) return;
+
+            var image = new Image { Source = bitmap, Width = 244, Height = 244 };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(image, "无线 ADB 配对二维码");
+            var status = new TextBlock
+            {
+                Text = "等待扫码 · 二维码 2 分钟内有效",
+                TextWrapping = TextWrapping.Wrap
+            };
+            var dialog = new ContentDialog
+            {
+                Title = "扫描二维码配对",
+                CloseButtonText = "关闭",
+                XamlRoot = page.XamlRoot,
+                Content = new StackPanel
+                {
+                    Spacing = 12,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "手机打开「开发者选项 → 无线调试 → 使用二维码配对设备」，扫描下方二维码。手机和电脑需处于可互通的局域网。",
+                            TextWrapping = TextWrapping.Wrap
+                        },
+                        image,
+                        status
+                    }
+                }
+            };
+            dialog.Opened += (_, _) =>
+            {
+                if (cancellation.IsCancellationRequested) dialog.Hide();
+                else pairingTask = WaitForScanAsync();
+            };
+            dialog.Closing += (_, _) => cancellation.Cancel();
+            await ShowContentDialogAsync(dialog);
+
+            async Task WaitForScanAsync()
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                timeout.CancelAfter(TimeSpan.FromMinutes(2));
+                try
+                {
+                    var pairing = await WirelessAdbClient.PairUsingQrAsync(instance, secret, timeout.Token);
+                    if (!cancellation.IsCancellationRequested) dialog.Hide();
+                    page.WirelessAdbPairingCode.Password = string.Empty;
+                    page.WirelessAdbPairingPort.Text = string.Empty;
+                    page.WirelessAdbConnectPort.Text = string.Empty;
+                    await CompleteWirelessAdbPairingAsync(page, pairing, string.Empty);
+                }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested || AdbProcessGate.Shared.SessionEnding) { }
+                catch (Exception exception)
+                {
+                    var message = exception is OperationCanceledException
+                        ? "二维码已过期。请关闭窗口重新生成，或使用手机上的六位配对码。"
+                        : $"扫码配对失败：{exception.Message}";
+                    image.Visibility = Visibility.Collapsed;
+                    status.Text = message;
+                    SetWirelessAdbConnectionStatus(message);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            SetWirelessAdbConnectionStatus($"无法显示配对二维码：{exception.Message}");
+        }
+        finally
+        {
+            cancellation.Cancel();
+            if (pairingTask != null) await pairingTask;
+            _wirelessAdbQrCancellation = null;
+            SetWirelessAdbBusy(page, false);
+        }
+    }
+
+    private async Task CompleteWirelessAdbPairingAsync(
+        TransferSettingsPage page, WirelessAdbPairingResult pairing, string connectPort)
+    {
+        page.WirelessAdbHost.Text = pairing.Host;
+        SaveWirelessAdbEndpoint(pairing.Host, connectPort);
+        if (FindTrustedAndroidDeviceId(pairing.Host) is { } hingeDeviceId)
+            WirelessAdbClient.SaveHingeDeviceId(hingeDeviceId);
+        var previous = _wirelessAdbConnectionManager;
+        _wirelessAdbConnectionManager = null;
+        if (previous != null) await previous.DisposeAsync();
+        SetWirelessAdbConnectionStatus("无线 ADB 已配对，正在自动连接手机…");
+        StartWirelessAdbConnectionManager();
+        if (page.WirelessAdbClipboardSync.IsOn && !AdbProcessGate.Shared.SessionEnding)
+            await ConfigureWirelessAdbClipboardSyncAsync(true, pairing.Host, connectPort);
     }
 
     private async void WirelessAdbConnect_Click(object sender, RoutedEventArgs e)
@@ -8715,6 +8820,7 @@ public sealed partial class MainWindow : Window
         if (_screenCancellation is { } screen) _ = screen.CancelAsync();
         if (_wirelessAdbClipboardSyncCancellation is { } clipboard) _ = clipboard.CancelAsync();
         if (_adbConsoleCancellation is { } console) _ = console.CancelAsync();
+        if (_wirelessAdbQrCancellation is { } qr) _ = qr.CancelAsync();
         var manager = _wirelessAdbConnectionManager;
         _wirelessAdbConnectionManager = null;
         if (manager != null) _ = manager.DisposeAsync();

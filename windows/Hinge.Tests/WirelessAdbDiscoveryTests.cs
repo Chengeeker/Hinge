@@ -132,6 +132,33 @@ public class WirelessAdbDiscoveryTests
     }
 
     [Fact]
+    public void QrPairingGeneratesFreshScannerCompatibleCredentials()
+    {
+        var first = WirelessAdbClient.CreateQrPairing();
+        var next = WirelessAdbClient.CreateQrPairing();
+
+        Assert.Matches("^hinge-[0-9a-f]{16}$", first.Instance);
+        Assert.Matches("^[0-9A-F]{32}$", first.Secret);
+        Assert.Equal($"WIFI:T:ADB;S:{first.Instance};P:{first.Secret};;", first.Payload);
+        Assert.NotEqual(first.Instance, next.Instance);
+        Assert.NotEqual(first.Secret, next.Secret);
+    }
+
+    [Fact]
+    public void QrPairingIgnoresOtherPhonesAndConnectionServices()
+    {
+        const string instance = "hinge-abcd";
+        var output = "hinge-abcd._adb-tls-pairing._tcp. _adb-tls-pairing._tcp. 192.168.1.4:42100\n" +
+            "hinge-abcd _adb-tls-pairing._tcp 192.168.1.4:42100\n" +
+            "hinge-abcd _adb-tls-connect._tcp 192.168.1.4:42200\n" +
+            "hinge-abcd-2 _adb-tls-pairing._tcp 192.168.1.5:42101\n" +
+            "adb-phone _adb-tls-pairing._tcp 192.168.1.6:42102\n";
+
+        Assert.Equal(new[] { "192.168.1.4:42100" }, WirelessAdbClient.ParseQrPairingEndpoints(output, instance));
+        Assert.Empty(WirelessAdbClient.ParseQrPairingEndpoints(output, "hinge-unknown"));
+    }
+
+    [Fact]
     public void PairingGuidMdnSEndpointMatchesItsAdbIpTransport()
     {
         const string guid = "adb-phone-random";
@@ -187,8 +214,11 @@ public class WirelessAdbDiscoveryTests
     {
         Assert.True(WirelessAdbClient.IsSuccessfulPairingResult(0,
             "Successfully paired to 192.168.1.4:42100 [guid=adb-phone-random]"));
+        Assert.True(WirelessAdbClient.IsSuccessfulPairingResult(0,
+            "Enter pairing code: Successfully paired to 192.168.1.4:42100 [guid=adb-phone-random]"));
         Assert.False(WirelessAdbClient.IsSuccessfulPairingResult(0, string.Empty));
         Assert.False(WirelessAdbClient.IsSuccessfulPairingResult(0, "error: pairing failed"));
+        Assert.False(WirelessAdbClient.IsSuccessfulPairingResult(0, "Enter pairing code: error: pairing failed"));
         Assert.False(WirelessAdbClient.IsSuccessfulPairingResult(1, "Successfully paired"));
     }
 

@@ -16,6 +16,7 @@
 | **.NET 8 BCL** | Windows | 运行时 | 8.0+ | MIT | 核心协议栈、Socket 网络、多线程、SHA-256、PDF 生成 | **已核验 (合规)** |
 | **Win32 Platform API** | Windows | 系统原生 | System | N/A (Windows OS) | user32/gdi32/shell32 模拟键鼠输入、托盘管理、系统通知 | **已核验 (合规)** |
 | **Microsoft.WindowsAppSDK** | Windows | 运行时 NuGet | 2.4.0 | MIT | WinUI 3、窗口、默认应用和 Windows App SDK 平台能力 | **已核验 (合规)** |
+| **Net.Codecrete.QrCodeGenerator** | Windows | 运行时 NuGet | 3.2.1 | MIT | 本地生成无线 ADB 配对二维码 | 许可随安装包分发 |
 | **Microsoft vscode-explorer-command** | Windows | 源码参考 / 部分改编 | 2026-09-13 获取的默认分支 | MIT | Windows 11 `IExplorerCommand` COM 激活框架；Hinge 自行实现动态设备子菜单和发送逻辑 | **已核验 (合规，保留版权头)** |
 | **Jetpack Compose / AndroidX** | Android | 运行时 | Compose BOM 2026.09.00 | Apache-2.0 | Compose 界面、Material 3、Activity 和 Core | 见 Gradle 配置 |
 | **Kotlin Coroutines Android** | Android | 运行时 | 1.10.2 | Apache-2.0 | 异步任务与主线程调度 | 见 Gradle 配置 |
@@ -92,6 +93,6 @@ Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github
 
 ## 审计结论 (License Audit Verdict)
 - **直接运行时三方库数量**：
-  - Windows：`Microsoft.WindowsAppSDK` 1 个外部 NuGet 依赖，另有上节登记的随包原生投屏组件。
+  - Windows：`Microsoft.WindowsAppSDK` 和 `Net.Codecrete.QrCodeGenerator` 两个外部 NuGet 依赖，另有上节登记的随包原生投屏组件。
   - Android Flutter 端运行时：引入 `crypto`、`dynamic_color`、`cupertino_icons`、`material_symbols_icons` 和 `flutter_svg`。
 - **许可边界**：Hinge 自有代码保持 MIT；未引入 UU 的 GPL 源码。随包的 LGPL 共享库按独立许可保留源码、声明与替换能力，不应再描述成“无任何 LGPL 依赖”。

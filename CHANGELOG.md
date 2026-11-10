@@ -8,6 +8,8 @@
 - Windows 文件管理的手机与 WebDAV 来源标签改用 Material 3 选中态，适配浅色和深色主题。
 - 统一手机与 WebDAV 文件操作确认框的按钮样式，删除操作默认聚焦取消。
 
+- Windows 新增无线 ADB 扫码配对。电脑生成二维码，手机通过系统无线调试扫码。配对成功后自动尝试连接，六位配对码仍可用。
+
 ## [3.0.0] - 2026-11-07
 
 对照上一正式发行版 [v2.2.0](https://github.com/Chengeeker/Hinge/releases/tag/v2.2.0)。

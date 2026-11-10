@@ -74,22 +74,16 @@ public sealed partial class FileManagementPage : Page
                 }
             }
             _rebuildingTabs = true;
-            var tabs = _phones.Select(phone => new TabViewItem
-            { Header = CreatePhoneTabHeader(phone.DisplayName), Tag = "phone:" + phone.DeviceId, IsClosable = false }).ToList();
-            if (tabs.Count == 0) tabs.Add(new() { Header = CreateCenteredTabHeader("手机（未连接）"), Tag = "phone", IsClosable = false });
-            tabs.AddRange(state.Profiles.Select(profile => new TabViewItem
-            { Header = CreateCenteredTabHeader(profile.DisplayName), Tag = profile.Id, IsClosable = false }));
+            var tabs = _phones.Select(phone => CreateSourceTab("phone:" + phone.DeviceId, phone.DisplayName, showPhoneLogo: true)).ToList();
+            if (tabs.Count == 0) tabs.Add(CreateSourceTab("phone", "手机（未连接）"));
+            tabs.AddRange(state.Profiles.Select(profile => CreateSourceTab(profile.Id, profile.DisplayName)));
             tabs = tabs.OrderBy(tab =>
             {
                 int index = state.TabOrder.IndexOf((string)tab.Tag);
                 return index >= 0 ? index : state.TabOrder.Count + tabs.IndexOf(tab);
             }).ToList();
             _sourceTabs.Clear();
-            foreach (var tab in tabs)
-            {
-                tab.MinWidth = 160;
-                _sourceTabs.Add(tab);
-            }
+            foreach (var tab in tabs) _sourceTabs.Add(tab);
             SourceTabs.SelectedItem = tabs.FirstOrDefault(tab => (string)tab.Tag == selected) ?? tabs[0];
             _rebuildingTabs = false;
             if (notifySelection || (SourceTabs.SelectedItem as TabViewItem)?.Tag as string != selected)
@@ -98,41 +92,49 @@ public sealed partial class FileManagementPage : Page
         catch (Exception exception) { _rebuildingTabs = false; StatusText.Text = "WebDAV 配置读取失败：" + exception.Message; }
     }
 
-    private static FrameworkElement CreatePhoneTabHeader(string title)
+    private TabViewItem CreateSourceTab(string id, string title, bool showPhoneLogo = false)
     {
-        var header = new StackPanel
+        var label = new TextBlock
+        {
+            Text = title,
+            MaxWidth = showPhoneLogo ? 118 : 160,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
-            Width = 160,
+            HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
-        header.Children.Add(MainWindow.BuildOfficialBrandLogo(string.Empty, title, 34, 24));
-        header.Children.Add(new TextBlock
-        {
-            Text = title,
-            Width = 118,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            TextAlignment = TextAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        AutomationProperties.SetName(header, title);
-        ToolTipService.SetToolTip(header, title);
-        return header;
-    }
+        if (showPhoneLogo)
+            row.Children.Add(MainWindow.BuildOfficialBrandLogo(string.Empty, title, 34, 24));
+        row.Children.Add(label);
 
-    private static TextBlock CreateCenteredTabHeader(string title)
-    {
-        var header = new TextBlock
+        var indicator = (Border)((DataTemplate)Resources["SourceTabIndicatorTemplate"]).LoadContent();
+        var header = new Grid { MinHeight = 32, Children = { row, indicator } };
+        var tab = new TabViewItem
         {
-            Text = title,
-            Width = 160,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            TextAlignment = TextAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            Tag = id,
+            Header = header,
+            IsClosable = false,
+            MinWidth = 120,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
-        ToolTipService.SetToolTip(header, title);
-        return header;
+        AutomationProperties.SetName(tab, title);
+        ToolTipService.SetToolTip(tab, title);
+        tab.RegisterPropertyChangedCallback(TabViewItem.IsSelectedProperty, (_, _) => UpdateSelection());
+        tab.ActualThemeChanged += (_, _) => UpdateSelection();
+        UpdateSelection();
+        return tab;
+
+        void UpdateSelection()
+        {
+            label.Foreground = tab.IsSelected ? ThemeBrushes.Accent(tab) : ThemeBrushes.Secondary(tab);
+            indicator.Visibility = tab.IsSelected ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private async void SelectSource()
@@ -360,6 +362,7 @@ public sealed partial class FileManagementPage : Page
     public FileManagementPage()
     {
         InitializeComponent();
+        ThemeBrushes.ApplyControlResources(SourceTabs);
         SourceTabs.TabItemsSource = _sourceTabs;
         SourceTabs.SelectionChanged += (_, _) => SelectSource();
         SourceTabs.TabDragStarting += (_, _) =>

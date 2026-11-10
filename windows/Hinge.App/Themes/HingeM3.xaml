@@ -515,6 +515,10 @@
         <Setter Property="FontSize" Value="14" />
         <Setter Property="FontWeight" Value="Medium" />
     </Style>
+    <Style x:Key="HingeM3DestructiveButtonStyle" TargetType="Button" BasedOn="{StaticResource HingeM3FilledButtonStyle}">
+        <Setter Property="Background" Value="{ThemeResource HingeM3ErrorBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource HingeM3OnErrorBrush}" />
+    </Style>
     <Style x:Key="HingeM3TonalButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
         <Setter Property="Template" Value="{StaticResource HingeM3ActionButtonTemplate}" />
         <Setter Property="UseSystemFocusVisuals" Value="True" />

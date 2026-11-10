@@ -17,6 +17,16 @@
         <Thickness x:Key="TabViewItemHeaderPaddingWithCloseButton">12,6,8,6</Thickness>
         <Thickness x:Key="TabViewItemHeaderPaddingWithoutCloseButton">12,6,12,6</Thickness>
         <Thickness x:Key="TabViewSelectedItemHeaderPadding">12,6,12,6</Thickness>
+        <SolidColorBrush x:Key="TabViewItemHeaderBackgroundSelected" Color="Transparent" />
+        <SolidColorBrush x:Key="TabViewSelectedItemBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="TabViewBorderBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="TabViewItemSeparator" Color="Transparent" />
+        <DataTemplate x:Key="SourceTabIndicatorTemplate">
+            <Border Width="32" Height="3" CornerRadius="2"
+                    Background="{ThemeResource HingeM3PrimaryBrush}"
+                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Visibility="Collapsed" IsHitTestVisible="False" />
+        </DataTemplate>
     </Page.Resources>
     <Grid>
         <Grid.RowDefinitions>

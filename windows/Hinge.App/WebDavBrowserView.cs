@@ -546,7 +546,8 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     public async Task UploadPathsAsync(IReadOnlyList<string> paths)
     {
         if (_busy || _client == null || _directory == null) return;
-        if (!await ConfirmAsync("上传文件？", $"上传 {paths.Count} 个文件到“{_profile.DisplayName}”当前目录。同名文件会被覆盖。")) return;
+        if (!await MainWindow.ConfirmFileActionAsync(XamlRoot, "上传文件？",
+            $"上传 {paths.Count} 个文件到“{_profile.DisplayName}”当前目录。同名文件会被覆盖。", "上传")) return;
         var client = _client;
         var directory = _directory;
         bool success = await RunTransferAsync(async token =>
@@ -583,7 +584,8 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
         if (entries.Length == 0) { _status.Text = "请先选择文件；不支持直接下载整个文件夹。"; return; }
         var picker = new FolderPicker(); picker.FileTypeFilter.Add("*"); InitializePicker(picker);
         var folder = await picker.PickSingleFolderAsync(); if (folder == null) return;
-        if (!await ConfirmAsync("保存选中文件？", $"保存 {entries.Length} 个文件到所选文件夹；同名本机文件会被覆盖。")) return;
+        if (!await MainWindow.ConfirmFileActionAsync(XamlRoot, "保存选中文件？",
+            $"保存 {entries.Length} 个文件到所选文件夹；同名本机文件会被覆盖。", "保存")) return;
         await RunTransferAsync(async token =>
         {
             long total = entries.Sum(entry => entry.Size);
@@ -638,19 +640,13 @@ internal sealed class WebDavBrowserView : UserControl, IDisposable
     {
         var entries = Selected();
         if (entries.Count == 0) return;
-        if (!await ConfirmAsync("删除服务器文件？", $"将删除 {entries.Count} 项。文件夹会连同内容一起删除，此操作不保证可恢复。")) return;
+        if (!await MainWindow.ConfirmFileActionAsync(XamlRoot, "删除服务器文件？",
+            $"将删除 {entries.Count} 项。文件夹会连同内容一起删除，此操作不保证可恢复。", "删除", destructive: true)) return;
         bool success = await RunTransferAsync(async token =>
         { foreach (var entry in entries) await _client!.DeleteAsync(entry, token); });
         var status = _status.Text;
         await NavigateAsync(_directory);
         if (!success) _status.Text = status;
-    }
-
-    private async Task<bool> ConfirmAsync(string title, string content)
-    {
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = content,
-            PrimaryButtonText = "确认", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private async Task<bool> RunTransferAsync(Func<CancellationToken, Task> action)

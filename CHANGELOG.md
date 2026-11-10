@@ -5,6 +5,9 @@
 - Windows 修复关机期间无线 ADB 后台重连仍可能启动 `adb.exe`，导致系统弹出 `0xc0000142` 初始化失败的问题。
 - 收到 Windows 会话结束请求后暂停 ADB 和投屏启动。如果取消关机，自动重连恢复。
 
+- Windows 文件管理的手机与 WebDAV 来源标签改用 Material 3 选中态，适配浅色和深色主题。
+- 统一手机与 WebDAV 文件操作确认框的按钮样式，删除操作默认聚焦取消。
+
 ## [3.0.0] - 2026-11-07
 
 对照上一正式发行版 [v2.2.0](https://github.com/Chengeeker/Hinge/releases/tag/v2.2.0)。

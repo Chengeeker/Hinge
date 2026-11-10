@@ -69,13 +69,14 @@ internal static class ThemeBrushes
         ("CheckBoxCheckBackgroundFillCheckedPressed", "Primary"), ("CheckBoxCheckGlyphForegroundChecked", "OnPrimary"),
         ("CheckBoxCheckBackgroundStrokeChecked", "Primary"), ("CheckBoxCheckBackgroundStrokeCheckedPointerOver", "Primary"),
         ("CheckBoxCheckBackgroundStrokeCheckedPressed", "Primary"),
-        ("CheckBoxCheckGlyphForegroundCheckedPointerOver", "OnPrimary"), ("CheckBoxCheckGlyphForegroundCheckedPressed", "OnPrimary")
+        ("CheckBoxCheckGlyphForegroundCheckedPointerOver", "OnPrimary"), ("CheckBoxCheckGlyphForegroundCheckedPressed", "OnPrimary"),
+        ("TabViewItemHeaderBackgroundPointerOver", "StateHover"), ("TabViewItemHeaderBackgroundPressed", "StatePressed")
     ];
 
     internal static void ApplyControlResources(FrameworkElement owner)
     {
         if (owner is Control control) HandCursorResource.AttachNative(control);
-        if (owner is not (ContentDialog or ComboBox or TextBox or PasswordBox or CheckBox)) return;
+        if (owner is not (ContentDialog or ComboBox or TextBox or PasswordBox or CheckBox or TabView)) return;
         var dictionary = M3Dictionary();
         foreach (var theme in new[] { "Light", "Dark", "HighContrast" })
         {
@@ -85,7 +86,9 @@ internal static class ThemeBrushes
             var source = (ResourceDictionary)dictionary.ThemeDictionaries[theme];
             foreach (var (key, role) in ControlBrushAliases)
             {
-                var relevant = owner is ContentDialog ||
+                var isTabBrush = key.StartsWith("TabView", StringComparison.Ordinal);
+                var relevant = (owner is ContentDialog && !isTabBrush) ||
+                    (owner is TabView && isTabBrush) ||
                     (owner is ComboBox && key.StartsWith("ComboBox", StringComparison.Ordinal)) ||
                     (owner is TextBox or PasswordBox && key.StartsWith("TextControl", StringComparison.Ordinal)) ||
                     (owner is CheckBox && key.StartsWith("CheckBox", StringComparison.Ordinal));

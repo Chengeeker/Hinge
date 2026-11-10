@@ -1152,16 +1152,8 @@ public sealed partial class MainWindow : Window
         var connection = GetFileConnection(entries[0]);
         var generation = _fileLoadGeneration;
 
-        var dialog = new ContentDialog
-        {
-            Title = "删除选中文件？",
-            Content = $"将从手机中删除 {entries.Count} 个文件。此操作无法撤销。",
-            PrimaryButtonText = "删除",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = ((FrameworkElement)Content).XamlRoot
-        };
-        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
+        if (!await ConfirmFileActionAsync(((FrameworkElement)Content).XamlRoot, "删除选中文件？",
+            $"将从手机中删除 {entries.Count} 个文件。此操作无法撤销。", "删除", destructive: true)) return;
 
         if (connection == null)
         {
@@ -8643,14 +8635,12 @@ public sealed partial class MainWindow : Window
         ThemeBrushes.ApplyControlResources(dialog);
         if (dialog.Content is DependencyObject content) ThemeBrushes.ApplyLogicalControlResources(content);
         var resources = Application.Current.Resources;
-        var primaryStyle = (Style)resources["HingeM3FilledButtonStyle"];
-
         dialog.Background = ThemeBrushes.MutedSurface(dialog);
         dialog.Foreground = ThemeBrushes.Primary(dialog);
         dialog.BorderBrush = ThemeBrushes.Border(dialog);
         dialog.BorderThickness = new Thickness(1);
         dialog.CornerRadius = ThemeBrushes.CornerRadius;
-        dialog.PrimaryButtonStyle = primaryStyle;
+        dialog.PrimaryButtonStyle ??= (Style)resources["HingeM3FilledButtonStyle"];
         dialog.CloseButtonStyle = (Style)resources["HingeM3TextButtonStyle"];
         dialog.TitleTemplate = (DataTemplate)resources["HingeM3DialogTitleTemplate"];
         if (dialog.Content is string)
@@ -8669,6 +8659,24 @@ public sealed partial class MainWindow : Window
         {
             _contentDialogGate.Release();
         }
+    }
+
+    internal static async Task<bool> ConfirmFileActionAsync(
+        XamlRoot xamlRoot, string title, string message, string confirmText, bool destructive = false)
+    {
+        var resources = Application.Current.Resources;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = xamlRoot,
+            Title = title,
+            Content = message,
+            // WinUI focuses the first command and keeps custom styles when no default is declared.
+            PrimaryButtonText = "取消",
+            PrimaryButtonStyle = (Style)resources["HingeM3TonalButtonStyle"],
+            SecondaryButtonText = confirmText,
+            SecondaryButtonStyle = (Style)resources[destructive ? "HingeM3DestructiveButtonStyle" : "HingeM3FilledButtonStyle"]
+        };
+        return await ShowContentDialogAsync(dialog) == ContentDialogResult.Secondary;
     }
 
     private async Task ShowDialogAsync(string title, string message, bool primary)

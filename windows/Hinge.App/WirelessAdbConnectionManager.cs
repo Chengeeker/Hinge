@@ -110,6 +110,12 @@ internal sealed class WirelessAdbConnectionManager : IAsyncDisposable
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (AdbProcessGate.Shared.SessionEnding)
+            {
+                try { await _wake.WaitAsync(cancellationToken); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
             if (CurrentTransport == null)
                 Publish(new WirelessAdbConnectionStatus(WirelessAdbConnectionState.WaitingForDevice,
                     "正在通过 Android Platform-Tools 恢复已配对设备…"));
@@ -178,8 +184,7 @@ internal sealed class WirelessAdbConnectionManager : IAsyncDisposable
             NetworkChange.NetworkAddressChanged -= OnNetworkChanged;
             NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
         }
-        _cancellation.Cancel();
-        NotifyNetworkChanged();
+        await _cancellation.CancelAsync();
         if (_runTask != null)
         {
             try { await _runTask; }

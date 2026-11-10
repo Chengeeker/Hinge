@@ -33,6 +33,8 @@ namespace Hinge.App;
 public sealed partial class MainWindow : Window
 {
     private const uint WmDropFiles = 0x0233;
+    private const uint WmQueryEndSession = 0x0011;
+    private const uint WmEndSession = 0x0016;
     private const uint WmNcLButtonDown = 0x00A1;
     private const uint WmNcLButtonUp = 0x00A2;
     private const uint GuiInMoveSize = 0x0002;
@@ -1817,7 +1819,7 @@ public sealed partial class MainWindow : Window
 
     private void StartWirelessAdbConnectionManager()
     {
-        if (_wirelessAdbConnectionManager != null) return;
+        if (_wirelessAdbConnectionManager != null || AdbProcessGate.Shared.SessionEnding) return;
         var manager = new WirelessAdbConnectionManager(async cancellationToken =>
         {
             var host = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
@@ -3371,6 +3373,27 @@ public sealed partial class MainWindow : Window
         IntPtr wParam,
         IntPtr lParam)
     {
+        if (message == WmQueryEndSession)
+        {
+            AdbProcessGate.Shared.SessionEnding = true;
+            return new IntPtr(1);
+        }
+        if (message == WmEndSession)
+        {
+            bool ending = wParam != IntPtr.Zero;
+            AdbProcessGate.Shared.SessionEnding = ending;
+            if (ending)
+            {
+                _allowClose = true;
+                StopAdbWork();
+            }
+            else
+            {
+                _wirelessAdbConnectionManager?.NotifyNetworkChanged();
+            }
+            return IntPtr.Zero;
+        }
+
         if (message == WmNcLButtonDown)
         {
             _nativeWindowMoveActive = true;
@@ -8679,23 +8702,29 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void StopAdbWork()
+    {
+        if (_screenCancellation is { } screen) _ = screen.CancelAsync();
+        if (_wirelessAdbClipboardSyncCancellation is { } clipboard) _ = clipboard.CancelAsync();
+        if (_adbConsoleCancellation is { } console) _ = console.CancelAsync();
+        var manager = _wirelessAdbConnectionManager;
+        _wirelessAdbConnectionManager = null;
+        if (manager != null) _ = manager.DisposeAsync();
+    }
+
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        AdbProcessGate.Shared.SessionEnding = true;
+        StopAdbWork();
         _desktopSharingClosed = true;
         _ = StopDesktopSharingAsync();
-        _screenCancellation?.Cancel();
         ThemeBrushes.PaletteChanged -= IntegratedTitleBar_PaletteChanged;
         AppNavigation.UnregisterPropertyChangedCallback(NavigationView.IsPaneOpenProperty, _paneOpenChangedToken);
         if (_windowXamlRoot != null) _windowXamlRoot.Changed -= IntegratedTitleBar_RootChanged;
         CancelHistoricalReconnect();
         Clipboard.ContentChanged -= DesktopClipboard_ContentChanged;
-        _wirelessAdbClipboardSyncCancellation?.Cancel();
-        _adbConsoleCancellation?.Cancel();
         _wirelessAdbClipboardBridge?.Dispose();
         _wirelessAdbClipboardBridge = null;
-        if (_wirelessAdbConnectionManager != null)
-            _ = _wirelessAdbConnectionManager.DisposeAsync().AsTask();
-        _wirelessAdbConnectionManager = null;
         ExplorerSendMenu.Clear();
         ReleaseWindowIcons();
         UninitializeNativeFileDrop();

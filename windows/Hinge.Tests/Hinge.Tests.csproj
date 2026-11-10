@@ -23,6 +23,7 @@
     <Compile Include="..\Hinge.App\WinUiPopupCursor.cs" Link="WinUiPopupCursor.cs" />
     <Compile Include="..\Hinge.App\DesktopSystemActions.cs" Link="DesktopSystemActions.cs" />
     <Compile Include="..\Hinge.App\WirelessAdbClient.cs" Link="WirelessAdbClient.cs" />
+    <Compile Include="..\Hinge.App\AdbProcessGate.cs" Link="AdbProcessGate.cs" />
     <Compile Include="..\Hinge.App\ScrcpyLauncher.cs" Link="ScrcpyLauncher.cs" />
     <Compile Include="..\Hinge.App\WirelessAdbConnectionManager.cs" Link="WirelessAdbConnectionManager.cs" />
     <EmbeddedResource Include="..\Hinge.App\WebDavBrowserView.cs" LogicalName="WebDavBrowserView.Source.cs" />

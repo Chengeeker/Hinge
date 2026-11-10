@@ -670,7 +670,7 @@ internal static class WirelessAdbClient
     private static async Task<AdbResult> RunAsync(CancellationToken cancellationToken, params string[] arguments)
     {
         using var process = new Process { StartInfo = CreateStartInfo(arguments) };
-        if (!process.Start()) throw new InvalidOperationException("无法启动 ADB。");
+        AdbProcessGate.Shared.Start(process, cancellationToken, "无法启动 ADB。");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         process.StandardInput.Close();
@@ -697,7 +697,7 @@ internal static class WirelessAdbClient
         TimeSpan duration, CancellationToken cancellationToken, params string[] arguments)
     {
         using var process = new Process { StartInfo = CreateStartInfo(arguments) };
-        if (!process.Start()) throw new InvalidOperationException("无法启动 ADB mDNS 服务监听。");
+        AdbProcessGate.Shared.Start(process, cancellationToken, "无法启动 ADB mDNS 服务监听。");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         process.StandardInput.Close();
@@ -776,7 +776,7 @@ internal static class WirelessAdbClient
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var process = new Process { StartInfo = startInfo };
-        if (!process.Start()) throw new InvalidOperationException("无法启动 ADB。");
+        AdbProcessGate.Shared.Start(process, cancellationToken, "无法启动 ADB。");
         process.StandardInput.Close();
         var text = new StringBuilder();
         var gate = new object();
@@ -920,7 +920,15 @@ internal sealed class WirelessAdbClipboardBridge : IDisposable
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
         var process = new Process { StartInfo = startInfo };
-        if (!process.Start()) throw new InvalidOperationException("无法启动 Android 剪贴板桥。");
+        try
+        {
+            AdbProcessGate.Shared.Start(process, cancellationToken, "无法启动 Android 剪贴板桥。");
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
 
         var bridge = new WirelessAdbClipboardBridge(process, onTextReceived);
         try

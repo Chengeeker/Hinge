@@ -74,7 +74,7 @@ internal static class ScrcpyLauncher
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var process = new Process { StartInfo = startInfo };
-        if (!process.Start()) throw new InvalidOperationException("无法启动 scrcpy。");
+        AdbProcessGate.Shared.Start(process, cancellationToken, "无法启动 scrcpy。");
         using var stop = cancellationToken.Register(() =>
         {
             try { if (!process.HasExited && !process.CloseMainWindow()) process.Kill(); }

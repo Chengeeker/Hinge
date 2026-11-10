@@ -4,10 +4,11 @@ Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，支持�
 
 - 项目地址：[github.com/Chengeeker/Hinge](https://github.com/Chengeeker/Hinge)
 - Windows `3.0.1`：[下载 x64 安装包](https://github.com/Chengeeker/Hinge/releases/download/v3.0.1/Hinge-3.0.1-Windows-x64-Setup.exe)。
-- Android `3.0.0+192`（arm64-v8a）见 [Hinge v3.0.0 发行页](https://github.com/Chengeeker/Hinge/releases/tag/v3.0.0)。
+- Android `3.0.1+195`：[下载 arm64-v8a 安装包](https://github.com/Chengeeker/Hinge/releases/download/v3.0.1/Hinge-3.0.1-Android-arm64.apk)。
 - Android 使用 Kotlin / Jetpack Compose，构建产物为 `publish/Hinge.apk`。见[版本约定](docs/VERSIONING.md)。
 - 许可证：[MIT](LICENSE)
-- 本版完整变更：[v3.0.0 中文更新日志](docs/CHANGELOG_v3.0.0.md)
+- 3.0.1 更新：[中文更新日志](docs/CHANGELOG_v3.0.1.md)
+- 3.0.0 完整变更：[v3.0.0 中文更新日志](docs/CHANGELOG_v3.0.0.md)
 
 ## 这是什么
 
@@ -26,7 +27,7 @@ Hinge 不依赖账号或 Hinge 官方云服务。设备发现、会话和文件�
 
 - UDP 局域网发现和手动设备发现；
 - 已知设备快速重连、心跳和断线状态恢复；已经建立过会话且仍在信任库中的设备，在更新或短暂断线后重新上线时自动恢复连接，新设备仍需手动连接；
-- 文本消息与文件传输；本地候选新增默认关闭的无线 ADB 纯文本剪贴板同步，不使用 Shizuku 或 Cloud Relay；Android 17 桥启动检查已通过，双向复制与 VPN 切换验收待完成；
+- 文本消息与文件传输；支持无线 ADB 纯文本剪贴板同步，不使用 Shizuku 或 Cloud Relay；安卓设置提供独立的无线 ADB 配对与剪贴板同步入口，连接 ADB 且双端允许同步后生效；
 - Android 首页提供本地文件传输记录，显示局域网/Cloud Relay 收发方向、状态与进度；点击记录可用系统默认应用打开仍存在的本机文件；“清空本机记录”只清除记录，不取消实际传输或删除文件，重启时会结束已不再活动的旧进行中记录；
 - 前台服务、通知和厂商后台保活设置引导；
 - Android 支持低功耗待命，Windows 右键发送时可通过 BLE Companion presence 请求恢复局域网连接；BLE 只负责唤醒，不承载文件内容，自动唤醒不可用时由 Android 常驻通知作为人工兜底；Android 系统分享在已有会话可用时直接进入发送，断联时才显示待发送队列；
@@ -124,16 +125,16 @@ Hinge 不会修改 `EnableLUA`，也不要求用户把它改成 `1`。保持系�
 
 ### Android
 
-需要 JDK 21 和 Android SDK 37.2。用 Android Studio 打开 `android-compose/` 可进行开发，或在项目根目录运行：
+需要 JDK 21 和 Android SDK 37.2。用 Android Studio 打开 `` 可进行开发，或在项目根目录运行：
 
 ```powershell
-.\android-compose\gradlew.bat -p android-compose :app:testDebugUnitTest :app:lintRelease
+.\gradlew.bat :app:testDebugUnitTest :app:lintRelease
 .\scripts\build_release_android.ps1
 ```
 
-首次构建时，在本机将 `android-compose/key.properties.example` 复制为 `android-compose/key.properties`，填入自己的签名配置。签名库、口令及临时转换文件应保存在本机。
+首次构建时，在本机将 `key.properties.example` 复制为 `key.properties`，填入自己的签名配置。签名库、口令及临时转换文件应保存在本机。
 
-发布脚本运行 Compose 的 JVM 测试、Release Lint 和构建，核验包名、版本、arm64-v8a 架构、原签名及对齐后，再更新 `publish/Hinge.apk`。`android-compose/app/build/outputs/apk/release/` 内的 Gradle 产物用于构建过程。脚本会在签名完成后清理临时 PKCS12 文件。
+发布脚本运行 Compose 的 JVM 测试、Release Lint 和构建，核验包名、版本、arm64-v8a 架构、原签名及对齐后，再更新 `publish/Hinge.apk`。`app/build/outputs/apk/release/` 内的 Gradle 产物用于构建过程。脚本会在签名完成后清理临时 PKCS12 文件。
 
 ### Windows
 
@@ -150,7 +151,7 @@ dotnet test windows/Hinge.sln --configuration Release
 ## 仓库结构
 
 ```text
-android-compose/         Kotlin / Jetpack Compose Android 客户端和原生服务
+         Kotlin / Jetpack Compose Android 客户端和原生服务
 windows/                 Windows 桌面客户端、核心层、平台层和测试
 protocol/                跨端协议和专题说明
 installer/               EXE 安装器源码
@@ -174,7 +175,7 @@ scripts/                 构建、防火墙和卸载脚本
 
 ## 开源组件与合规说明
 
-Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `android-compose/app/build.gradle.kts`、各 `.csproj` 和构建工具解析结果为准。间接依赖由 Gradle 与 NuGet解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
+Hinge 的业务代码采用 [MIT License](LICENSE)。下面列出的是 Hinge 直接声明、参与构建或随运行时使用的主要开源组件；精确版本以 `app/build.gradle.kts`、各 `.csproj` 和构建工具解析结果为准。间接依赖由 Gradle 与 NuGet解析，不在 README 中重复抄录，审查入口见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
 Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github.com/electron/electron)（MIT）公开的 `NotifyIconHost` 消息分发实现，用于识别 `Electron_NotifyIconHostWindow`、通知图标 ID 和托盘单击回调。Hinge 没有复制或打包 Electron 源码，也没有新增 Electron 运行时依赖；详细边界见 [第三方许可证登记](THIRD_PARTY_LICENSES.md)。
 
@@ -187,7 +188,7 @@ Windows 11 第一层资源管理器菜单的 COM 激活框架改编自 Microsoft
 | [Jetpack Compose](https://developer.android.com/jetpack/compose) / AndroidX | Android / Compose BOM `2026.09.00` | Apache-2.0 | 原生界面、Material 3 与系统集成 |
 | [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Android `1.10.2` | Apache-2.0 | 异步任务 |
 | [Material Icons / Symbols](https://github.com/google/material-design-icons) | Android / 随包字体 | Apache-2.0 | 界面图标 |
-| [liquid_glass_widgets 着色器](android-compose/tools/reference/glass-upstream/LICENSE) | Android / 上游 `1.13.0` 衍生资产 | MIT | 可选液态玻璃的着色器 |
+| [liquid_glass_widgets 着色器](tools/reference/glass-upstream/LICENSE) | Android / 上游 `1.13.0` 衍生资产 | MIT | 可选液态玻璃的着色器 |
 | [Microsoft.WindowsAppSDK](https://github.com/microsoft/WindowsAppSDK) | Windows / NuGet `2.4.0` | MIT | Windows 桌面客户端界面、窗口和系统集成基础能力 |
 | [.NET Runtime / BCL](https://github.com/dotnet/runtime) | Windows / .NET `8` | MIT | Socket、压缩、加密、文件和系统集成基础能力 |
 

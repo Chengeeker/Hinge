@@ -35,7 +35,7 @@ import struct
 import zlib
 
 W, H = 328*density, 112*density
-assets = Path("android-compose/app/src/main/assets/glass")
+assets = Path("app/src/main/assets/glass")
 def source(name): return (assets / (name + ".glsl")).read_text("utf-8-sig")
 def shader(stage, code):
     shader_id = g("CreateShader", U, U)(stage)

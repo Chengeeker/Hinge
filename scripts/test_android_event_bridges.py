@@ -5,7 +5,7 @@ repo = pathlib.Path(__file__).resolve().parents[1]
 cache = pathlib.Path.home() / '.gradle/caches/modules-2/files-2.1'
 work = repo / 'tmp/compose-event-bridge-selfcheck'
 work.mkdir(exist_ok=True)
-native_root = 'android-compose/app/src/main/kotlin/com/hinge/office/'
+native_root = 'app/src/main/kotlin/com/hinge/office/'
 legacy_root = 'android/android/app/src/main/kotlin/com/hinge/office/'
 
 def jar(group, artifact, preferred):

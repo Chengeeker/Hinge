@@ -65,13 +65,14 @@ class SettingsHapticsTest {
     }
 
     // Compose performTouchInput bypasses Activity dispatch. Send actual Android events here.
-    private fun touch(node: SemanticsNodeInteraction, drag: Boolean = false, cancel: Boolean = false) {
+    private fun touch(node: SemanticsNodeInteraction, drag: Boolean = false, cancel: Boolean = false, rightEdge: Boolean = false) {
         val bounds = node.fetchSemanticsNode().boundsInRoot
         var point = Offset.Zero
         compose.runOnUiThread {
             val origin = IntArray(2); contentView.getLocationOnScreen(origin)
             val decor = IntArray(2); compose.activity.window.decorView.getLocationOnScreen(decor)
-            point = bounds.center + Offset((origin[0] - decor[0]).toFloat(), (origin[1] - decor[1]).toFloat())
+            val localPoint = if (rightEdge) Offset(bounds.right - 32f, bounds.center.y) else bounds.center
+            point = localPoint + Offset((origin[0] - decor[0]).toFloat(), (origin[1] - decor[1]).toFloat())
         }
         val start = android.os.SystemClock.uptimeMillis()
         fun send(action: Int, position: Offset) {
@@ -159,5 +160,70 @@ class SettingsHapticsTest {
         touch(compose.onNodeWithTag("glass-choice-entry"))
         compose.onNodeWithText("取消").performTouchInput { click() }
         assertTrue(pulses.isEmpty())
+    }
+
+    @Test fun clipboardSwitchAndPairingActionsHaveOnePulseEach() {
+        var enabled by mutableStateOf(true)
+        var changes = 0
+        val choices = mutableListOf<Boolean>()
+        var pairing by mutableStateOf(false)
+        compose.setContent { Host {
+            if (pairing) WirelessAdbContent(true, "", { choices += it })
+            else ClipboardSyncContent(enabled, false, { enabled = it; changes++ }, { pairing = true })
+        } }
+        pulses.clear(); compose.onNodeWithText("剪贴板同步").performScrollTo(); touch(compose.onNodeWithText("剪贴板同步"))
+        assertFalse(enabled); assertEquals(1, changes); assertEquals(1, pulses.size)
+        pulses.clear(); compose.onNodeWithText("剪贴板同步").performClick()
+        assertTrue(enabled); assertEquals(2, changes); assertEquals(1, pulses.size)
+        pulses.clear(); touch(compose.onNodeWithText("剪贴板同步"), rightEdge = true)
+        assertFalse(enabled); assertEquals(3, changes); assertEquals(1, pulses.size)
+        compose.onNodeWithText("连接无线 ADB，并开启电脑端剪贴板同步后生效。").assertDoesNotExist()
+        compose.onNodeWithText("无线 ADB").assertDoesNotExist()
+        compose.onNodeWithText("剪贴板同步").performClick()
+        compose.onNodeWithText("连接无线 ADB，并开启电脑端剪贴板同步后生效。").assertExists()
+        pulses.clear(); touch(compose.onNodeWithText("无线 ADB"))
+        assertEquals(1, pulses.size)
+        pulses.clear(); compose.onNodeWithText("扫码配对").performScrollTo(); touch(compose.onNodeWithText("扫码配对"))
+        assertEquals(listOf(true), choices); assertEquals(1, pulses.size)
+        pulses.clear(); compose.onNodeWithText("配对码配对").performScrollTo(); touch(compose.onNodeWithText("配对码配对"))
+        assertEquals(listOf(true, false), choices); assertEquals(1, pulses.size)
+        compose.activity.feedbackEnabled = false
+        pulses.clear(); compose.onNodeWithText("扫码配对").performScrollTo(); touch(compose.onNodeWithText("扫码配对"))
+        assertEquals(3, choices.size); assertTrue(pulses.isEmpty())
+    }
+
+    @Test @Config(sdk = [35], qualifiers = "zh-rCN-w320dp-h800dp-mdpi")
+    fun clipboardLayoutSupportsLargeTextAndBothThemes() = renderClipboard(1.5f)
+
+    @Test @Config(sdk = [35])
+    fun clipboardDefaultLayout() = renderClipboard(1f)
+
+    private fun renderClipboard(scale: Float) {
+        var dark by mutableStateOf(false)
+        compose.setContent { Host {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides
+                androidx.compose.ui.unit.Density(density.density, scale)) {
+                MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+                    Surface(Modifier.fillMaxSize()) {
+                        WirelessAdbContent(true, "", {})
+                    }
+                }
+            }
+        } }
+        for (night in listOf(false, true)) {
+            compose.runOnIdle { dark = night }
+            compose.onNodeWithText("扫码配对").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("配对码配对").performScrollTo().assertIsDisplayed()
+            compose.runOnUiThread {
+                val root = android.view.inspector.WindowInspector.getGlobalWindowViews().last { it.width > 0 && it.height > 0 }
+                val bitmap = android.graphics.Bitmap.createBitmap(root.width, root.height, android.graphics.Bitmap.Config.ARGB_8888)
+                root.draw(android.graphics.Canvas(bitmap))
+                java.io.File("build/parity/clipboard-$scale-$night.png").apply { parentFile?.mkdirs() }.outputStream().use {
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+                bitmap.recycle()
+            }
+        }
     }
 }

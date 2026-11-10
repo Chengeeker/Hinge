@@ -166,4 +166,4 @@ upload 由定时清理任务删除；默认 TTL 为 168 小时，部署变量最
 2. `Hinge-Relay/src` 的 API 校验、R2 生命周期和回执删除语义；
 3. `CloudRelay` 设置、可信设备和现有 `TransferHistoryStore` 状态机；
 4. Worker 测试、Windows .NET 测试、Flutter analyze/test 和真实双端验收边界；
-5. `D:\App\开发文档\Hinge.md` 的实现记录和已知限制。
+5. `D:\App\开发文档\Hinge\README.md` 的实现记录和已知限制。

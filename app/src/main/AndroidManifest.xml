@@ -127,6 +127,8 @@
     </application>
     
     <queries>
+        <package android:name="com.android.settings" />
+        <package android:name="com.vivo.settings" />
         
         <intent>
             <action android:name="android.intent.action.MAIN" />

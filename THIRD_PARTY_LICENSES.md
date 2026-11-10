@@ -53,7 +53,7 @@ Windows 首页的设备品牌标识采用 Wikimedia Commons 中对应品牌的 S
 
 Android Cloud Relay 使用 Android/JVM 的加密 API。独立的 `Hinge-Relay` Worker 依赖在其自己的 `package-lock.json` 和许可证文件中维护，不随 Hinge 客户端打包。若未来改为直接使用上述任一项目，必须在引入同一提交中补充精确版本、许可证文本和对应 NOTICE，并同步修改 README。
 
-Android 的液态玻璃底栏使用改编自 `liquid_glass_widgets` 1.13.0（MIT）的着色器，保留上游源文件及[许可证](android-compose/tools/reference/glass-upstream/LICENSE)。随包版权声明见 `android-compose/app/src/main/assets/glass/LICENSE.txt`。
+Android 的液态玻璃底栏使用改编自 `liquid_glass_widgets` 1.13.0（MIT）的着色器，保留上游源文件及[许可证](tools/reference/glass-upstream/LICENSE)。随包版权声明见 `app/src/main/assets/glass/LICENSE.txt`。
 
 ## Electron 托盘兼容参考
 
@@ -93,6 +93,6 @@ Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github
 
 ## 审计结论 (License Audit Verdict)
 - **直接运行时三方库数量**：
-  - Windows：`Microsoft.WindowsAppSDK` 和 `Net.Codecrete.QrCodeGenerator` 两个外部 NuGet 依赖，另有上节登记的随包原生投屏组件。
+  - Windows：`Microsoft.WindowsAppSDK` 1 个外部 NuGet 依赖，另有上节登记的随包原生投屏组件。
   - Android Flutter 端运行时：引入 `crypto`、`dynamic_color`、`cupertino_icons`、`material_symbols_icons` 和 `flutter_svg`。
 - **许可边界**：Hinge 自有代码保持 MIT；未引入 UU 的 GPL 源码。随包的 LGPL 共享库按独立许可保留源码、声明与替换能力，不应再描述成“无任何 LGPL 依赖”。

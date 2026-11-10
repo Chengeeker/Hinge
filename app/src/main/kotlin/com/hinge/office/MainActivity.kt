@@ -973,10 +973,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     }
 
     private fun openWirelessDebuggingSettings(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
-        return startSettingsIntent(Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"), null) ||
-            startSettingsIntent(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
-                Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
+        return openDebuggingSettings(this, scan = false) != DebuggingDestination.Unavailable
     }
 
     private fun openBatteryOptimizationSettings(): Boolean {
@@ -1624,6 +1621,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "useLiquidGlass" to preferences.getBoolean("use_liquid_glass", false),
             "translucentNavigationGlass" to preferences.getBoolean("translucent_navigation_glass", false),
             "phoneRemoteControlEnabled" to preferences.getBoolean("phone_remote_control_enabled", false),
+            "clipboardSyncEnabled" to ClipboardSyncSettings.enabled(this),
             "imageStoragePath" to preferences.getString("image_storage_path", "").orEmpty(),
             "videoStoragePath" to preferences.getString("video_storage_path", "").orEmpty(),
             "fileStoragePath" to preferences.getString("file_storage_path", "").orEmpty(),
@@ -1658,6 +1656,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             .putBoolean("use_liquid_glass", values["useLiquidGlass"] as? Boolean ?: false)
             .putBoolean("translucent_navigation_glass", values["translucentNavigationGlass"] as? Boolean ?: false)
             .putBoolean("phone_remote_control_enabled", values["phoneRemoteControlEnabled"] as? Boolean ?: false)
+            .putBoolean(ClipboardSyncSettings.KEY, values["clipboardSyncEnabled"] as? Boolean ?: ClipboardSyncSettings.enabled(this))
             .putString("image_storage_path", values["imageStoragePath"]?.toString() ?: "")
             .putString("video_storage_path", values["videoStoragePath"]?.toString() ?: "")
             .putString("file_storage_path", values["fileStoragePath"]?.toString() ?: "")

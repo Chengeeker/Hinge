@@ -216,6 +216,8 @@ internal fun sectionHeadingStyle(typography: androidx.compose.material3.Typograp
     }
     section("手机服务") {
         row("投屏与远控",null,"cast")
+        row("无线 ADB","扫码或使用配对码连接电脑","adb")
+        row("剪贴板同步","同步手机与电脑之间复制的文字","content_paste")
         row("Cloud Relay",if(model.settings["cloudRelay"].asMap().text("deviceToken").isEmpty()) "未配置" else null,"cloud")
         row("保活设置",null,"shield","连接与保活")
         row("默认应用",null,"open_in_new")

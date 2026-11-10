@@ -301,6 +301,8 @@ private fun HingePushedPage(model: HingeModel, route: String, active: Boolean, o
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (route) {
                 "投屏与远控" -> OriginalScreenControl(model) { open("手机控制电脑") }
+                "无线 ADB" -> WirelessAdbPage(model)
+                "剪贴板同步" -> ClipboardSyncPage(model, open)
                 "手机控制电脑" -> PhoneRemoteSettings(model, open)
                 "连接与保活" -> OriginalKeepAlive(model)
                 "短信同步" -> OriginalSms(model)

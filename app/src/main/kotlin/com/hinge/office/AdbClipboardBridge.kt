@@ -64,9 +64,11 @@ object AdbClipboardBridge {
             .newInstance(shellContext, handler)
         val access = ShellClipboardAccess(clipboard)
         stage = "initial_read"
-        var lastText = readText(access)
+        val resolver = packageContext.contentResolver
+        var lastText = if (ClipboardSyncSettings.allowedByPhone(resolver)) readText(access) else null
         val outputLock = Any()
         val listener = ClipboardManager.OnPrimaryClipChangedListener {
+            if (!ClipboardSyncSettings.allowedByPhone(resolver)) return@OnPrimaryClipChangedListener
             val text = readText(access)
             if (text != lastText) {
                 lastText = text
@@ -90,11 +92,13 @@ object AdbClipboardBridge {
                     while (true) {
                         val command = readBoundedLine(input) ?: break
                         if (!command.startsWith("SET\t")) continue
+                        if (!ClipboardSyncSettings.allowedByPhone(resolver)) continue
                         val bytes = try { Base64.decode(command.substring(4), Base64.DEFAULT) }
                             catch (_: IllegalArgumentException) { continue }
                         if (bytes.size > MAX_TEXT_BYTES) continue
                         val text = String(bytes, StandardCharsets.UTF_8)
                         handler.post {
+                            if (!ClipboardSyncSettings.allowedByPhone(resolver)) return@post
                             if (text != readText(access)) {
                                 lastText = text
                                 access.setClip(ClipData.newPlainText("Hinge", text))

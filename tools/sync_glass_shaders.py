@@ -6,9 +6,9 @@ from pathlib import Path
 import argparse
 import re
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 SOURCE = Path(__file__).resolve().parent / "reference/glass-upstream"
-TARGET = ROOT / "android-compose/app/src/main/assets/glass"
+TARGET = ROOT / "app/src/main/assets/glass"
 
 
 def read(name):

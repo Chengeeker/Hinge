@@ -12,4 +12,4 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $PSBoundParameters['OutputPath'] = Join-Path $PSScriptRoot '../publish/Hinge.apk'
 }
-& (Join-Path $PSScriptRoot '../android-compose/build-release.ps1') @PSBoundParameters
+& (Join-Path $PSScriptRoot '../build-release.ps1') @PSBoundParameters

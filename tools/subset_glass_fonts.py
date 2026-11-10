@@ -4,7 +4,7 @@ sys.path.insert(0,str(Path('tmp/fonttools').resolve()))
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 from fontTools import subset
-root=Path('android-compose/app/src/main')
+root=Path('app/src/main')
 codes=json.loads((root/'assets/icon-codepoints.json').read_text())
 points=[codes['Symbols.'+s+'_rounded'] for s in ('home','workspaces','settings')]
 source=root/'res/font/material_symbols_rounded.ttf'

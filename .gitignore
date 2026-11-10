@@ -31,7 +31,7 @@ publish/
 tmp/
 /windows/Hinge.App/tools/scrcpy/
 
-# Legacy nested checkout only; the canonical Hinge Relay project is maintained at D:\App\Hinge Relay.
+# Legacy nested Relay checkout.
 Hinge-Relay/
 
 # Dart & Flutter
@@ -64,3 +64,15 @@ __pycache__/
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+# Android Gradle and local relocation artifacts
+/.gradle/
+/**/build/
+/local.properties
+/key.properties
+/artifacts/
+/.kotlin/
+/.local/
+*.apk
+
+*.bks

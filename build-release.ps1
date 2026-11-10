@@ -7,7 +7,7 @@ param(
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$repoRoot = $PSScriptRoot
 $preferredJavaHome = Join-Path $env:USERPROFILE '.gradle/jdks/eclipse_adoptium-21-amd64-windows.2'
 $gradleRoot = $PSScriptRoot
 $keyPropertiesPath = Join-Path $gradleRoot 'key.properties'
@@ -91,16 +91,16 @@ if ($null -eq $androidJavaHome) {
 }
 
 if ([string]::IsNullOrWhiteSpace($KeystorePath)) {
-    throw '未找到 Android 签名文件路径。请配置被 Git 忽略的 android-compose/key.properties，或通过 HINGE_KEYSTORE_PATH 指定。'
+    throw '未找到 Android 签名文件路径。请配置被 Git 忽略的 key.properties，或通过 HINGE_KEYSTORE_PATH 指定。'
 }
 if (-not (Test-Path -LiteralPath $KeystorePath -PathType Leaf)) {
     throw "找不到 Android 签名文件：$KeystorePath"
 }
 if ([string]::IsNullOrWhiteSpace($KeyAlias)) {
-    throw '未提供 Android 签名别名，请填写 android-compose/key.properties，或设置 HINGE_KEY_ALIAS。'
+    throw '未提供 Android 签名别名，请填写 key.properties，或设置 HINGE_KEY_ALIAS。'
 }
 if ([string]::IsNullOrWhiteSpace($StorePassword)) {
-    throw '未提供 Android 签名库密码，请填写 android-compose/key.properties，或设置 HINGE_KEYSTORE_PASSWORD。'
+    throw '未提供 Android 签名库密码，请填写 key.properties，或设置 HINGE_KEYSTORE_PASSWORD。'
 }
 if ([string]::IsNullOrWhiteSpace($KeyPassword)) {
     $KeyPassword = $StorePassword

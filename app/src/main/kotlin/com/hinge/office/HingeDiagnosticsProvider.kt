@@ -37,7 +37,13 @@ class HingeDiagnosticsProvider : ContentProvider() {
         selection: String?,
         selectionArgs: Array<out String>?,
         sortOrder: String?,
-    ): Cursor? = null
+    ): Cursor? {
+        if (uri != ClipboardSyncSettings.URI) return null
+        val appContext = context ?: return null
+        return android.database.MatrixCursor(arrayOf("enabled")).apply {
+            addRow(arrayOf(if (ClipboardSyncSettings.enabled(appContext)) 1 else 0))
+        }
+    }
 
     override fun getType(uri: Uri): String? = "text/plain"
 

@@ -163,93 +163,24 @@ public class DiscoveryTests
         Assert.Equal(2, device.NetworkAddresses.Count);
     }
 
-    [Fact]
-    public void DeviceRegistry_Collapses_Reinstalled_Offline_Identity()
+    [Theory]
+    [InlineData(ConnectionState.Discovered)]
+    [InlineData(ConnectionState.Disconnected)]
+    [InlineData(ConnectionState.Connected)]
+    public void ReusedAddressDoesNotMergeIdentityOrTrust(ConnectionState oldState)
     {
         var registry = new DeviceRegistry();
-        var oldMessage = new DiscoveryMessage
-        {
-            DeviceId = "phone-old-id",
-            Name = "vivo X200 Pro mini",
-            Manufacturer = "vivo",
-            Model = "V2419A",
-            Platform = "android"
-        };
-        registry.UpsertDevice(oldMessage, "192.168.3.27");
-        registry.PruneOffline(TimeSpan.Zero);
-
-        var newMessage = oldMessage;
-        newMessage.DeviceId = "phone-new-id";
-        registry.UpsertDevice(newMessage, "192.168.3.27");
-
-        var devices = registry.GetAllDevices();
-        Assert.Single(devices);
-        Assert.Equal("phone-new-id", devices[0].DeviceId);
-        Assert.Equal(ConnectionState.Discovered, devices[0].ConnectionState);
-        Assert.Contains("192.168.3.27", devices[0].NetworkAddresses);
-    }
-
-    [Fact]
-    public void DeviceRegistry_Reconciles_Duplicate_Identities_After_They_Are_Discovered()
-    {
-        var registry = new DeviceRegistry();
-        var first = new DiscoveryMessage
-        {
-            DeviceId = "phone-first-id",
-            Name = "vivo X200 Pro mini",
-            Manufacturer = "vivo",
-            Model = "V2419A",
-            Platform = "android"
-        };
-        var second = new DiscoveryMessage
-        {
-            DeviceId = "phone-second-id",
-            Name = first.Name,
-            Manufacturer = first.Manufacturer,
-            Model = first.Model,
-            Platform = first.Platform
-        };
-
-        // Neither row is offline yet. This is the timing window the old
-        // implementation missed; the second packet must still reconcile them.
-        registry.UpsertDevice(first, "192.168.3.27");
-        registry.UpsertDevice(second, "192.168.3.27");
-
-        var devices = registry.GetAllDevices();
-        Assert.Single(devices);
-        Assert.Equal("phone-second-id", devices[0].DeviceId);
-    }
-
-    [Fact]
-    public void DeviceRegistry_Preserves_Connected_Record_When_Reconciling()
-    {
-        var registry = new DeviceRegistry();
-        var connected = new DiscoveryMessage
-        {
-            DeviceId = "phone-connected-id",
-            Name = "vivo X200 Pro mini",
-            Manufacturer = "vivo",
-            Model = "V2419A",
-            Platform = "android"
-        };
-        registry.UpsertDevice(connected, "192.168.3.27");
-        Assert.True(registry.TryGetDevice(connected.DeviceId, out var connectedDevice));
-        connectedDevice!.ConnectionState = ConnectionState.Connected;
-
-        var duplicate = new DiscoveryMessage
-        {
-            DeviceId = "phone-duplicate-id",
-            Name = connected.Name,
-            Manufacturer = connected.Manufacturer,
-            Model = connected.Model,
-            Platform = connected.Platform
-        };
-        registry.UpsertDevice(duplicate, "192.168.3.27");
-
-        var devices = registry.GetAllDevices();
-        Assert.Single(devices);
-        Assert.Equal("phone-connected-id", devices[0].DeviceId);
-        Assert.Equal(ConnectionState.Connected, devices[0].ConnectionState);
+        registry.UpsertDevice(new DiscoveryMessage { DeviceId = "old", Name = "Phone", Platform = "android" }, "192.168.1.2");
+        Assert.True(registry.TryGetDevice("old", out var old));
+        old!.TrustState = TrustState.Trusted;
+        old.ConnectionState = oldState;
+        registry.UpsertDevice(new DiscoveryMessage { DeviceId = "new", Name = "Phone", Platform = "android" }, "192.168.1.2");
+        Assert.Equal(2, registry.GetAllDevices().Count);
+        Assert.Empty(old.NetworkAddresses);
+        Assert.Equal(oldState == ConnectionState.Connected ? oldState : ConnectionState.Disconnected, old.ConnectionState);
+        Assert.True(registry.TryGetDevice("new", out var current));
+        Assert.Equal(TrustState.Untrusted, current!.TrustState);
+        Assert.Contains("192.168.1.2", current.NetworkAddresses);
     }
 
     [Fact]

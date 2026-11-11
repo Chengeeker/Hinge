@@ -465,12 +465,13 @@ class HingeNativeConnectionBroker(private val context: Context) {
         port: Int,
         remotePairingCode: String,
         manualConnect: Boolean = false,
+        expectedDeviceId: String = "",
     ): String {
         start()
         val cleanAddress = address.trim()
         if (cleanAddress.isEmpty()) throw IllegalArgumentException("连接地址为空")
         val config = NativePeerConfig(
-            deviceId = "",
+            deviceId = expectedDeviceId,
             address = cleanAddress,
             port = port.takeIf { it > 0 } ?: 52831,
             remotePairingCode = normalizeCode(remotePairingCode),
@@ -484,6 +485,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
             isOutbound = true,
             remotePairingCode = config.remotePairingCode,
             manualConnect = manualConnect,
+            expectedDeviceId = expectedDeviceId,
         )
         registerConnection(connection)
         executor.execute { connection.runOutbound() }
@@ -974,6 +976,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 port = config.port,
                 isOutbound = true,
                 remotePairingCode = config.remotePairingCode,
+                expectedDeviceId = config.deviceId,
             )
             registerConnection(connection)
             executor.execute { connection.runOutbound() }
@@ -1747,6 +1750,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
         val isOutbound: Boolean,
         val remotePairingCode: String,
         val manualConnect: Boolean = false,
+        val expectedDeviceId: String = "",
     ) {
         private val createdAt = SystemClock.elapsedRealtimeNanos()
         private var peerManualConnect = false
@@ -2053,6 +2057,13 @@ class HingeNativeConnectionBroker(private val context: Context) {
         private fun acceptPeerIdentity(payload: ByteArray) {
             val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull() ?: return
             val deviceId = json.optString("deviceId").trim()
+            val targetId = json.optString("targetDeviceId").takeUnless { it == "null" }.orEmpty()
+            if ((expectedDeviceId.isNotEmpty() && deviceId != expectedDeviceId) ||
+                (targetId.isNotEmpty() && targetId != identity?.deviceId)) {
+                close(false, "identity_mismatch", reconnect = false)
+                return
+            }
+
             if (deviceId.isEmpty() || deviceId == identity?.deviceId.orEmpty()) return
             peerManualConnect = json.opt("manualConnect") == true
             val capabilities = mutableListOf<String>()
@@ -2216,6 +2227,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 put("capabilities", capabilities)
                 put("maxPayloadSize", HingeProtocol.maxPayloadSize)
                 put("manualConnect", isOutbound && manualConnect)
+                put("targetDeviceId", expectedDeviceId)
                 put("pairingRequired", requiredPairingCode.isNotEmpty())
                 put("pairingChallenge", localChallenge)
                 put("pairingProof", proof)

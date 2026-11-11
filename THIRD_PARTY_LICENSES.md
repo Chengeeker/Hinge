@@ -96,3 +96,7 @@ Windows 端 QQ/微信托盘唤醒兼容逻辑参考了 [Electron](https://github
   - Windows：`Microsoft.WindowsAppSDK` 1 个外部 NuGet 依赖，另有上节登记的随包原生投屏组件。
   - Android Flutter 端运行时：引入 `crypto`、`dynamic_color`、`cupertino_icons`、`material_symbols_icons` 和 `flutter_svg`。
 - **许可边界**：Hinge 自有代码保持 MIT；未引入 UU 的 GPL 源码。随包的 LGPL 共享库按独立许可保留源码、声明与替换能力，不应再描述成“无任何 LGPL 依赖”。
+
+## Device marketing-name reference data
+
+The offline device-name table is derived from the factual brand, model, device and marketing-name fields in the [Google Play supported devices list](https://storage.googleapis.com/play_public/supported_devices.html). Snapshot downloaded 2026-11-11. Provenance and source SHA-256 are in `app/src/main/assets/device-names/source.json`; regenerate with `tools/generate_device_names.py`. Ambiguous matches are not assigned a name. Product names remain the property of their respective owners.

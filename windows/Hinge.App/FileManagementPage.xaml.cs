@@ -97,7 +97,9 @@ public sealed partial class FileManagementPage : Page
         var label = new TextBlock
         {
             Text = title,
-            MaxWidth = showPhoneLogo ? 118 : 160,
+            MaxWidth = 280,
+            TextWrapping = TextWrapping.NoWrap,
+            MaxLines = 1,
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextAlignment = TextAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center

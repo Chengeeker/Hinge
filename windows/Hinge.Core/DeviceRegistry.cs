@@ -47,28 +47,18 @@ public class DeviceRegistry
     {
         var now = DateTime.UtcNow;
         bool isNewOrChanged = false;
-        DeviceRecord? replacedRecord = null;
 
         lock (_sync)
         {
-            // Reinstalling or migrating the Android package can regenerate its
-            // persisted device ID. If the old record is already offline but has
-            // the same identity and LAN address, collapse it into the new ID
-            // instead of showing two rows for one phone.
-            if (!_devices.ContainsKey(message.DeviceId))
+            // Addresses are routing hints, never device identity or trust evidence.
+            foreach (var record in _devices.Values.Where(record => record.Device.DeviceId != message.DeviceId))
             {
-                foreach (var pair in _devices.ToArray())
+                if (record.Device.NetworkAddresses.RemoveAll(address =>
+                    string.Equals(address, remoteAddress, StringComparison.OrdinalIgnoreCase)) > 0)
                 {
-                    if (!CanCollapseStaleIdentity(pair.Value.Device, message, remoteAddress))
-                    {
-                        continue;
-                    }
-
-                    if (_devices.TryRemove(pair.Key, out replacedRecord))
-                    {
-                        isNewOrChanged = true;
-                        break;
-                    }
+                    isNewOrChanged = true;
+                    if (record.Device.NetworkAddresses.Count == 0 && !IsLiveSession(record.Device.ConnectionState))
+                        record.Device.ConnectionState = ConnectionState.Disconnected;
                 }
             }
 
@@ -91,11 +81,11 @@ public class DeviceRegistry
                         PairingRequired = message.PairingRequired,
                         Capabilities = message.Capabilities,
                         NetworkAddresses = MergeAddresses(
-                            replacedRecord?.Device.NetworkAddresses,
+                            null,
                             remoteAddress,
                             message.Addresses),
                         ConnectionState = ConnectionState.Discovered,
-                        TrustState = replacedRecord?.Device.TrustState ?? TrustState.Untrusted
+                        TrustState = TrustState.Untrusted
                     }, now);
                 },
                 (_, existing) =>
@@ -149,10 +139,7 @@ public class DeviceRegistry
                 }
             );
 
-            // A record can become offline after the replacement check above has
-            // already run. Reconcile on every packet so a stale row is removed
-            // on the next announcement instead of living beside the live row.
-            isNewOrChanged |= ReconcileDuplicateRecords(message.DeviceId);
+
         }
 
         if (isNewOrChanged)
@@ -254,100 +241,6 @@ public class DeviceRegistry
         if (changed) NotifyChanged();
     }
 
-    private bool ReconcileDuplicateRecords(string preferredDeviceId)
-    {
-        if (!_devices.TryGetValue(preferredDeviceId, out var preferredRecord))
-        {
-            return false;
-        }
-
-        var group = _devices
-            .ToArray()
-            .Where(pair => pair.Key == preferredDeviceId ||
-                CanMergeDuplicateDevices(preferredRecord.Device, pair.Value.Device))
-            .ToList();
-        if (group.Count <= 1)
-        {
-            return false;
-        }
-
-        var survivor = group
-            .OrderByDescending(pair => IsLiveSession(pair.Value.Device.ConnectionState))
-            .ThenByDescending(pair => string.Equals(pair.Key, preferredDeviceId, StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(pair => pair.Value.LastSeen)
-            .First();
-        bool changed = false;
-
-        foreach (var candidate in group)
-        {
-            if (string.Equals(candidate.Key, survivor.Key, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            MergeRecords(survivor.Value, candidate.Value);
-            if (_devices.TryRemove(candidate.Key, out _))
-            {
-                changed = true;
-            }
-        }
-
-        return changed;
-    }
-
-    private static bool CanMergeDuplicateDevices(Device left, Device right)
-    {
-        if (string.Equals(left.DeviceId, right.DeviceId, StringComparison.OrdinalIgnoreCase) ||
-            left.Platform != right.Platform ||
-            !string.Equals(left.Name?.Trim(), right.Name?.Trim(), StringComparison.OrdinalIgnoreCase) ||
-            !SameOptionalIdentity(left.Manufacturer, right.Manufacturer) ||
-            !SameOptionalIdentity(left.Model, right.Model))
-        {
-            return false;
-        }
-
-        // The same LAN address is the strong signal here: two different phones
-        // may have the same model/name, but cannot own the same active address.
-        return left.NetworkAddresses.Any(address =>
-            right.NetworkAddresses.Any(other =>
-                string.Equals(address, other, StringComparison.OrdinalIgnoreCase)));
-    }
-
-    private static void MergeRecords(DeviceRecord target, DeviceRecord source)
-    {
-        bool sourceIsNewer = source.LastSeen >= target.LastSeen;
-        target.LastSeen = target.LastSeen >= source.LastSeen
-            ? target.LastSeen
-            : source.LastSeen;
-
-        foreach (var address in source.Device.NetworkAddresses)
-        {
-            if (!target.Device.NetworkAddresses.Contains(address, StringComparer.OrdinalIgnoreCase))
-            {
-                target.Device.NetworkAddresses.Add(address);
-            }
-        }
-
-        if (source.Device.TrustState == TrustState.Trusted ||
-            source.Device.TrustState == TrustState.Blocked)
-        {
-            target.Device.TrustState = source.Device.TrustState;
-        }
-
-        if (sourceIsNewer)
-        {
-            target.Device.Name = source.Device.Name;
-            target.Device.Manufacturer = source.Device.Manufacturer;
-            target.Device.Model = source.Device.Model;
-            target.Device.AppVersion = source.Device.AppVersion;
-            target.Device.ProtocolVersion = source.Device.ProtocolVersion;
-            target.Device.SessionPort = source.Device.SessionPort;
-            target.Device.DiscoveryPort = source.Device.DiscoveryPort;
-            target.Device.Capabilities = source.Device.Capabilities;
-            target.Device.PairingRequired = source.Device.PairingRequired;
-        }
-    }
-
     private void NotifyChanged()
     {
         DevicesChanged?.Invoke(this, GetAllDevices());
@@ -355,44 +248,6 @@ public class DeviceRegistry
 
     private static bool IsLiveSession(ConnectionState state) =>
         state is ConnectionState.Connected or ConnectionState.Suspended;
-
-    private static bool CanCollapseStaleIdentity(
-        Device existing,
-        DiscoveryMessage incoming,
-        string remoteAddress)
-    {
-        if (existing.ConnectionState != ConnectionState.Disconnected ||
-            !string.Equals(existing.Name, DisplayName(
-                incoming.Name,
-                incoming.Manufacturer,
-                incoming.Model),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var incomingPlatform = Enum.TryParse<DevicePlatform>(
-            incoming.Platform,
-            true,
-            out var parsedPlatform)
-            ? parsedPlatform
-            : DevicePlatform.Unknown;
-        if (existing.Platform != incomingPlatform ||
-            !SameOptionalIdentity(existing.Manufacturer, incoming.Manufacturer) ||
-            !SameOptionalIdentity(existing.Model, incoming.Model))
-        {
-            return false;
-        }
-
-        return existing.NetworkAddresses.Any(address =>
-            string.Equals(address, remoteAddress, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static bool SameOptionalIdentity(string left, string right)
-    {
-        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return true;
-        return string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
-    }
 
     private static int ValidDiscoveryPort(int port) =>
         port > 0 && port <= 65535 ? port : Constants.DiscoveryUdpPort;

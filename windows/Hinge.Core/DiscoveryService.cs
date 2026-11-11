@@ -157,11 +157,13 @@ public class DiscoveryService : IDisposable
     public async Task RequestReverseConnectionAsync(
         IPAddress targetIp,
         int port = Constants.DiscoveryUdpPort,
-        bool automaticReconnect = false)
+        bool automaticReconnect = false,
+        string targetDeviceId = "")
     {
         var message = CreateDiscoveryMessage(
             connectionRequested: true,
             automaticReconnect: automaticReconnect);
+        message.TargetDeviceId = targetDeviceId;
         byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
 
         var matchingEp = NetworkInterfaceHelper.FindMatchingPhysicalLanEndpoint(targetIp);
@@ -439,6 +441,8 @@ public class DiscoveryService : IDisposable
                 var result = await _listener.ReceiveAsync(token);
                 string json = Encoding.UTF8.GetString(result.Buffer);
                 var message = JsonSerializer.Deserialize<DiscoveryMessage>(json);
+                if (message != null && !string.IsNullOrEmpty(message.TargetDeviceId) &&
+                    message.TargetDeviceId != _localIdentity.DeviceId) continue;
 
                 if (message != null && !string.IsNullOrEmpty(message.DeviceId))
                 {

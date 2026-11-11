@@ -752,6 +752,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 port = call.argument<Int>("port") ?: 52831,
                 remotePairingCode = call.argument<String>("remotePairingCode").orEmpty(),
                 manualConnect = call.argument<Boolean>("manualConnect") == true,
+                expectedDeviceId = call.argument<String>("expectedDeviceId").orEmpty(),
             )
             result.success(id)
         } catch (error: Exception) {
@@ -1322,6 +1323,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
         return createConfigurationContext(configuration)
     }
 
+    private val catalogMarketName: String? by lazy {
+        DeviceMarketNames.lookup(assets, Build.BRAND, Build.MANUFACTURER, Build.MODEL, Build.DEVICE)
+            ?: if (Build.MANUFACTURER.equals("vivo", true) && Build.MODEL.equals("V2419A", true))
+                "vivo X200 Pro mini" else null
+    }
+
     private fun deviceInfo(): Map<String, String> {
         val manufacturer = Build.MANUFACTURER.trim()
         val model = Build.MODEL.trim()
@@ -1358,37 +1365,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
         } else {
             null
         }
-        val marketNames = listOf(
-            // vivo/OriginOS 常见属性
-            "ro.vivo.marketname",
-            "ro.vivo.market.name",
-            "ro.vivo.product.marketname",
-            "ro.vivo.product.model",
-            "ro.vivo.product.name",
-            // AOSP 及其他厂商常见属性
-            "ro.product.marketname",
-            "ro.product.market_name",
-            "ro.product.odm.marketname",
-            "ro.product.vendor.marketname",
-            "ro.product.system.marketname",
-            "ro.product.product.marketname",
-            "ro.product.odm.name",
-            "ro.product.vendor.name",
-            "ro.product.system.name",
-            "ro.product.product.name",
-            "ro.product.name",
-            "ro.product.odm.model",
-            "ro.product.vendor.model",
-            "ro.product.system.model",
-            "ro.product.product.model",
-        ).mapNotNull(::readSystemProperty)
-
-        // Android 的公开 API 不提供“型号代码 -> 零售名称”的通用映射。
-        // 对已经确认的官方型号提供本地兜底，避免 vivo V2419A 在系统属性不可读时
-        // 退化成用户无法理解的技术代码。新增型号时应补充官方来源后再加入这里。
-        val knownMarketName = when {
-            manufacturer.equals("vivo", ignoreCase = true) &&
-                model.equals("V2419A", ignoreCase = true) -> "vivo X200 Pro mini"
+        val marketNames = DeviceMarketNames.propertyKeys(manufacturer, Build.BRAND)
+            .mapNotNull(::readSystemProperty)
+        val factoryName = when {
+            manufacturer.equals("samsung", true) -> runCatching {
+                Settings.Global.getString(contentResolver, "default_device_name")
+            }.getOrNull()
+            manufacturer.equals("huawei", true) || manufacturer.equals("honor", true) -> runCatching {
+                Settings.Global.getString(contentResolver, "unified_default_device_name")
+            }.getOrNull()
             else -> null
         }
 
@@ -1436,12 +1421,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
             .firstOrNull()
         val name = sequenceOf(
             marketName,
-            knownMarketName,
+            usableName(factoryName),
+            catalogMarketName,
             configuredName,
             secureName,
             usableName(bluetoothName),
         ).filterNotNull().firstOrNull()
-            ?: listOf(manufacturer, model).filter { it.isNotBlank() }.joinToString(" ")
+            ?: (if (model.startsWith(manufacturer, ignoreCase = true)) model
+                else listOf(manufacturer, model).filter { it.isNotBlank() }.joinToString(" "))
                 .ifBlank { "Android 设备" }
 
         return mapOf(

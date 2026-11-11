@@ -4684,16 +4684,11 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var dialog = new ContentDialog
-        {
-            Title = "清空传输记录",
-            Content = $"将删除 {deletableCount} 条已完成、失败或已取消的记录。进行中的发送任务不会被删除。",
-            PrimaryButtonText = "清空记录",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = ((FrameworkElement)Content).XamlRoot
-        };
-        if (await ShowContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
+        if (!await ConfirmFileActionAsync(
+                ((FrameworkElement)Content).XamlRoot,
+                "清空传输记录",
+                $"将删除 {deletableCount} 条已完成、失败或已取消的记录。进行中的发送任务不会被删除。",
+                "清空记录", destructive: true)) return;
 
         var deleted = _transferHistoryStore.DeleteWhere(record => record.CanDelete);
         RefreshTransferHistory();
@@ -5040,7 +5035,8 @@ public sealed partial class MainWindow : Window
                             await _discoveryService.RequestReverseConnectionAsync(
                                 address,
                                 device.DiscoveryPort,
-                                automaticReconnect: automatic);
+                                automaticReconnect: automatic,
+                                targetDeviceId: device.DeviceId);
                         }
                         catch { }
                     }
@@ -5097,7 +5093,8 @@ public sealed partial class MainWindow : Window
                                 port,
                                 remotePairingCode,
                                 cts.Token,
-                                manualConnect: !automatic);
+                                manualConnect: !automatic,
+                                expectedDeviceId: device.DeviceId);
                             if (tcs.TrySetResult(direct))
                             {
                                 cts.Cancel();

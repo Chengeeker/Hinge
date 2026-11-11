@@ -186,13 +186,13 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
         connectingDevice=id
         try{
             val addresses=(listOf(peer.text("address"))+(peer["networkAddresses"] as? List<*>).orEmpty().filterIsInstance<String>()).filter{it.isNotBlank()&&it.length<=256}.distinct().take(4)
-            if(peer["pairingRequired"]!=true)for(address in addresses){val target=withContext(Dispatchers.IO){InetAddress.getByName(address)};probePeer(target,peer.number("discoveryPort",52830).toInt().takeIf{it in 1..65535}?:52830,reverse=true,automatic=automatic)}
+            if(peer["pairingRequired"]!=true)for(address in addresses){val target=withContext(Dispatchers.IO){InetAddress.getByName(address)};probePeer(target,peer.number("discoveryPort",52830).toInt().takeIf{it in 1..65535}?:52830,reverse=true,automatic=automatic,targetDeviceId=id)}
             outer@for(address in addresses)for(port in listOf(peer.number("port",52831).toInt(),52831).distinct()){
                 if(ready.any{it.text("deviceId")==id}||(automatic&&isManuallyDisconnected(id)))break@outer
                 if(port !in 1..65535)continue
                 val connection=UUID.randomUUID().toString();expectedPeers[connection]=id
                 try{
-                    api.call("nativeConnect",mapOf("connectionId" to connection,"address" to address,"port" to port,"remotePairingCode" to code,"manualConnect" to !automatic))
+                    api.call("nativeConnect",mapOf("connectionId" to connection,"address" to address,"port" to port,"remotePairingCode" to code,"manualConnect" to !automatic,"expectedDeviceId" to id))
                     withTimeoutOrNull(2500){while(ready.none{it.text("deviceId")==id}&&(!automatic||!isManuallyDisconnected(id)))delay(50)}
                     if(ready.none{it.text("deviceId")==id})api.call("nativeDisconnect",mapOf("connectionId" to connection,"manual" to false))
                 }finally{expectedPeers.remove(connection)}
@@ -478,6 +478,7 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                     try {
                         val packet = DatagramPacket(buffer, buffer.size); socket.receive(packet)
                         val peer = JSONObject(String(packet.data, 0, packet.length, Charsets.UTF_8)).toMap()
+                        if (peer.text("targetDeviceId").isNotEmpty() && peer.text("targetDeviceId") != identity.text("deviceId")) continue
                         val id = peer.text("deviceId")
                         if (id.isBlank() || id.length > 256 || id == identity.text("deviceId") || peer.text("name").length>256) continue
                         withContext(Dispatchers.Main) {
@@ -533,10 +534,10 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
             }
         }}finally{discoveryBusy=false}
     }
-    private fun discoveryMessage(reverse:Boolean=false,automatic:Boolean=false)=JSONObject(identity+mapOf("connectionRequested" to reverse,"automaticReconnect" to automatic,"version" to BuildConfig.VERSION_NAME,"platform" to "android","port" to 52831,"discoveryPort" to (discoverySocket?.localPort?:52830),"protocolVersion" to "1.0","timestamp" to System.currentTimeMillis()/1000,"capabilities" to listOf("file_transfer","remote_control","backup"),"pairingRequired" to settings.text("localPairingCode").isNotEmpty())).toString().toByteArray()
-    private fun probePeer(address:InetAddress,port:Int,reverse:Boolean=false,automatic:Boolean=false)=scope.launch(Dispatchers.IO){
+    private fun discoveryMessage(reverse:Boolean=false,automatic:Boolean=false,targetDeviceId:String="")=JSONObject(identity+mapOf("connectionRequested" to reverse,"targetDeviceId" to targetDeviceId,"automaticReconnect" to automatic,"version" to BuildConfig.VERSION_NAME,"platform" to "android","port" to 52831,"discoveryPort" to (discoverySocket?.localPort?:52830),"protocolVersion" to "1.0","timestamp" to System.currentTimeMillis()/1000,"capabilities" to listOf("file_transfer","remote_control","backup"),"pairingRequired" to settings.text("localPairingCode").isNotEmpty())).toString().toByteArray()
+    private fun probePeer(address:InetAddress,port:Int,reverse:Boolean=false,automatic:Boolean=false,targetDeviceId:String="")=scope.launch(Dispatchers.IO){
         runCatching{
-            val data=discoveryMessage(reverse,automatic);val manager=activity.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val data=discoveryMessage(reverse,automatic,targetDeviceId);val manager=activity.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
             val networks=manager.allNetworks.filter{manager.getNetworkCapabilities(it)?.let{c->c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)||c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)}==true}
             if(networks.isEmpty())discoverySocket?.send(DatagramPacket(data,data.size,address,port))
             else networks.forEach{network->DatagramSocket().use{socket->network.bindSocket(socket);socket.send(DatagramPacket(data,data.size,address,port))}}

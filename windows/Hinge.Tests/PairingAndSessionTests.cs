@@ -9,6 +9,25 @@ namespace Hinge.Tests;
 public class PairingAndSessionTests
 {
     [Fact]
+    public async Task StaleTargetCannotReplaceAnEstablishedSession()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"target_{Guid.NewGuid()}.json");
+        using var server = new SessionManager(new DeviceIdentity { DeviceId = "new-phone" }, new TrustStore(path), 0);
+        using var client = new SessionManager(new DeviceIdentity { DeviceId = "pc" }, new TrustStore(path), 0);
+        server.StartListener();
+        using var valid = await client.ConnectToPeerAsync(IPAddress.Loopback, server.ListeningPort, expectedDeviceId: "new-phone");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!valid.IsSessionReady || server.ConnectionForDevice("pc") == null) await Task.Delay(10, timeout.Token);
+        var original = server.ConnectionForDevice("pc");
+        Assert.NotNull(original);
+        using var stale = await client.ConnectToPeerAsync(IPAddress.Loopback, server.ListeningPort, expectedDeviceId: "old-phone");
+        while (stale.State != SessionState.Disconnected) await Task.Delay(10, timeout.Token);
+        Assert.Null(stale.PeerInfo);
+        Assert.True(valid.IsSessionReady);
+        Assert.Same(original, server.ConnectionForDevice("pc"));
+    }
+
+    [Fact]
     public void TrustStore_Add_IsTrusted_And_Revoke_Works()
     {
         string tempFile = Path.Combine(Path.GetTempPath(), $"trust_{Guid.NewGuid()}.json");

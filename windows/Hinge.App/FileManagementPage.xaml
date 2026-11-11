@@ -11,6 +11,7 @@
     Background="Transparent"
     NavigationCacheMode="Required">
     <Page.Resources>
+        <x:Double x:Key="TabViewItemMaxWidth">360</x:Double>
         <x:Double x:Key="TabViewItemMinHeight">40</x:Double>
         <x:Double x:Key="TabViewItemHeaderFontSize">14</x:Double>
         <Thickness x:Key="TabViewItemHeaderPadding">12,6,12,6</Thickness>

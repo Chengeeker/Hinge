@@ -225,7 +225,10 @@ private data class NativeOutgoingChunk(
  * policy and durable outbound file tasks. Flutter talks to it through the
  * small bridge in session_manager.dart and remains a UI/feature consumer.
  */
-class HingeNativeConnectionBroker(private val context: Context) {
+class HingeNativeConnectionBroker(
+    private val context: Context,
+    private val onSessionActive: () -> Unit = {},
+) {
     private val appContext = context.applicationContext
     private val diagnostics = HingeDiagnostics.from(appContext)
     private val preferences = appContext.getSharedPreferences(
@@ -346,12 +349,13 @@ class HingeNativeConnectionBroker(private val context: Context) {
         return true
     }
 
-    /**
-     * Stop periodic heartbeat scheduling while the phone is locked and idle.
-     * The authenticated socket remains owned by the broker, and inbound
-     * frames are still handled; a later BLE/manual wake exits this mode and
-     * resumes the normal heartbeat/reconnect path.
-     */
+    fun hasActiveWork(): Boolean = activeTasks.isNotEmpty() ||
+        incomingTransfers.values.any { connections[it.connectionId]?.isReady == true } ||
+        connections.values.any {
+            !it.isClosed && (it.state == "authenticating" || (it.isReady && it.state == "connected"))
+        }
+
+    /** Only idle/offline sessions may pause; responsive sessions keep their heartbeats. */
     fun enterLowPowerStandby(reason: String = "idle_background") {
         if (lowPowerStandby) return
         lowPowerStandby = true
@@ -867,6 +871,9 @@ class HingeNativeConnectionBroker(private val context: Context) {
             removeDuplicateConnections(connection, deviceId)
             peerConfigs[deviceId]?.let(::cancelReconnect)
         }
+        if (connection.isClosed) return
+        connection.resumeFromLowPowerStandby()
+        onSessionActive()
         diagnostics.log(
             "socket_connected",
             mapOf<String, Any?>("device" to (deviceId.ifEmpty { "unknown" })),
@@ -1776,6 +1783,8 @@ class HingeNativeConnectionBroker(private val context: Context) {
             private set
         @Volatile
         private var lastInboundAt = SystemClock.elapsedRealtime()
+        private var lastHeartbeatAt = SystemClock.elapsedRealtime()
+        private var lastHeartbeatWasBackground = false
         private val writeLock = Any()
         private val queuedFrames = ArrayDeque<ByteArray>()
         private var socket: Socket? = acceptedSocket
@@ -2039,6 +2048,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
                 interactiveRecoveryStartedAt = 0L
                 updateState("connected")
                 diagnostics.log("heartbeat_resumed")
+                if (lowPowerStandby && isReady) onSessionActive()
             }
             when (frame.type) {
                 HingeProtocol.sessionInit, HingeProtocol.sessionAck -> {
@@ -2140,7 +2150,10 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
 
         private fun heartbeat() {
-            if (closed || !isReady) return
+            if (closed || !isReady) {
+                heartbeatFuture = null
+                return
+            }
             if (lowPowerStandby) {
                 if (state != "suspended") updateState("suspended")
                 heartbeatFuture = null
@@ -2149,6 +2162,11 @@ class HingeNativeConnectionBroker(private val context: Context) {
             val now = SystemClock.elapsedRealtime()
             val background = !isScreenInteractive()
             val elapsed = now - lastInboundAt
+            // Deep sleep may skip every background tick, including the suspended transition.
+            val resumed = lastHeartbeatWasBackground ||
+                now - lastHeartbeatAt > FOREGROUND_CONNECTION_TIMEOUT_MS
+            lastHeartbeatAt = now
+            lastHeartbeatWasBackground = background
             if (background && elapsed > BACKGROUND_CONNECTION_SUSPEND_AFTER_MS) {
                 if (state != "suspended") {
                     interactiveRecoveryStartedAt = 0L
@@ -2158,9 +2176,11 @@ class HingeNativeConnectionBroker(private val context: Context) {
                         mapOf("elapsedMs" to elapsed),
                     )
                 }
-            } else if (!background && state == "suspended") {
+            } else if (!background && (state == "suspended" ||
+                    (resumed && elapsed > FOREGROUND_CONNECTION_TIMEOUT_MS))) {
                 if (interactiveRecoveryStartedAt == 0L) {
                     interactiveRecoveryStartedAt = now
+                    updateState("suspended")
                     diagnostics.log("heartbeat_resume_probe_started")
                 } else if (now - interactiveRecoveryStartedAt > FOREGROUND_RECOVERY_GRACE_MS) {
                     diagnostics.log(
@@ -2202,7 +2222,7 @@ class HingeNativeConnectionBroker(private val context: Context) {
         }
 
         fun resumeFromLowPowerStandby() {
-            if (closed || !isReady || heartbeatFuture != null) return
+            if (closed || !isReady || lowPowerStandby || heartbeatFuture?.isDone == false) return
             heartbeatFuture = scheduler.schedule({ heartbeat() }, 0L, TimeUnit.MILLISECONDS)
         }
 

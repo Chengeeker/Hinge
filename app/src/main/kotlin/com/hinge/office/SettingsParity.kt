@@ -91,7 +91,7 @@ import androidx.compose.ui.unit.sp
         HingeSettingsCard {
             val notification=status["notificationPermission"]==true;val battery=status["batteryOptimizationIgnored"]==true
             checklist("通知设置",if(notification)"已允许接收文件和连接状态通知" else "未允许，常驻通知和文件接收提醒无法显示","notifications",if(notification)"已开启" else "未开启",if(notification)null else "去开启"){invoke("openNotificationSettings")}
-            checklist("后台高耗电设置",if(battery)"已加入系统电池优化白名单" else "降低后台休眠时被系统限制的概率；不保证永久保持 TCP","battery_saver",if(battery)"已开启" else "未开启",if(battery)null else "去设置"){invoke("openBatteryOptimizationSettings")}
+            checklist("电池优化豁免",if(battery)"已豁免 Android 电池优化；厂商后台冻结需另外检查" else "允许后台连接使用 CPU 和网络；厂商仍可能额外限制","battery_saver",if(battery)"已豁免" else "未开启",if(battery)"查看" else "去设置"){invoke("openBatteryOptimizationSettings")}
             checklist("锁定后台 / 自启动","打开厂商的后台保护页面，将 Hinge 加入允许后台运行的清单","lock_clock","按设备提供","去设置"){invoke("openBackgroundProtectionSettings")}
             checklist("应用详情","手动检查通知、电池、后台数据和权限状态","settings_applications","系统页面","打开"){invoke("openAppSettings")}
             checklist("复制连接诊断","导出服务、网络、心跳和重连记录，不包含文件内容、验证码或配对码","content_copy","本机日志","复制"){model.run{copyText(model,model.api.call("readConnectionDiagnostics")?.toString().orEmpty())}}

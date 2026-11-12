@@ -20,7 +20,8 @@ public sealed class BluetoothWakeAdvertiser : IDisposable
         string deviceId,
         WakeAdvertisementKind kind,
         TimeSpan duration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action? onStarted = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (duration <= TimeSpan.Zero) return false;
@@ -69,13 +70,13 @@ public sealed class BluetoothWakeAdvertiser : IDisposable
             }
             catch (OperationCanceledException)
             {
-                running = publisher.Status is BluetoothLEAdvertisementPublisherStatus.Started or
-                    BluetoothLEAdvertisementPublisherStatus.Waiting;
+                running = publisher.Status == BluetoothLEAdvertisementPublisherStatus.Started;
             }
 
-            if (!running) return false;
+            if (!running || publisher.Status != BluetoothLEAdvertisementPublisherStatus.Started) return false;
+            onStarted?.Invoke();
             await Task.Delay(duration, cancellationToken);
-            return true;
+            return publisher.Status == BluetoothLEAdvertisementPublisherStatus.Started;
         }
         catch (OperationCanceledException)
         {

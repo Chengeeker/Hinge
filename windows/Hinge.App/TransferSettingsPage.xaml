@@ -109,6 +109,7 @@
                             <StackPanel Spacing="4" VerticalAlignment="Center">
                                 <TextBlock Text="Android 自动唤醒" Style="{StaticResource HingeM3TitleMediumStyle}" />
                                 <TextBlock Text="右键发送时启动一次 60 秒 BLE 广播；广播不承载文件或配对码。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                <TextBlock x:Name="BlePairingStatusText" Text="开启广播后，请在手机 Hinge 的保活设置中点击“开始绑定”，并完成系统确认。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                             </StackPanel>
                             <local:HandCursorButton
                                 x:Name="StartBlePairingButton"

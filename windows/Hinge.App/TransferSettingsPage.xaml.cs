@@ -13,6 +13,7 @@ public sealed partial class TransferSettingsPage : Page
     public Button ClearPairingCode => ClearPairingCodeButton;
     public TextBlock PairingCodeStatus => PairingCodeStatusText;
     public Button StartBlePairing => StartBlePairingButton;
+    public TextBlock BlePairingStatus => BlePairingStatusText;
     public Button CleanDeviceHistory => CleanDeviceHistoryButton;
     public TextBox WirelessAdbHost => WirelessAdbHostTextBox;
     public TextBox WirelessAdbPairingPort => WirelessAdbPairingPortTextBox;

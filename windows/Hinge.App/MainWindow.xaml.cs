@@ -156,6 +156,8 @@ public sealed partial class MainWindow : Window
     private FileManagementPage? _filePage;
     private WindowsSettingsPage? _windowsSettingsPage;
     private TransferSettingsPage? _transferSettingsPage;
+    private bool _blePairingRunning;
+    private string? _blePairingStatus;
     private RemoteSettingsPage? _remoteSettingsPage;
     private ScreenControlPage? _screenControlPage;
     private CloudRelaySettingsPage? _cloudRelaySettingsPage;
@@ -1342,6 +1344,8 @@ public sealed partial class MainWindow : Window
         page.SavePairingCode.Click += SavePairingCode_Click;
         page.ClearPairingCode.Click += ClearPairingCode_Click;
         page.StartBlePairing.Click += StartBlePairing_Click;
+        page.StartBlePairing.IsEnabled = !_blePairingRunning;
+        if (_blePairingStatus != null) page.BlePairingStatus.Text = _blePairingStatus;
         page.CleanDeviceHistory.Click += CleanDeviceHistory_Click;
         page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
         page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
@@ -2072,19 +2076,42 @@ public sealed partial class MainWindow : Window
 
     private async Task StartBlePairingBeaconAsync()
     {
-        _trayManager.ShowNotification(
-            "Hinge",
-            "BLE 配对广播已开启 60 秒；请在 Android 的“保活设置”中开始绑定 Windows 自动唤醒。");
-        var published = await _wakeAdvertiser.PublishAsync(
-            _localIdentity.DeviceId,
-            WakeAdvertisementKind.Pairing,
-            TimeSpan.FromSeconds(60),
-            CancellationToken.None);
-        _trayManager.ShowNotification(
-            "Hinge",
-            published
-                ? "BLE 配对广播已结束；如果 Android 尚未完成绑定，请再次开启。"
-                : "Windows 未能开启 BLE 广播；仍可使用 Android 常驻通知作为手动唤醒入口。");
+        if (_blePairingRunning) return;
+        _blePairingRunning = true;
+        UpdateBlePairingStatus("正在启动蓝牙广播…");
+        try
+        {
+            var published = await _wakeAdvertiser.PublishAsync(
+                _localIdentity.DeviceId,
+                WakeAdvertisementKind.Pairing,
+                TimeSpan.FromSeconds(60),
+                CancellationToken.None,
+                () => DispatcherQueue.TryEnqueue(() =>
+                {
+                    UpdateBlePairingStatus("正在广播（60 秒）：请在手机 Hinge → 保活设置 → Windows 自动唤醒中开始绑定，并完成系统确认。局域网已连接不代表绑定完成。");
+                }));
+            UpdateBlePairingStatus(published
+                ? "广播已结束。绑定结果请查看手机的“Windows 自动唤醒”；未完成绑定可再次开启广播。"
+                : "蓝牙广播未能启动或已中断。请确认电脑蓝牙已开启且支持 BLE 广播，然后重试。");
+            _trayManager.ShowNotification("Hinge", _blePairingStatus!);
+        }
+        catch (Exception)
+        {
+            UpdateBlePairingStatus("蓝牙广播失败，请检查电脑蓝牙后重试。");
+        }
+        finally
+        {
+            _blePairingRunning = false;
+            if (_transferSettingsPage != null) _transferSettingsPage.StartBlePairing.IsEnabled = true;
+        }
+    }
+
+    private void UpdateBlePairingStatus(string message)
+    {
+        _blePairingStatus = message;
+        if (_transferSettingsPage == null) return;
+        _transferSettingsPage.BlePairingStatus.Text = message;
+        _transferSettingsPage.StartBlePairing.IsEnabled = !_blePairingRunning;
     }
 
     private void CloudRelayEnabled_Toggled(object sender, RoutedEventArgs e)

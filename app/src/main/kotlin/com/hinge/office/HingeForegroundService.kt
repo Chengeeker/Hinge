@@ -72,7 +72,13 @@ class HingeForegroundService : Service() {
         super.onCreate()
         current = this
         HingeDiagnostics.from(this).log("service_on_create")
-        nativeConnectionBroker = HingeNativeConnectionBroker(this)
+        nativeConnectionBroker = HingeNativeConnectionBroker(this) {
+            standbyHandler.post {
+                if (current === this) {
+                    activateConnectionWindow("session_active")
+                }
+            }
+        }
         if (ENABLE_NATIVE_CONNECTION_BROKER) {
             nativeConnectionBroker.start()
         } else {
@@ -108,7 +114,7 @@ class HingeForegroundService : Service() {
             activateConnectionWindow("configure")
         }
 
-        if (action == ACTION_START) {
+        if (action == ACTION_START || intent == null) {
             activateConnectionWindow("service_start")
         }
 
@@ -198,7 +204,7 @@ class HingeForegroundService : Service() {
             )
             .setContentText(
                 if (lowPowerStandby) "发送文件时会尝试自动唤醒；点击通知可立即恢复连接"
-                else "局域网发现与连接服务已启动，空闲后会进入低功耗待命",
+                else "保持已连接设备在线；无连接且空闲后进入低功耗待命",
             )
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(persistentNotificationEnabled())
@@ -219,6 +225,9 @@ class HingeForegroundService : Service() {
 
     private fun activateConnectionWindow(reason: String) {
         activeWindowUntilElapsed = SystemClock.elapsedRealtime() + ACTIVE_WINDOW_MS
+        acquireCpuWakeLock()
+        acquireMulticastLock()
+        acquireWifiLock()
         if (lowPowerStandby) {
             lowPowerStandby = false
             nativeConnectionBroker.exitLowPowerStandby(reason)
@@ -226,10 +235,8 @@ class HingeForegroundService : Service() {
                 "low_power_standby_exited",
                 mapOf("reason" to reason),
             )
+            publishForegroundNotification()
         }
-        acquireCpuWakeLock()
-        acquireMulticastLock()
-        acquireWifiLock()
         startDiscoveryBeaconLoop()
         broadcastDiscoveryBeacon()
     }
@@ -247,6 +254,11 @@ class HingeForegroundService : Service() {
     }
 
     private fun evaluateLowPowerStandby() {
+        if (nativeConnectionBroker.hasActiveWork()) {
+            // Leave a reconnect window after the last responsive session disappears.
+            activeWindowUntilElapsed = SystemClock.elapsedRealtime() + ACTIVE_WINDOW_MS
+            return
+        }
         if (lowPowerStandby || activityForeground) return
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         if (powerManager?.isInteractive == true) return

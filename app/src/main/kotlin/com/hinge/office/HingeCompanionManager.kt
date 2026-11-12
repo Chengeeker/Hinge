@@ -28,15 +28,35 @@ object HingeCompanionManager {
         )
     }
 
-    fun associationAddress(context: Context): String? = context
-        .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        .getString(ADDRESS_KEY, null)
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() }
+    private fun associatedAddresses(context: Context): List<String>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !isSupported(context)) return emptyList()
+        return try {
+            val manager = context.getSystemService(CompanionDeviceManager::class.java) ?: return null
+            if (Build.VERSION.SDK_INT >= 33) {
+                manager.myAssociations.mapNotNull { it.deviceMacAddress?.toString() }
+            } else {
+                @Suppress("DEPRECATION")
+                manager.associations
+            }
+        } catch (error: Exception) {
+            HingeDiagnostics.from(context).log("companion_association_check_failed",
+                mapOf("reason" to error.javaClass.simpleName))
+            null
+        }
+    }
+
+    fun associationAddress(context: Context): String? {
+        val saved = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getString(ADDRESS_KEY, null)?.trim()
+        val addresses = associatedAddresses(context) ?: return null
+        // Restored preferences are not a system association on a replacement phone.
+        return addresses.firstOrNull { it.equals(saved, ignoreCase = true) }
+            ?: addresses.singleOrNull()
+    }
 
     fun saveAssociation(context: Context, address: String): Boolean {
-        val cleanAddress = address.trim()
-        if (cleanAddress.isEmpty()) return false
+        val cleanAddress = associatedAddresses(context)
+            ?.firstOrNull { it.equals(address.trim(), ignoreCase = true) } ?: return false
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .edit()
             .putString(ADDRESS_KEY, cleanAddress)
@@ -52,8 +72,8 @@ object HingeCompanionManager {
         if (!isSupported(context) || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return false
         }
-        val cleanAddress = address?.trim().orEmpty()
-        if (cleanAddress.isEmpty()) return false
+        val cleanAddress = associatedAddresses(context)
+            ?.firstOrNull { it.equals(address?.trim(), ignoreCase = true) } ?: return false
         return try {
             val manager = context.getSystemService(CompanionDeviceManager::class.java)
                 ?: return false
@@ -74,9 +94,11 @@ object HingeCompanionManager {
     }
 
     fun removeAssociation(context: Context): Boolean {
-        val address = associationAddress(context) ?: return true
+        val addresses = associatedAddresses(context) ?: return false
+        val address = associationAddress(context)
+        if (address == null && addresses.isNotEmpty()) return false
         return try {
-            if (isSupported(context)) {
+            if (address != null && isSupported(context)) {
                 context.getSystemService(CompanionDeviceManager::class.java)
                     ?.disassociate(address)
             }

@@ -73,6 +73,7 @@ public class SessionConnection : IDisposable
     public bool IsSessionReady => State is SessionState.Connected or SessionState.Suspended;
     public bool IsOutbound { get; }
     public SessionPeerInfo? PeerInfo { get; private set; }
+    public SessionPeerInfo? EstablishedPeer { get; private set; }
     public string? RemoteDeviceId => PeerInfo?.DeviceId;
     public IPAddress? RemoteAddress => (_client.Client.RemoteEndPoint as IPEndPoint)?.Address;
     public bool PeerRequiresPairing => _peerPairingRequired;
@@ -478,6 +479,7 @@ public class SessionConnection : IDisposable
         }
 
         PairingError = null;
+        EstablishedPeer ??= PeerInfo;
         UpdateState(SessionState.Connected);
         if (!_peerIdentifiedRaised)
         {

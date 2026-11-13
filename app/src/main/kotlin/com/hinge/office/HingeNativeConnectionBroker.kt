@@ -132,6 +132,7 @@ private const val BACKGROUND_HEARTBEAT_INTERVAL_MS = 20_000L
 private const val FOREGROUND_CONNECTION_TIMEOUT_MS = 45_000L
 private const val BACKGROUND_CONNECTION_SUSPEND_AFTER_MS = 180_000L
 private const val FOREGROUND_RECOVERY_GRACE_MS = 15_000L
+private const val FOREGROUND_RESUME_PROBE_MS = 5_000L
 private const val FOREGROUND_RECOVERY_HEARTBEAT_INTERVAL_MS = 1_000L
 private val RECONNECT_BACKOFF_MS = longArrayOf(
     2_000L,
@@ -388,6 +389,14 @@ class HingeNativeConnectionBroker(
         exitLowPowerStandby(reason)
         ensureListener()
         diagnostics.log("connection_wake_requested", mapOf("reason" to reason))
+        if (reason == HingeCompanionManager.BLE_WAKE_REASON) {
+            connections.values.forEach { connection ->
+                val peerId = connection.peer?.deviceId
+                if (peerId != null && !isManuallyDisconnected(peerId)) {
+                    connection.probeOnForeground(renew = false)
+                }
+            }
+        }
         scheduleHistoricalReconnects(0L)
         dispatchPendingTasks()
         emitSnapshot()
@@ -665,6 +674,24 @@ class HingeNativeConnectionBroker(
     fun clearDiagnostics() = diagnostics.clear()
 
     fun emitCurrentSnapshotForFlutter() = emitSnapshot()
+
+    fun revalidateForegroundSessions() {
+        connections.values.forEach { it.probeOnForeground() }
+        scheduleHistoricalReconnects(0L)
+    }
+
+    fun acceptsAdbWake(localId: String, peerId: String): Boolean =
+        started.get() && identity?.deviceId == localId && peerConfigs.containsKey(peerId) &&
+            !isManuallyDisconnected(peerId)
+
+    fun recoverAdbPeer(peerId: String) {
+        val config = peerConfigs[peerId] ?: return
+        val session = connections.values.firstOrNull {
+            !it.isClosed && it.isReady && it.peer?.deviceId == peerId
+        }
+        if (session == null) scheduleReconnect(config, 0L)
+        else session.probeOnForeground(renew = false)
+    }
 
     fun pendingTransferReceipts(): List<Map<String, Any?>> = synchronized(transferReceiptLock) {
         val raw = preferences.getString(TRANSFER_RECEIPTS_KEY, "[]") ?: "[]"
@@ -1672,7 +1699,7 @@ class HingeNativeConnectionBroker(
         }
     }
 
-    fun hasLiveConnection(id: String): Boolean = connections[id]?.isClosed == false
+    fun connectionState(id: String): String? = connections[id]?.takeUnless { it.isClosed }?.state
 
     private fun emitSnapshot() {
         connections.values.forEach { connection ->
@@ -1791,7 +1818,10 @@ class HingeNativeConnectionBroker(
         private var output: OutputStream? = null
         private var heartbeatFuture: ScheduledFuture<*>? = null
         private var authFuture: ScheduledFuture<*>? = null
+        @Volatile
         private var interactiveRecoveryStartedAt = 0L
+        @Volatile
+        private var foregroundProbe: Any? = null
         private val sessionId = uuidBytes(UUID.randomUUID().toString())
         private val localChallenge = randomHex(16)
         private var peerChallenge = ""
@@ -2044,11 +2074,14 @@ class HingeNativeConnectionBroker(
         }
 
         private fun handleFrame(frame: NativeProtocolFrame) {
-            if (state == "suspended") {
-                interactiveRecoveryStartedAt = 0L
-                updateState("connected")
-                diagnostics.log("heartbeat_resumed")
-                if (lowPowerStandby && isReady) onSessionActive()
+            synchronized(this) {
+                if (state == "suspended" && !closed && isReady) {
+                    foregroundProbe = null
+                    interactiveRecoveryStartedAt = 0L
+                    updateState("connected")
+                    diagnostics.log("heartbeat_resumed")
+                    if (lowPowerStandby) onSessionActive()
+                }
             }
             when (frame.type) {
                 HingeProtocol.sessionInit, HingeProtocol.sessionAck -> {
@@ -2147,6 +2180,28 @@ class HingeNativeConnectionBroker(
                     .onFailure { close(false, "queued_flush_failed") }
             }
             onConnectionReady(this)
+        }
+
+        @Synchronized
+        fun probeOnForeground(renew: Boolean = true) {
+            if (closed || !isReady || (!renew && foregroundProbe != null)) return
+            val probe = Any()
+            foregroundProbe = probe
+            interactiveRecoveryStartedAt = SystemClock.elapsedRealtime()
+            updateState("suspended")
+            diagnostics.log("foreground_probe_started")
+            scheduler.schedule({ expireForegroundProbe(probe) }, FOREGROUND_RESUME_PROBE_MS, TimeUnit.MILLISECONDS)
+            executor.execute {
+                if (foregroundProbe === probe) sendFrame(HingeProtocol.heartbeatPing, ByteArray(0))
+            }
+        }
+
+        @Synchronized
+        private fun expireForegroundProbe(probe: Any) {
+            if (closed || foregroundProbe !== probe) return
+            foregroundProbe = null
+            diagnostics.log("foreground_probe_timeout")
+            close(false, "foreground_probe_timeout")
         }
 
         private fun heartbeat() {

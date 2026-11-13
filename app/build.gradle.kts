@@ -10,8 +10,8 @@ android {
         applicationId = "com.hinge.office"
         minSdk = 24
         targetSdk = 36
-        versionCode = 200
-        versionName = "3.0.2"
+        versionCode = 204
+        versionName = "3.1.0"
         ndk { abiFilters += "arm64-v8a" }
     }
     buildFeatures { compose = true; buildConfig = true }

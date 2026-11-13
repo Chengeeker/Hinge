@@ -154,7 +154,10 @@ internal fun sectionHeadingStyle(typography: androidx.compose.material3.Typograp
         }; BrandIcon(model) }
     }
     Spacer(Modifier.height(16.dp)); OriginalSection("设备","管理当前会话，或在局域网中连接新设备"); Spacer(Modifier.height(12.dp))
-    OriginalCard { OriginalRow("已连接的机型","${model.ready.size} 台设备已连接","Symbols.devices_rounded",action={open("已连接的机型")},titleStyle=MaterialTheme.typography.bodyLarge); OriginalRow("连接设备","发现同一局域网中的手机或电脑","Symbols.add_link_rounded",action={open("连接设备")},titleStyle=MaterialTheme.typography.bodyLarge) }
+    val connectionSummary = if (model.ready.isEmpty() && model.connections.values.any { it.text("state") == "suspended" }) {
+        "正在确认连接…"
+    } else "${model.ready.size} 台设备已连接"
+    OriginalCard { OriginalRow("已连接的机型",connectionSummary,"Symbols.devices_rounded",action={open("已连接的机型")},titleStyle=MaterialTheme.typography.bodyLarge); OriginalRow("连接设备","发现同一局域网中的手机或电脑","Symbols.add_link_rounded",action={open("连接设备")},titleStyle=MaterialTheme.typography.bodyLarge) }
     if(selected!=null) { Spacer(Modifier.height(16.dp)); DeviceSummary(model,selected,open) }
     Spacer(Modifier.height(24.dp)); OriginalSection("设备操作",if(selected==null) "查看最近的文件收发记录" else "查看文件传输进度和历史记录"); Spacer(Modifier.height(12.dp))
     OriginalCard { Row(Modifier.padding(16.dp)) { AssistChip(onClick={open("传输记录")},label={Text("文件传输记录")},leadingIcon={HIcon("Icons.history_rounded",size=20.dp)}) } }
@@ -169,6 +172,7 @@ internal fun sectionHeadingStyle(typography: androidx.compose.material3.Typograp
     var storage by remember{mutableStateOf<Map<String,Any?>>(emptyMap())}
     var failure by remember{mutableStateOf("")};var loading by remember{mutableStateOf(true)}
     val connected=model.ready.any{it.text("deviceId")==peer.text("deviceId")}
+    val checkingConnection = !connected && model.isCheckingConnection(peer.text("deviceId"))
     val discovered=model.devices.any{it.text("deviceId")==peer.text("deviceId")}
     LaunchedEffect(peer.text("deviceId")){loading=true;failure="";try{storage=model.api.call("storageInfo").asMap()}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(e:Exception){failure=e.message.orEmpty()}finally{loading=false}}
     OriginalCard{Column(Modifier.padding(16.dp)){
@@ -176,10 +180,15 @@ internal fun sectionHeadingStyle(typography: androidx.compose.material3.Typograp
             OriginalDeviceIcon(peer.text("platform"),32.dp);Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)){
                 Text(peer.text("name"),style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(4.dp))
-                Text(if(connected)"已建立会话 · ${peer.text("remoteAddress",peer.text("address"))}" else if(discovered)"已发现 · 可建立会话" else "等待设备上线",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(when {
+                    connected -> "已建立会话 · ${peer.text("remoteAddress",peer.text("address"))}"
+                    checkingConnection -> "正在确认连接…"
+                    discovered -> "已发现 · 可建立会话"
+                    else -> "等待设备上线"
+                },color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if(connected)HingeOutlinedButton(onClick={model.disconnect(peer)}){HIcon("Symbols.link_off_rounded");Spacer(Modifier.width(8.dp));Text("断开连接")}
-            else HingeFilledButton(onClick={if(discovered&&model.connectingDevice.isEmpty()){if(peer["pairingRequired"]==true)model.pairingRequest=peer else model.connectPeer(peer)}else open("连接设备")}){
+            else HingeFilledButton(enabled = !checkingConnection,onClick={if(discovered&&model.connectingDevice.isEmpty()){if(peer["pairingRequired"]==true)model.pairingRequest=peer else model.connectPeer(peer)}else open("连接设备")}){
                 HIcon(if(discovered)"Symbols.link_rounded" else "Symbols.search_rounded");Spacer(Modifier.width(8.dp));Text(if(model.connectingDevice==peer.text("deviceId"))"连接中…" else if(discovered)"连接" else "查找设备")
             }
         }

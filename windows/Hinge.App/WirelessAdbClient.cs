@@ -11,7 +11,8 @@ namespace Hinge.App;
 internal static class WirelessAdbClient
 {
     private const string HingeAdbServerPort = "5038";
-    private const string DiagnosticsUri = "content://com.hinge.office.diagnostics/connection";
+    private const string DiagnosticsProvider = "content://com.hinge.office.diagnostics";
+    private const string DiagnosticsUri = DiagnosticsProvider + "/connection";
     private const string PairedSetting = "WirelessAdbPairingCompleted";
     private const string VerifiedIdentitySetting = "WirelessAdbVerifiedIdentity";
     private const string PairingGuidSetting = "WirelessAdbPairingGuid";
@@ -711,6 +712,32 @@ internal static class WirelessAdbClient
         var path = Path.Combine(directory, $"Hinge-Android-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
         await File.WriteAllTextAsync(path, result.Output, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
+    }
+
+    internal static async Task<bool> RequestHingeWakeAsync(
+        string transport, string phoneId, string desktopId, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParseExact(phoneId, "D", out _) || !Guid.TryParseExact(desktopId, "D", out _))
+            throw new InvalidOperationException("无法核对 Hinge 设备身份。");
+
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            var result = await RunAsync(attempt.Token, "-s", transport, "shell", "content", "call",
+                "--uri", DiagnosticsProvider, "--method", "adb_wake", "--arg", $"{phoneId}:{desktopId}");
+            if (result.ExitCode != 0 || !string.IsNullOrWhiteSpace(result.Error)) return false;
+            var response = result.Output.Trim();
+            if (response == "Result: Bundle[{hinge_wake=rejected}]")
+                throw new InvalidOperationException("手机拒绝唤醒。请检查设备关联或手动重新连接 Hinge。");
+
+            // Older Hinge versions can be woken by acquiring the provider itself.
+            return response is "Result: Bundle[{hinge_wake=accepted}]" or "Result: null";
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     private static async Task<AdbResult> RunAsync(params string[] arguments)

@@ -49,7 +49,7 @@ class BackgroundConnectionTest {
     @Test fun screenOffKeepsResponsiveSessionAndWakeLockBeyondIdleWindow() {
         shadowOf(power).setIsInteractive(false)
         val connection = connection()
-        call(service, "acquireCpuWakeLock")
+        acquireCpuWakeLock(0L)
         ShadowSystemClock.advanceBy(Duration.ofMinutes(10))
         call(service, "evaluateLowPowerStandby")
         assertFalse(get<Boolean>(service, "lowPowerStandby"))
@@ -114,16 +114,63 @@ class BackgroundConnectionTest {
         val connection = connection()
         ShadowSystemClock.advanceBy(Duration.ofMinutes(10))
         tick(connection)
+        receivePong(connection)
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(16))
+        tick(connection)
+        assertEquals("connected", get<String>(connection, "state"))
+        assertFalse(get<Boolean>(connection, "closed"))
+    }
+
+    @Test fun returningToForegroundHidesOldReadyStateUntilPeerResponds() {
+        val connection = connection()
+        assertEquals("connected", broker.connectionState("test-0"))
+        service.setActivityForeground(true)
+        assertEquals("suspended", broker.connectionState("test-0"))
+        val probe = get<Any>(connection, "foregroundProbe")
+        receivePong(connection)
+        expireProbe(connection, probe)
+        assertEquals("connected", broker.connectionState("test-0"))
+    }
+
+    @Test fun foregroundProbeExpiryRemovesUnresponsiveSession() {
+        val connection = connection()
+        broker.revalidateForegroundSessions()
+        val firstProbe = get<Any>(connection, "foregroundProbe")
+        broker.revalidateForegroundSessions()
+        expireProbe(connection, firstProbe)
+        assertEquals("suspended", broker.connectionState("test-0"))
+        expireProbe(connection, get(connection, "foregroundProbe"))
+        assertNull(broker.connectionState("test-0"))
+    }
+
+    @Test fun repeatedAdbWakeDoesNotPostponeProbeTimeout() {
+        val connection = connection()
+        broker.revalidateForegroundSessions()
+        val probe = get<Any>(connection, "foregroundProbe")
+        ReflectionHelpers.callInstanceMethod<Unit>(connection, "probeOnForeground",
+            ReflectionHelpers.ClassParameter.from(Boolean::class.javaPrimitiveType!!, false))
+        assertSame(probe, get<Any>(connection, "foregroundProbe"))
+        expireProbe(connection, probe)
+        assertNull(broker.connectionState("test-0"))
+    }
+
+    @Test fun ordinaryAppCannotRequestShellWake() {
+        val provider = Robolectric.buildContentProvider(HingeDiagnosticsProvider::class.java).create().get()
+        assertThrows(SecurityException::class.java) { provider.call("adb_wake", "invalid", null) }
+    }
+
+    private fun receivePong(connection: Any) {
         val frameType = Class.forName("com.hinge.office.NativeProtocolFrame")
         val frame = frameType.declaredConstructors.single().apply { isAccessible = true }
             .newInstance(1, 0x0013, ByteArray(16), 0L, ByteArray(16), ByteArray(0))
         set(connection, "lastInboundAt", SystemClock.elapsedRealtime())
         connection.javaClass.getDeclaredMethod("handleFrame", frameType)
             .apply { isAccessible = true }.invoke(connection, frame)
-        ShadowSystemClock.advanceBy(Duration.ofSeconds(16))
-        tick(connection)
-        assertEquals("connected", get<String>(connection, "state"))
-        assertFalse(get<Boolean>(connection, "closed"))
+    }
+
+    private fun expireProbe(connection: Any, probe: Any) {
+        ReflectionHelpers.callInstanceMethod<Unit>(connection, "expireForegroundProbe",
+            ReflectionHelpers.ClassParameter.from(Any::class.java, probe))
     }
 
     @Test fun newlyAuthenticatedSessionRequestsServiceWakeAndRestartsMissingHeartbeat() {
@@ -141,11 +188,25 @@ class BackgroundConnectionTest {
         set(service, "lowPowerStandby", true)
         broker.enterLowPowerStandby()
         ReflectionHelpers.callInstanceMethod<Any?>(service, "activateConnectionWindow",
-            ReflectionHelpers.ClassParameter.from(String::class.java, "session_active"))
+            ReflectionHelpers.ClassParameter.from(String::class.java, "session_active"),
+            ReflectionHelpers.ClassParameter.from(Long::class.javaPrimitiveType!!, 0L))
         assertFalse(get<Boolean>(service, "lowPowerStandby"))
         assertFalse(get<Boolean>(broker, "lowPowerStandby"))
         assertTrue(get<PowerManager.WakeLock>(service, "cpuWakeLock").isHeld)
         assertNotNull(get<Any?>(service, "discoveryBeaconRunnable"))
+    }
+
+    @Test fun repeatedBleWakeDoesNotExtendTheLockAndActiveWorkCanTakeOver() {
+        acquireCpuWakeLock(30_000L)
+        val timedLock = get<PowerManager.WakeLock>(service, "cpuWakeLock")
+        assertTrue(timedLock.isHeld)
+        assertTrue(get<Boolean>(service, "cpuWakeLockTimed"))
+        acquireCpuWakeLock(30_000L)
+        assertSame(timedLock, get<PowerManager.WakeLock>(service, "cpuWakeLock"))
+        acquireCpuWakeLock(0L)
+        assertFalse(timedLock.isHeld)
+        assertTrue(get<PowerManager.WakeLock>(service, "cpuWakeLock").isHeld)
+        assertFalse(get<Boolean>(service, "cpuWakeLockTimed"))
     }
 
     @Test fun authenticationIsProtectedButClosedSocketsAreNotActiveWork() {
@@ -178,6 +239,10 @@ class BackgroundConnectionTest {
         get<ScheduledFuture<*>?>(connection, "heartbeatFuture")?.cancel(false)
     }
     private fun call(target: Any, method: String) = ReflectionHelpers.callInstanceMethod<Any?>(target, method)
+    private fun acquireCpuWakeLock(timeoutMs: Long) {
+        ReflectionHelpers.callInstanceMethod<Unit>(service, "acquireCpuWakeLock",
+            ReflectionHelpers.ClassParameter.from(Long::class.javaPrimitiveType!!, timeoutMs))
+    }
     private fun set(target: Any, name: String, value: Any) = ReflectionHelpers.setField(target, name, value)
     private fun <T> get(target: Any, name: String): T = ReflectionHelpers.getField(target, name)
 }

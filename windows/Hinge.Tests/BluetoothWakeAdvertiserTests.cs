@@ -15,4 +15,15 @@ public class BluetoothWakeAdvertiserTests
         Assert.Equal(0, starts);
     }
 
+    [Fact]
+    public async Task CancelledReconnectNeverStartsPublisher()
+    {
+        using var advertiser = new BluetoothWakeAdvertiser();
+        int starts = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            advertiser.PublishAsync("windows-test-device", WakeAdvertisementKind.Reconnect,
+                TimeSpan.FromSeconds(10), new CancellationToken(true), () => starts++, skipIfBusy: true));
+        Assert.Equal(0, starts);
+    }
+
 }

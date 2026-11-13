@@ -5,6 +5,15 @@ namespace Hinge.Tests;
 public sealed class WakeProtocolTests
 {
     [Fact]
+    public void ReconnectPayloadMatchesTheExistingCompanionFilter()
+    {
+        var payload = HingeWakeProtocol.CreatePayload("windows-test-device", WakeAdvertisementKind.Reconnect);
+        var filter = HingeWakeProtocol.FilterData();
+        Assert.True(HingeWakeProtocol.IsWakePayload(payload));
+        Assert.Equal(filter, payload[..filter.Length]);
+    }
+
+    [Fact]
     public void WakePayload_ContainsStableDeviceTagAndKind()
     {
         var first = HingeWakeProtocol.CreatePayload("windows-test-device", WakeAdvertisementKind.FileTransfer);

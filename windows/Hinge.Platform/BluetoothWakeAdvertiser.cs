@@ -14,23 +14,38 @@ namespace Hinge.Platform;
 public sealed class BluetoothWakeAdvertiser : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly CancellationToken _shutdownToken;
     private bool _disposed;
+
+    public BluetoothWakeAdvertiser() => _shutdownToken = _shutdown.Token;
 
     public async Task<bool> PublishAsync(
         string deviceId,
         WakeAdvertisementKind kind,
         TimeSpan duration,
         CancellationToken cancellationToken,
-        Action? onStarted = null)
+        Action? onStarted = null,
+        bool skipIfBusy = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (duration <= TimeSpan.Zero) return false;
 
-        await _gate.WaitAsync(cancellationToken);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownToken);
+        cancellationToken = lifetime.Token;
+        if (skipIfBusy)
+        {
+            if (!await _gate.WaitAsync(0, cancellationToken)) return false;
+        }
+        else
+        {
+            await _gate.WaitAsync(cancellationToken);
+        }
         BluetoothLEAdvertisementPublisher? publisher = null;
         TypedEventHandler<BluetoothLEAdvertisementPublisher, BluetoothLEAdvertisementPublisherStatusChangedEventArgs>? statusHandler = null;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             publisher = new BluetoothLEAdvertisementPublisher();
             IBuffer buffer;
             using (var writer = new DataWriter())
@@ -119,6 +134,8 @@ public sealed class BluetoothWakeAdvertiser : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _gate.Dispose();
+        _shutdown.Cancel();
+        _shutdown.Dispose();
+        // In-flight publishers release the gate as they stop.
     }
 }

@@ -84,6 +84,9 @@
                 <action android:name="android.companion.CompanionDeviceService" />
             </intent-filter>
         </service>
+        <receiver
+            android:name=".HingeBleWakeReceiver"
+            android:exported="false" />
         <service
             android:name=".SmsNotificationListenerService"
             android:exported="true"

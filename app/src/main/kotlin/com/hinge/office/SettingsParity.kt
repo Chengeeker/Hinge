@@ -83,9 +83,20 @@ import androidx.compose.ui.unit.sp
             }})})
         }};Spacer(Modifier.height(16.dp))
         HingeSettingsCard {Column(Modifier.padding(16.dp)){
-            Text("Windows 自动唤醒（实验性）",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(6.dp));Text("绑定后，Windows 右键发送文件时会先发一个很短的 BLE 唤醒信号。Android 被系统唤醒后恢复原有局域网连接；BLE 信号不携带文件、验证码或配对码。");Spacer(Modifier.height(10.dp))
+            Text("Windows 自动唤醒（实验性）",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(6.dp));Text("绑定后，手机连接中断或在电脑上右键发送文件时，Windows 会尝试通过蓝牙唤醒手机，恢复局域网连接。");Spacer(Modifier.height(10.dp))
             Text(if(status["companionSupported"]!=true)"当前系统没有 Companion Device 支持" else if(status["companionAssociated"]==true)"已绑定 Windows BLE 唤醒设备" else "尚未绑定",style=MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(8.dp));if(status["companionSupported"]==true){if(status["companionAssociated"]==true)HingeOutlinedButton(enabled=!loading,onClick={invoke("removeCompanion")}){Text("解除绑定")}else HingeTonalButton(enabled=!loading,onClick={invoke("associateCompanion")}){Text("开始绑定")}}
+            if (status["companionScanNeedsPermission"] == true) {
+                HingeOutlinedButton(enabled = !loading, onClick = {
+                    model.run {
+                        if (model.api.call("requestCompanionScan") == false) model.message = "尚未允许附近设备权限"
+                        revision++
+                    }
+                }) { Text("允许附近设备") }
+                Text("用于在电脑蓝牙地址变化后继续识别同一台电脑。", style = MaterialTheme.typography.bodySmall)
+            } else if (status["companionScanNeedsBindingPayload"] == true) {
+                Text("重新绑定可在电脑蓝牙地址变化后继续识别同一台电脑。", style = MaterialTheme.typography.bodySmall)
+            }
             Spacer(Modifier.height(6.dp));Text("绑定时请先在 Windows Hinge 托盘菜单或设置页开启“60 秒 BLE 配对广播”。",style=MaterialTheme.typography.bodySmall)
         }};Spacer(Modifier.height(16.dp));Text("保活清单",Modifier.padding(horizontal=26.dp),style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(8.dp))
         HingeSettingsCard {
@@ -95,7 +106,7 @@ import androidx.compose.ui.unit.sp
             checklist("锁定后台 / 自启动","打开厂商的后台保护页面，将 Hinge 加入允许后台运行的清单","lock_clock","按设备提供","去设置"){invoke("openBackgroundProtectionSettings")}
             checklist("应用详情","手动检查通知、电池、后台数据和权限状态","settings_applications","系统页面","打开"){invoke("openAppSettings")}
             checklist("复制连接诊断","导出服务、网络、心跳和重连记录，不包含文件内容、验证码或配对码","content_copy","本机日志","复制"){model.run{copyText(model,model.api.call("readConnectionDiagnostics")?.toString().orEmpty())}}
-        };Spacer(Modifier.height(16.dp));HingeSettingsCard {Text("说明：自动唤醒的目标是“需要发送时再恢复连接”，不是永久维持 TCP。Android 不允许普通应用绕过系统和厂商的后台管理；BLE、局域网或 Companion 不可用时，常驻通知仍是可靠的人工兜底入口。",Modifier.padding(16.dp))}
+        };Spacer(Modifier.height(16.dp));HingeSettingsCard {Text("自动唤醒需要手机系统允许后台接收蓝牙信号。未能自动恢复时，可以点常驻通知手动重连。",Modifier.padding(16.dp))}
     }
 }
 

@@ -1,6 +1,7 @@
 package com.hinge.office
 
 import android.companion.CompanionDeviceService
+import android.companion.DevicePresenceEvent
 
 /**
  * Bound by Android when the associated Windows BLE advertiser appears.
@@ -11,10 +12,16 @@ import android.companion.CompanionDeviceService
 class HingeCompanionDeviceService : CompanionDeviceService() {
     @Suppress("DEPRECATION")
     override fun onDeviceAppeared(address: String) {
-        HingeCompanionManager.requestWake(
-            applicationContext,
-            "ble_appeared:${address.takeLast(5)}",
-        )
+        HingeCompanionManager.requestBleWake(applicationContext, address)
+    }
+
+    @androidx.annotation.RequiresApi(36)
+    override fun onDevicePresenceEvent(event: DevicePresenceEvent) {
+        if (event.event == DevicePresenceEvent.EVENT_BLE_APPEARED &&
+            event.associationId == HingeCompanionManager.selectedAssociationId(applicationContext)
+        ) {
+            HingeCompanionManager.requestBleWake(applicationContext)
+        }
     }
 
     @Suppress("DEPRECATION")

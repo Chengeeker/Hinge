@@ -20,6 +20,8 @@ public sealed partial class TransferSettingsPage : Page
     public TextBox WirelessAdbConnectPort => WirelessAdbConnectPortTextBox;
     public PasswordBox WirelessAdbPairingCode => WirelessAdbPairingCodeTextBox;
     public ToggleSwitch WirelessAdbClipboardSync => WirelessAdbClipboardSyncToggle;
+    public Button WirelessAdbRecovery => WirelessAdbRecoveryButton;
+    public TextBlock WirelessAdbRecoveryStatus => WirelessAdbRecoveryStatusText;
     public Button WirelessAdbPair => WirelessAdbPairButton;
     public Button WirelessAdbQrPair => WirelessAdbQrPairButton;
     public Button WirelessAdbConnect => WirelessAdbConnectButton;

@@ -79,6 +79,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private val mediaPermissionRequest = 4104
     private val smsPermissionRequest = 4105
     private val companionAssociationRequest = 4401
+    private val companionScanPermissionRequest = 4402
     // MediaStore/Calendar work is off the UI thread. A small adaptive pool
     // keeps thumbnail and metadata requests responsive on modern phones while
     // avoiding an unbounded thread explosion on low-end devices.
@@ -104,6 +105,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private var mediaPermissionResult: NativeResult? = null
     private var smsPermissionResult: NativeResult? = null
     private var companionAssociationResult: NativeResult? = null
+    private var companionScanPermissionResult: NativeResult? = null
     private val shareLock = Any()
     private val pendingShareBatches = ArrayDeque<List<Map<String, Any?>>>()
     private var shareEventSink: NativeEventSink? = null
@@ -261,10 +263,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     override fun onResume() {
         super.onResume()
+        HingeBleWakeReceiver.start(this)
+        HingeForegroundService.current?.setActivityForeground(true)
+        model.refreshNativeConnectionStates()
         model.foreground = true
-        if (model.remote?.let { it.isClosed && model.isConnectionReady(it.peer.text("connectionId")) } == true) {
-            model.remoteRevision++
-        }
         // A share Activity can replace these process-wide sinks while this engine stays alive.
         smsEventSink?.let { SmsRelayBridge.attach(it) }
         notificationHistoryEventSink?.let { NotificationHistoryBridge.attach(it) }
@@ -272,7 +274,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
             HingeNativeConnectionEvents.attach(it)
             HingeForegroundService.current?.connectionBroker()?.emitCurrentSnapshotForFlutter()
         }
-        HingeForegroundService.current?.setActivityForeground(true)
     }
 
     override fun onPause() {
@@ -563,6 +564,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "setPersistentNotificationEnabled" -> setPersistentNotificationEnabled(call, result)
             "companionStatus" -> result.success(HingeCompanionManager.status(this))
             "associateCompanion" -> associateCompanion(result)
+            "requestCompanionScan" -> requestCompanionScan(result)
             "removeCompanion" -> result.success(HingeCompanionManager.removeAssociation(this))
             "wakeConnection" -> {
                 HingeCompanionManager.requestWake(this, "manual")
@@ -840,7 +842,23 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "companionSupported" to (companion["supported"] == true),
             "companionAssociated" to (companion["associated"] == true),
             "companionAddress" to (companion["address"]?.toString().orEmpty()),
+            "companionScanNeedsPermission" to (companion["scanNeedsPermission"] == true),
+            "companionScanNeedsBindingPayload" to (companion["scanNeedsBindingPayload"] == true),
         )
+    }
+
+    private fun requestCompanionScan(result: NativeResult) {
+        if (Build.VERSION.SDK_INT < 34 || HingeCompanionManager.boundPayload(this) == null) {
+            result.success(false)
+        } else if (HingeBleWakeReceiver.hasScanPermission(this)) {
+            HingeBleWakeReceiver.start(this)
+            result.success(true)
+        } else if (companionScanPermissionResult == null) {
+            companionScanPermissionResult = result
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_SCAN), companionScanPermissionRequest)
+        } else {
+            result.success(false)
+        }
     }
 
     private fun associateCompanion(result: NativeResult) {
@@ -1072,6 +1090,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
+            companionScanPermissionRequest -> {
+                val pending = companionScanPermissionResult
+                companionScanPermissionResult = null
+                HingeBleWakeReceiver.start(this)
+                pending?.success(HingeBleWakeReceiver.hasScanPermission(this))
+            }
             calendarPermissionRequest -> {
                 val pending = calendarPermissionResult
                 calendarPermissionResult = null

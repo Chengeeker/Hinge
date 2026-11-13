@@ -23,8 +23,12 @@ public class PairingAndSessionTests
         using var stale = await client.ConnectToPeerAsync(IPAddress.Loopback, server.ListeningPort, expectedDeviceId: "old-phone");
         while (stale.State != SessionState.Disconnected) await Task.Delay(10, timeout.Token);
         Assert.Null(stale.PeerInfo);
+        Assert.Null(stale.EstablishedPeer);
         Assert.True(valid.IsSessionReady);
         Assert.Same(original, server.ConnectionForDevice("pc"));
+        valid.Dispose();
+        Assert.Equal(SessionState.Disconnected, valid.State);
+        Assert.Equal("new-phone", valid.EstablishedPeer?.DeviceId);
     }
 
     [Fact]

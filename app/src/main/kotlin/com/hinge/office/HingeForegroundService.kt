@@ -55,6 +55,7 @@ class HingeForegroundService : Service() {
     @Volatile
     private var vpnCompatibilityPresent = false
     private var cpuWakeLock: PowerManager.WakeLock? = null
+    private var cpuWakeLockTimed = false
     private val discoveryHandler = Handler(Looper.getMainLooper())
     private val discoveryExecutor = Executors.newSingleThreadExecutor()
     private val discoveryBeaconInFlight = AtomicBoolean(false)
@@ -119,10 +120,10 @@ class HingeForegroundService : Service() {
         }
 
         if (ENABLE_NATIVE_CONNECTION_BROKER && action == ACTION_WAKE) {
-            activateConnectionWindow("wake")
-            nativeConnectionBroker.requestWake(
-                intent.getStringExtra(EXTRA_WAKE_REASON).orEmpty().ifEmpty { "companion" },
-            )
+            val reason = intent.getStringExtra(EXTRA_WAKE_REASON).orEmpty().ifEmpty { "companion" }
+            val timeoutMs = if (reason == HingeCompanionManager.BLE_WAKE_REASON) BLE_CPU_WAKE_MS else 0L
+            activateConnectionWindow(reason, timeoutMs)
+            nativeConnectionBroker.requestWake(reason)
         }
 
         refreshSmsContentObserver()
@@ -179,10 +180,22 @@ class HingeForegroundService : Service() {
 
     fun connectionBroker(): HingeNativeConnectionBroker = nativeConnectionBroker
 
+    fun requestAdbWake(localId: String, peerId: String): String {
+        if (!nativeConnectionBroker.acceptsAdbWake(localId, peerId)) return "rejected"
+        standbyHandler.post {
+            if (current !== this || !nativeConnectionBroker.acceptsAdbWake(localId, peerId)) return@post
+            activateConnectionWindow("wireless_adb")
+            nativeConnectionBroker.recoverAdbPeer(peerId)
+        }
+        return "accepted"
+    }
+
     fun setActivityForeground(foreground: Boolean) {
+        val returningToForeground = foreground && !activityForeground
         activityForeground = foreground
         if (foreground) {
             activateConnectionWindow("activity_foreground")
+            if (returningToForeground) nativeConnectionBroker.revalidateForegroundSessions()
         } else {
             activeWindowUntilElapsed = maxOf(
                 activeWindowUntilElapsed,
@@ -203,7 +216,7 @@ class HingeForegroundService : Service() {
                 if (lowPowerStandby) "Hinge 已进入低功耗待命" else "Hinge 正在后台运行",
             )
             .setContentText(
-                if (lowPowerStandby) "发送文件时会尝试自动唤醒；点击通知可立即恢复连接"
+                if (lowPowerStandby) "已绑定的电脑可尝试唤醒；点击通知可立即恢复连接"
                 else "保持已连接设备在线；无连接且空闲后进入低功耗待命",
             )
             .setCategory(Notification.CATEGORY_SERVICE)
@@ -223,9 +236,9 @@ class HingeForegroundService : Service() {
         }
     }
 
-    private fun activateConnectionWindow(reason: String) {
+    private fun activateConnectionWindow(reason: String, cpuWakeTimeoutMs: Long = 0L) {
         activeWindowUntilElapsed = SystemClock.elapsedRealtime() + ACTIVE_WINDOW_MS
-        acquireCpuWakeLock()
+        acquireCpuWakeLock(cpuWakeTimeoutMs)
         acquireMulticastLock()
         acquireWifiLock()
         if (lowPowerStandby) {
@@ -389,8 +402,11 @@ class HingeForegroundService : Service() {
      * connection/wake window; low-power standby releases it while keeping the
      * foreground service and notification alive.
      */
-    private fun acquireCpuWakeLock() {
-        if (cpuWakeLock?.isHeld == true) return
+    private fun acquireCpuWakeLock(timeoutMs: Long) {
+        if (cpuWakeLock?.isHeld == true) {
+            if (!cpuWakeLockTimed || timeoutMs > 0L) return
+            releaseCpuWakeLock()
+        }
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             cpuWakeLock = powerManager.newWakeLock(
@@ -398,8 +414,9 @@ class HingeForegroundService : Service() {
                 "Hinge::Connection",
             ).apply {
                 setReferenceCounted(false)
-                acquire()
+                if (timeoutMs > 0L) acquire(timeoutMs) else acquire()
             }
+            cpuWakeLockTimed = timeoutMs > 0L
         } catch (_: Exception) {
             cpuWakeLock = null
         }
@@ -412,6 +429,7 @@ class HingeForegroundService : Service() {
             // The power service may already be unavailable during teardown.
         } finally {
             cpuWakeLock = null
+            cpuWakeLockTimed = false
         }
     }
 
@@ -903,6 +921,7 @@ class HingeForegroundService : Service() {
         private const val PROTOCOL_VERSION = "0.1"
         private const val DISCOVERY_BEACON_INTERVAL_MS = 5_000L
         private const val ACTIVE_WINDOW_MS = 90_000L
+        private const val BLE_CPU_WAKE_MS = 30_000L
         private const val STANDBY_CHECK_INTERVAL_MS = 15_000L
     }
 }

@@ -88,6 +88,8 @@ public sealed partial class MainWindow : Window
     private readonly DiscoveryService _discoveryService;
     private readonly Win32TrayManager _trayManager;
     private readonly BluetoothWakeAdvertiser _wakeAdvertiser;
+    private (string DeviceId, CancellationTokenSource Cancellation)? _bleRecovery;
+    private long? _lastBleRecoveryAt;
     private readonly WorkspaceRemoteClient _workspaceRemoteClient;
     private readonly PreviewCache _previewCache;
     private readonly CloudRelayClient _cloudRelayClient;
@@ -106,6 +108,8 @@ public sealed partial class MainWindow : Window
     private readonly ConcurrentDictionary<string, byte> _manualDisconnectSuppressedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _historicalReconnectTimer;
     private CancellationTokenSource? _wirelessAdbClipboardSyncCancellation;
+    private CancellationTokenSource? _wirelessAdbRecoveryCancellation;
+    private string _wirelessAdbRecoveryStatus = "局域网会话掉线后，通过已连接的无线 ADB 尝试唤醒手机。";
     private CancellationTokenSource? _adbConsoleCancellation;
     private CancellationTokenSource? _wirelessAdbQrCancellation;
     private int _adbConsoleRevision;
@@ -1353,6 +1357,8 @@ public sealed partial class MainWindow : Window
         page.SetWirelessAdbStatus(_wirelessAdbConnectionStatus);
         page.SetWirelessAdbClipboardStatus(_wirelessAdbClipboardStatus);
         page.WirelessAdbClipboardSync.Toggled += WirelessAdbClipboardSync_Toggled;
+        page.WirelessAdbRecovery.Click += WirelessAdbRecovery_Click;
+        UpdateWirelessAdbRecoveryPage();
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
         page.WirelessAdbQrPair.Click += WirelessAdbQrPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
@@ -1616,6 +1622,7 @@ public sealed partial class MainWindow : Window
         SaveWirelessAdbEndpoint(pairing.Host, connectPort);
         if (FindTrustedAndroidDeviceId(pairing.Host) is { } hingeDeviceId)
             WirelessAdbClient.SaveHingeDeviceId(hingeDeviceId);
+        _wirelessAdbRecoveryCancellation?.Cancel();
         var previous = _wirelessAdbConnectionManager;
         _wirelessAdbConnectionManager = null;
         if (previous != null) await previous.DisposeAsync();
@@ -1933,6 +1940,93 @@ public sealed partial class MainWindow : Window
         manager.Start();
     }
 
+    private async void WirelessAdbRecovery_Click(object sender, RoutedEventArgs e)
+    {
+        if (_wirelessAdbRecoveryCancellation is { } running)
+        {
+            running.Cancel();
+            return;
+        }
+
+        var manager = _wirelessAdbConnectionManager;
+        var transport = manager?.CurrentTransport;
+        var phoneId = WirelessAdbClient.LoadHingeDeviceId();
+        if (transport == null || !WirelessAdbClient.IsWirelessTransport(transport) || AdbProcessGate.Shared.SessionEnding)
+        {
+            SetWirelessAdbRecoveryStatus("请先连接无线 ADB。");
+            return;
+        }
+        if (phoneId == null || !_trustStore.IsTrusted(phoneId))
+        {
+            SetWirelessAdbRecoveryStatus("请先连接手机的 Hinge，再通过本页配对无线 ADB，以关联同一台手机。");
+            return;
+        }
+
+        using var phase = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        _wirelessAdbRecoveryCancellation = phase;
+        SetWirelessAdbRecoveryStatus("辅助重连已开启。");
+        try
+        {
+            while (!phase.IsCancellationRequested)
+            {
+                if (AdbProcessGate.Shared.SessionEnding || !ReferenceEquals(manager, _wirelessAdbConnectionManager) ||
+                    !string.Equals(transport, manager?.CurrentTransport, StringComparison.Ordinal))
+                {
+                    SetWirelessAdbRecoveryStatus("无线 ADB 已断开，辅助重连已结束。");
+                    return;
+                }
+                if (IsHistoricalReconnectSuppressed(phoneId) || !_trustStore.IsTrusted(phoneId))
+                {
+                    SetWirelessAdbRecoveryStatus("设备已断开或取消信任，辅助重连已结束。");
+                    return;
+                }
+
+                if (_sessionManager.ConnectionForDevice(phoneId)?.State == SessionState.Connected)
+                {
+                    SetWirelessAdbRecoveryStatus("辅助重连已开启，局域网已连接。");
+                }
+                else
+                {
+                    var requested = await WirelessAdbClient.RequestHingeWakeAsync(
+                        transport, phoneId, _localIdentity.DeviceId, phase.Token);
+                    SetWirelessAdbRecoveryStatus(requested
+                        ? "已尝试唤醒，等待局域网会话恢复…"
+                        : "手机暂未响应，稍后重试…");
+                }
+                await Task.Delay(TimeSpan.FromSeconds(3), phase.Token);
+            }
+            SetWirelessAdbRecoveryStatus("辅助重连已结束。");
+        }
+        catch (OperationCanceledException) when (phase.IsCancellationRequested)
+        {
+            SetWirelessAdbRecoveryStatus("辅助重连已结束。");
+        }
+        catch (Exception exception)
+        {
+            SetWirelessAdbRecoveryStatus($"辅助重连已结束。{exception.Message}");
+        }
+        finally
+        {
+            _wirelessAdbRecoveryCancellation = null;
+            UpdateWirelessAdbRecoveryPage();
+        }
+    }
+
+    private void SetWirelessAdbRecoveryStatus(string message)
+    {
+        if (_wirelessAdbRecoveryStatus == message) return;
+        _wirelessAdbRecoveryStatus = message;
+        UpdateWirelessAdbRecoveryPage();
+    }
+
+    private void UpdateWirelessAdbRecoveryPage()
+    {
+        if (_transferSettingsPage is not { } page) return;
+        page.WirelessAdbRecovery.Content = _wirelessAdbRecoveryCancellation == null
+            ? "开启 10 分钟辅助重连" : "停止辅助重连";
+        page.WirelessAdbRecoveryStatus.Text = _wirelessAdbRecoveryStatus;
+    }
+
     private string[] GetWirelessAdbTrustedHosts()
     {
         var hingeDeviceId = WirelessAdbClient.LoadHingeDeviceId();
@@ -2078,6 +2172,7 @@ public sealed partial class MainWindow : Window
     {
         if (_blePairingRunning) return;
         _blePairingRunning = true;
+        _bleRecovery?.Cancellation.Cancel();
         UpdateBlePairingStatus("正在启动蓝牙广播…");
         try
         {
@@ -3358,6 +3453,8 @@ public sealed partial class MainWindow : Window
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico");
         if (!File.Exists(iconPath)) return;
 
+        TaskbarIdentity.SetWindowProperties(WindowNative.GetWindowHandle(this), iconPath);
+
         // Prefer the packaged ICO path for both the title bar and taskbar.
         // Passing a HICON-derived IconId first can succeed at the API level
         // but still leave an unpackaged AUMID taskbar button on the generic
@@ -3500,6 +3597,7 @@ public sealed partial class MainWindow : Window
         if (message == WmQueryEndSession)
         {
             AdbProcessGate.Shared.SessionEnding = true;
+            _bleRecovery?.Cancellation.Cancel();
             return new IntPtr(1);
         }
         if (message == WmEndSession)
@@ -3509,6 +3607,7 @@ public sealed partial class MainWindow : Window
             if (ending)
             {
                 _allowClose = true;
+                _bleRecovery?.Cancellation.Cancel();
                 StopAdbWork();
             }
             else
@@ -4956,7 +5055,15 @@ public sealed partial class MainWindow : Window
 
     private void DisconnectDevice(Device device)
     {
+        if (_wirelessAdbRecoveryCancellation is { } recovery &&
+            string.Equals(device.DeviceId, WirelessAdbClient.LoadHingeDeviceId(), StringComparison.OrdinalIgnoreCase))
+            recovery.Cancel();
         _manualDisconnectSuppressedDeviceIds[device.DeviceId] = 0;
+        if (_bleRecovery is { } bleRecovery &&
+            string.Equals(bleRecovery.DeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            bleRecovery.Cancellation.Cancel();
+        }
         _automaticConnectAttempts.Remove(device.DeviceId);
         _connectionAttemptGeneration++;
         CancelHistoricalReconnect();
@@ -5808,6 +5915,7 @@ public sealed partial class MainWindow : Window
         }
 
         _registry.MarkSessionDisconnected(disconnectedDeviceId);
+        _ = TryAdvertiseBleReconnectAsync(connection);
         DispatcherQueue.TryEnqueue(() =>
         {
             RefreshDeviceList(_registry.GetAllDevices());
@@ -5846,6 +5954,40 @@ public sealed partial class MainWindow : Window
                 Home.ApplyThemePalette();
                 RefreshCurrentWorkspacePage(_activeConnection);
             });
+        }
+    }
+
+    private async Task TryAdvertiseBleReconnectAsync(SessionConnection connection)
+    {
+        var peer = connection.EstablishedPeer;
+        if (_allowClose || AdbProcessGate.Shared.SessionEnding || _bleRecovery != null ||
+            peer == null || !string.Equals(peer.Platform, "android", StringComparison.OrdinalIgnoreCase) ||
+            !_trustStore.IsTrusted(peer.DeviceId) || IsHistoricalReconnectSuppressed(peer.DeviceId) ||
+            _sessionManager.ConnectionForDevice(peer.DeviceId) != null)
+        {
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        // One host beacon can reach multiple associated phones.
+        if (_lastBleRecoveryAt is { } last && now - last < 60_000) return;
+        _lastBleRecoveryAt = now;
+        using var cancellation = new CancellationTokenSource();
+        _bleRecovery = (peer.DeviceId, cancellation);
+        try
+        {
+            // Cover the low-power scan interval while the phone screen is off.
+            await _wakeAdvertiser.PublishAsync(_localIdentity.DeviceId,
+                WakeAdvertisementKind.Reconnect, TimeSpan.FromSeconds(15), cancellation.Token,
+                skipIfBusy: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // Manual disconnect or Windows session end.
+        }
+        finally
+        {
+            _bleRecovery = null;
         }
     }
 
@@ -8841,6 +8983,7 @@ public sealed partial class MainWindow : Window
 
     private void StopAdbWork()
     {
+        if (_wirelessAdbRecoveryCancellation is { } recovery) _ = recovery.CancelAsync();
         if (_screenCancellation is { } screen) _ = screen.CancelAsync();
         if (_wirelessAdbClipboardSyncCancellation is { } clipboard) _ = clipboard.CancelAsync();
         if (_adbConsoleCancellation is { } console) _ = console.CancelAsync();
@@ -8853,6 +8996,7 @@ public sealed partial class MainWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         AdbProcessGate.Shared.SessionEnding = true;
+        _bleRecovery?.Cancellation.Cancel();
         StopAdbWork();
         _desktopSharingClosed = true;
         _ = StopDesktopSharingAsync();
@@ -8888,6 +9032,7 @@ public sealed partial class MainWindow : Window
     {
         _appWindow?.Show();
         Activate();
+        RefreshTaskbarIcon();
     }
 
     private static string ShortId(string value) => value.Length <= 8 ? value : value[..8] + "...";

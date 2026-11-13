@@ -108,7 +108,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
                                 <TextBlock Text="Android 自动唤醒" Style="{StaticResource HingeM3TitleMediumStyle}" />
-                                <TextBlock Text="右键发送时启动一次 60 秒 BLE 广播；广播不承载文件或配对码。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                <TextBlock Text="手机连接中断或通过右键发送文件时，Hinge 会尝试通过蓝牙唤醒已绑定的手机。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                                 <TextBlock x:Name="BlePairingStatusText" Text="开启广播后，请在手机 Hinge 的保活设置中点击“开始绑定”，并完成系统确认。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                             </StackPanel>
                             <local:HandCursorButton
@@ -177,6 +177,13 @@
                                     OffContent="关闭"
                                     OnContent="开启" />
                                 <TextBlock Text="ADB 自动连接独立运行；剪贴板桥异常退出时只重启剪贴板桥。内容仅经已授权电脑的 ADB shell 通道传输，不写入日志或文件。" Style="{StaticResource HingeM3BodyVariantStyle}" />
+                                  <Button x:Name="WirelessAdbRecoveryButton"
+                                          AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbRecoveryButton"
+                                          Content="开启 10 分钟辅助重连"
+                                          Style="{StaticResource HingeM3TonalButtonStyle}" />
+                                  <TextBlock x:Name="WirelessAdbRecoveryStatusText"
+                                             Text="局域网会话掉线后，通过已连接的无线 ADB 尝试唤醒手机。"
+                                             Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                                 <TextBlock Text="首次配对" Style="{StaticResource HingeM3TitleMediumStyle}" />
                                 <local:HingeWrapPanel Spacing="12" LineSpacing="8" JustifyLastLine="False">
                                     <local:HandCursorButton

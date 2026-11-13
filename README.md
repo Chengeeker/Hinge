@@ -8,6 +8,7 @@ Hinge 是一个局域网优先的 Android + Windows 跨设备工作台，支持�
 - Android 使用 Kotlin / Jetpack Compose，构建产物为 `publish/Hinge.apk`。见[版本约定](docs/VERSIONING.md)。
 - 许可证：[MIT](LICENSE)
 - 3.0.2 更新：[中文更新日志](docs/CHANGELOG_v3.0.2.md)
+- 3.1.0 预发行：[查看测试版](https://github.com/Chengeeker/Hinge/releases/tag/v3.1.0-pre)
 - 3.0.0 完整变更：[v3.0.0 中文更新日志](docs/CHANGELOG_v3.0.0.md)
 
 ## 这是什么

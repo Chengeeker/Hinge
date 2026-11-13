@@ -12,6 +12,7 @@ public enum WakeAdvertisementKind : byte
 {
     Pairing = 1,
     FileTransfer = 2,
+    Reconnect = 3,
 }
 
 public static class HingeWakeProtocol
@@ -48,13 +49,14 @@ public static class HingeWakeProtocol
             payload[..Magic.Length].SequenceEqual(Magic) &&
             payload[Magic.Length] == ProtocolVersion &&
             payload[Magic.Length + 1] is (byte)WakeAdvertisementKind.Pairing or
-                (byte)WakeAdvertisementKind.FileTransfer;
+                (byte)WakeAdvertisementKind.FileTransfer or
+                (byte)WakeAdvertisementKind.Reconnect;
     }
 
     /// <summary>
     /// Returns the prefix used by Android CompanionDeviceManager's
     /// manufacturer-data filter. The device tag and wake kind are intentionally
-    /// left unconstrained so one association can wake for both workflows.
+    /// left unconstrained so one association can wake for each workflow.
     /// </summary>
     public static byte[] FilterData() =>
         [.. Magic, ProtocolVersion];

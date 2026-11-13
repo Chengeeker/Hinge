@@ -60,4 +60,29 @@ class CompanionAssociationTest {
         assertTrue(HingeCompanionManager.saveAssociation(context, address))
         assertTrue(address.equals(HingeCompanionManager.associationAddress(context), ignoreCase = true))
     }
+
+    @Test fun onlySelectedCompanionCanStartTheWakeService() {
+        val other = "12:34:56:78:9A:BD"
+        shadowOf(manager).addAssociation(address)
+        shadowOf(manager).addAssociation(other)
+        assertTrue(HingeCompanionManager.saveAssociation(context, address))
+        val app = shadowOf(context as android.app.Application)
+
+        HingeCompanionManager.requestBleWake(context, other)
+        assertNull(app.nextStartedService)
+        HingeCompanionManager.requestBleWake(context, address.lowercase())
+        val started = app.nextStartedService
+        assertEquals(HingeForegroundService.ACTION_WAKE, started?.action)
+        assertEquals(HingeCompanionManager.BLE_WAKE_REASON,
+            started?.getStringExtra(HingeForegroundService.EXTRA_WAKE_REASON))
+    }
+
+    @Test fun addressIndependentWakeMatchesOnlyTheBoundHostAndKnownKinds() {
+        val binding = HingeWakeProtocol.FILTER_DATA + byteArrayOf(1, 10, 20, 30, 40, 50, 60, 70, 80)
+        val reconnect = binding.clone().apply { this[4] = 3 }
+        assertTrue(HingeWakeProtocol.matchesHost(binding, reconnect))
+        assertFalse(HingeWakeProtocol.matchesHost(binding, reconnect.clone().apply { this[12]++ }))
+        assertFalse(HingeWakeProtocol.matchesHost(binding, reconnect.clone().apply { this[4] = 9 }))
+        assertFalse(HingeWakeProtocol.matchesHost(binding, reconnect.copyOf(5)))
+    }
 }

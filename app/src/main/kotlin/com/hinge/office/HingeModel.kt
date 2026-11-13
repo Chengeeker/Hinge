@@ -72,7 +72,18 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
     val ready: List<Map<String, Any?>> get() = connectedDeviceRows(connections.values)
     fun isConnectionReady(connectionId: String): Boolean =
         connections[connectionId]?.text("state") == "connected" &&
-            HingeForegroundService.current?.connectionBroker()?.hasLiveConnection(connectionId) == true
+            HingeForegroundService.current?.connectionBroker()?.connectionState(connectionId) == "connected"
+    fun isCheckingConnection(deviceId: String): Boolean = connections.values.any {
+        it.text("deviceId") == deviceId && it.text("state") == "suspended"
+    }
+
+    fun refreshNativeConnectionStates() {
+        val broker = HingeForegroundService.current?.connectionBroker()
+        connections = connections.mapNotNull { (id, row) ->
+            val state = broker?.connectionState(id) ?: return@mapNotNull null
+            id to (row + ("state" to state))
+        }.toMap()
+    }
     fun observeFrames(listener: (String, Int, ByteArray) -> Unit): Closeable { frames.add(listener); return Closeable { frames.remove(listener) } }
     fun run(action: suspend () -> Unit) = scope.launch {
         try { action() } catch (e: CancellationException) { throw e }
@@ -181,7 +192,7 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
     fun connectPeer(peer:Map<String,Any?>,code:String="",automatic:Boolean=false)=run{
         val id=peer.text("deviceId")
         if(connectingDevice.isNotEmpty()||ready.any{it.text("deviceId")==id})return@run
-        if(automatic&&isManuallyDisconnected(id))return@run
+        if (automatic && (isManuallyDisconnected(id) || isCheckingConnection(id))) return@run
         require(code.isEmpty()||code.matches(Regex("[0-9]{6}"))){"配对码必须为 6 位数字"}
         connectingDevice=id
         try{
@@ -275,16 +286,19 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
             "connection_created", "peer", "state" -> {
                 if (id.isEmpty()) return
                 // Queued snapshots and callbacks can outlive their native socket.
-                if (event.text("state") != "disconnected" &&
-                    HingeForegroundService.current?.connectionBroker()?.hasLiveConnection(id) != true) return
-                val merged=connections[id].orEmpty()+event
+                val state = HingeForegroundService.current?.connectionBroker()?.connectionState(id)
+                if (state == null && event.text("state") != "disconnected") return
+                val merged = connections[id].orEmpty() + event + ("state" to (state ?: "disconnected"))
                 if(merged.text("state")=="connected"&&expectedPeers[id]?.let{it!=merged.text("deviceId")}==true){run{api.call("nativeDisconnect",mapOf("connectionId" to id,"manual" to true));message="目标设备身份不匹配"};return}
                 connections=connections+(id to merged)
-                if (event.text("state").equals("disconnected", true)) {
+                if (state == null) {
                     connections = connections - id
                     remote?.takeIf { it.peer.text("connectionId")==id }?.connectionLost()
                 }
-                if (event.text("state") == "connected") {
+                if (event.text("state") == "connected" && state == "connected") {
+                    if (foreground && remote?.let { it.isClosed && it.peer.text("connectionId") == id } == true) {
+                        remoteRevision++
+                    }
                     run { connections[id]?.let { saveTrusted(it) }; flushSms();dispatchShares() }
                 }
             }

@@ -15,10 +15,11 @@ public sealed record PhoneDeviceTarget(string DeviceId, string Name, bool IsConn
             .Select(g => g.OrderByDescending(d => d.IsConnected).First())
             .Select(d => d with { Name = string.IsNullOrWhiteSpace(d.Name) ? "Android 手机" : d.Name.Trim() })
             .ToArray();
-        var names = devices.GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return devices.Select(d => names.Contains(d.Name)
-                ? d with { Name = $"{d.Name} · {d.DeviceId[..Math.Min(8, d.DeviceId.Length)]}" } : d)
-            .OrderByDescending(d => d.IsConnected).ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        // Display names are presentation only. Two phones may share the same
+        // model; DeviceId remains the sole internal key. Never put any part
+        // of the network identifier in visible tabs or menus.
+        return devices.OrderByDescending(d => d.IsConnected)
+            .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(d => d.DeviceId, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 }

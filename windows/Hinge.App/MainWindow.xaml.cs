@@ -120,10 +120,13 @@ public sealed partial class MainWindow : Window
     private string _wirelessAdbClipboardStatus = "剪贴板同步已关闭。";
     private int _wirelessAdbClipboardGeneration;
     private int _desktopClipboardChangeGeneration;
-    private int _connectionAttemptGeneration;
+    private readonly DeviceConnectionAttemptTracker _connectionAttempts = new();
+    // Preserve a distinct UI row for each device across asynchronous discovery refreshes.
+    private readonly Dictionary<string, ListViewItem> _nearbyDeviceRows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _nearbyDeviceFingerprints = new(StringComparer.OrdinalIgnoreCase);
+    private int _deviceRefreshQueued;
     private Device? _activeDevice;
     private SessionConnection? _activeConnection;
-    private string? _connectingDeviceId;
     private string _fileCategory = "recent";
     private string _filePath = string.Empty;
     private sealed record PhoneBrowserState(string Category, string Path, int View, int Type, int Document, int Sort);
@@ -922,6 +925,7 @@ public sealed partial class MainWindow : Window
             page.Categories.SelectionChanged += FileCategory_SelectionChanged;
             page.Files.ItemClick += FileListView_ItemClick;
             page.GridFiles.ItemClick += FileListView_ItemClick;
+            ConfigureRemoteFileBackgroundMenu(page);
             page.GridFiles.Loaded += FileGridView_Loaded;
             page.GridFiles.SizeChanged += FileGridView_SizeChanged;
             page.ViewMode.SelectionChanged += FileViewMode_SelectionChanged;
@@ -4521,12 +4525,20 @@ public sealed partial class MainWindow : Window
 
     private void OnDevicesChanged(object? sender, IReadOnlyList<Device> devices)
     {
-        DispatcherQueue.TryEnqueue(() =>
+        // Many discoveries and session transitions can arrive within a few
+        // milliseconds. Never queue an unbounded number of UI tree changes
+        // while WinUI is processing the connect button's pointer event.
+        if (Interlocked.Exchange(ref _deviceRefreshQueued, 1) != 0) return;
+        if (!DispatcherQueue.TryEnqueue(() =>
         {
-            RefreshDeviceList(devices);
+            Interlocked.Exchange(ref _deviceRefreshQueued, 0);
+            // Always obtain the latest state, not an old one-phone snapshot.
+            var current = _registry.GetAllDevices();
+            RefreshDeviceList(current);
             RefreshExplorerSendMenu();
-            _ = TryAutoConnectHistoricalDeviceAsync(devices);
-        });
+            _ = TryAutoConnectHistoricalDeviceAsync(current);
+        }))
+            Interlocked.Exchange(ref _deviceRefreshQueued, 0);
     }
 
     private void OnReverseConnectionRequested(
@@ -4558,7 +4570,7 @@ public sealed partial class MainWindow : Window
             }
 
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
-            while (_connectingDeviceId != null && DateTime.UtcNow < deadline)
+            while (_connectionAttempts.IsConnecting(args.Message.DeviceId) && DateTime.UtcNow < deadline)
             {
                 await Task.Delay(120);
                 if (_sessionManager.ConnectionForDevice(args.Message.DeviceId) != null)
@@ -4566,7 +4578,7 @@ public sealed partial class MainWindow : Window
                     return;
                 }
             }
-            if (_connectingDeviceId != null) return;
+            if (_connectionAttempts.IsConnecting(args.Message.DeviceId)) return;
 
             if (!_registry.TryGetDevice(args.Message.DeviceId, out var device) || device == null)
             {
@@ -4586,40 +4598,35 @@ public sealed partial class MainWindow : Window
 
     private async Task TryAutoConnectHistoricalDeviceAsync(IReadOnlyList<Device> devices)
     {
-        if (_connectingDeviceId != null)
-        {
-            return;
-        }
-
         DateTime now = DateTime.UtcNow;
-        Device? candidate = devices.FirstOrDefault(device =>
+        // A single first-match candidate starved every other trusted phone
+        // until the previous connection completed (or timed out).
+        var candidates = devices.Where(device =>
             device.ConnectionState != ConnectionState.Disconnected &&
             device.NetworkAddresses.Count > 0 &&
             _trustStore.IsTrusted(device.DeviceId) &&
             _sessionManager.ConnectionForDevice(device.DeviceId) == null &&
+            !_connectionAttempts.IsConnecting(device.DeviceId) &&
             !IsHistoricalReconnectSuppressed(device.DeviceId) &&
-            (!_automaticConnectAttempts.TryGetValue(device.DeviceId, out var attempt) || now - attempt >= TimeSpan.FromSeconds(5)));
-        if (candidate == null) return;
-        if (_automaticConnectAttempts.TryGetValue(candidate.DeviceId, out var lastAttempt) &&
-            now - lastAttempt < TimeSpan.FromSeconds(5))
-        {
-            return;
-        }
-        _automaticConnectAttempts[candidate.DeviceId] = now;
+            (!_automaticConnectAttempts.TryGetValue(device.DeviceId, out var lastAttempt) ||
+             now - lastAttempt >= TimeSpan.FromSeconds(5)))
+            .GroupBy(device => device.DeviceId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+        if (candidates.Length == 0) return;
 
-        StatusText.Text = $"正在自动连接历史设备：{candidate.Name}";
-        HeaderStatusText.Text = "自动连接中...";
-        await ConnectDeviceAsync(candidate, automatic: true);
-
-        if (_sessionManager.ConnectionForDevice(candidate.DeviceId) != null)
+        var tasks = candidates.Select(async device =>
         {
-            _automaticConnectAttempts.Remove(candidate.DeviceId);
-            ScheduleHistoricalReconnect();
-        }
-        else
-        {
-            ScheduleHistoricalReconnect(candidate.DeviceId);
-        }
+            _automaticConnectAttempts[device.DeviceId] = now;
+            if (!GetPhoneTargets(connectedOnly: true).Any())
+                HeaderStatusText.Text = "自动连接中...";
+            StatusText.Text = $"正在自动连接历史设备：{device.Name}";
+            await ConnectDeviceAsync(device, automatic: true);
+            if (_sessionManager.ConnectionForDevice(device.DeviceId) != null)
+                _automaticConnectAttempts.Remove(device.DeviceId);
+            ScheduleHistoricalReconnect(device.DeviceId);
+        });
+        await Task.WhenAll(tasks);
     }
 
     private void ScheduleHistoricalReconnect(string? deviceId = null)
@@ -4882,15 +4889,30 @@ public sealed partial class MainWindow : Window
     private void RefreshDeviceList(IReadOnlyList<Device> devices)
     {
         RefreshFilePhoneSources();
-        DeviceCountText.Text = devices.Count == 0 ? "正在搜索附近设备" : $"发现 {devices.Count} 台设备";
-        DiscoveryInfoBar.Title = devices.Count == 0 ? "正在搜索附近设备" : $"已发现 {devices.Count} 台设备";
-        DiscoveryInfoBar.Message = devices.Count == 0
+        var visibleDevices = NearbyDeviceSnapshot.Build(devices,
+            _sessionManager.ActiveConnections
+                .Where(connection => connection.IsSessionReady && connection.PeerInfo != null)
+                .Select(connection => connection.PeerInfo!));
+        var connectedCount = visibleDevices.Count(IsDeviceSessionConnected);
+        // Once two distinct identities have live sessions, the old copied-ID
+        // warning is no longer relevant to the current device list.
+        var identityConflict = connectedCount >= 2 ? null : _registry.IdentityConflictWarning;
+        DeviceCountText.Text = identityConflict != null
+            ? $"发现设备身份冲突 · {connectedCount} 台已连接 · 请更新两台 Android 手机"
+            : visibleDevices.Count == 0 ? "正在搜索附近设备"
+            : $"发现 {visibleDevices.Count} 台设备 · {connectedCount} 台已连接";
+        DiscoveryInfoBar.Title = identityConflict != null ? "两台手机的设备 ID 冲突"
+            : visibleDevices.Count == 0 ? "正在搜索附近设备"
+            : $"已发现 {visibleDevices.Count} 台设备";
+        DiscoveryInfoBar.Message = identityConflict ?? (visibleDevices.Count == 0
             ? "请确认两台设备在同一局域网，并允许 Hinge 通过 Windows 防火墙。"
-            : "选择设备后直接连接；主动建立的局域网会话会自动保存为可信设备。";
-        DeviceListView.Items.Clear();
+            : "每台手机独立连接。点击设备行可选择文件管理目标，不会切断其他手机。");
 
-        if (devices.Count == 0)
+        if (visibleDevices.Count == 0)
         {
+            _nearbyDeviceRows.Clear();
+            _nearbyDeviceFingerprints.Clear();
+            DeviceListView.Items.Clear();
             DeviceListView.Items.Add(new ListViewItem
             {
                 IsHitTestVisible = false,
@@ -4913,11 +4935,66 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        foreach (var device in devices)
+        var visibleIds = visibleDevices.Select(device => device.DeviceId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var oldId in _nearbyDeviceRows.Keys.Where(id => !visibleIds.Contains(id)).ToArray())
+        {
+            DeviceListView.Items.Remove(_nearbyDeviceRows[oldId]);
+            _nearbyDeviceRows.Remove(oldId);
+            _nearbyDeviceFingerprints.Remove(oldId);
+        }
+        // Only clear the initial empty-state placeholder, not the actual phone rows.
+        if (_nearbyDeviceRows.Count == 0 && DeviceListView.Items.Count > 0)
+            DeviceListView.Items.Clear();
+
+        foreach (var device in visibleDevices)
         {
             bool online = device.ConnectionState != ConnectionState.Disconnected;
             bool connected = IsDeviceSessionConnected(device);
             bool suspended = connected && device.ConnectionState == ConnectionState.Suspended;
+            var fingerprint = string.Join("|", device.DeviceId, device.Name, device.Manufacturer,
+                device.Model, device.Platform, device.ConnectionState, connected,
+                string.Join(",", device.NetworkAddresses));
+            if (_nearbyDeviceRows.TryGetValue(device.DeviceId, out var stableRow) &&
+                _nearbyDeviceFingerprints.TryGetValue(device.DeviceId, out var previousFingerprint) &&
+                previousFingerprint == fingerprint)
+                continue;
+
+            // Never replace a live ListViewItem's visual tree while its
+            // connect button is pressed or a network callback arrives. The
+            // previous stableRow.Content = new Grid destroyed a button being
+            // used by WinUI/CoreMessaging and could crash the entire process
+            // when the connection flapped. Update the text and button in place.
+            if (stableRow?.Content is Grid existingRow &&
+                existingRow.Children.OfType<StackPanel>()
+                    .FirstOrDefault(panel => Grid.GetColumn(panel) == 1) is { } existingDetails &&
+                existingDetails.Children.Count >= 2 &&
+                existingDetails.Children[0] is TextBlock existingTitle &&
+                existingDetails.Children[1] is TextBlock existingState &&
+                existingRow.Children.OfType<StackPanel>()
+                    .FirstOrDefault(panel => Grid.GetColumn(panel) == 2) is { } existingActions &&
+                existingActions.Children.OfType<Button>().FirstOrDefault() is { } existingButton)
+            {
+                existingTitle.Text = device.Name;
+                existingState.Text = suspended
+                    ? $"后台休眠 · {string.Join(", ", device.NetworkAddresses)}"
+                    : connected
+                        ? $"已连接 · {string.Join(", ", device.NetworkAddresses)}"
+                        : online
+                            ? $"在线 · {string.Join(", ", device.NetworkAddresses)}"
+                            : "离线";
+                existingState.Foreground = online
+                    ? ThemeBrushes.AccentText(PageRoot)
+                    : ThemeBrushes.Secondary(PageRoot);
+                existingButton.Content = connected ? "断开连接" : online ? "连接" : "重试";
+                existingButton.IsEnabled = connected || online;
+                existingButton.Tag = device;
+                AutomationProperties.SetName(existingButton, $"{existingButton.Content}：{device.Name}");
+                stableRow.Tag = device;
+                _nearbyDeviceFingerprints[device.DeviceId] = fingerprint;
+                continue;
+            }
+
             var row = new Grid
             {
                 MinHeight = 72,
@@ -5007,15 +5084,28 @@ public sealed partial class MainWindow : Window
                 IsHitTestVisible = false
             });
 
-            DeviceListView.Items.Add(new ListViewItem
+            if (_nearbyDeviceRows.TryGetValue(device.DeviceId, out stableRow))
             {
-                Content = row,
-                Tag = device,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Padding = new Thickness(0),
-                Margin = new Thickness(0)
-            });
+                // Update only this phone's content. Other items, scroll position
+                // and actions stay mounted while their connection states change.
+                stableRow.Content = row;
+                stableRow.Tag = device;
+            }
+            else
+            {
+                stableRow = new ListViewItem
+                {
+                    Content = row,
+                    Tag = device,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Padding = new Thickness(0),
+                    Margin = new Thickness(0)
+                };
+                _nearbyDeviceRows.Add(device.DeviceId, stableRow);
+                DeviceListView.Items.Add(stableRow);
+            }
+            _nearbyDeviceFingerprints[device.DeviceId] = fingerprint;
         }
     }
 
@@ -5040,16 +5130,22 @@ public sealed partial class MainWindow : Window
 
     private async void DeviceConnect_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: Device device })
+        if (sender is not Button { Tag: Device device }) return;
+        try
         {
+            App.LogLifecycle($"device-action-click connected={IsDeviceSessionConnected(device)}");
             if (IsDeviceSessionConnected(device))
-            {
                 DisconnectDevice(device);
-            }
             else
-            {
                 await ConnectDeviceAsync(device, automatic: false);
-            }
+        }
+        catch (Exception exception)
+        {
+            // An async void event handler must never leak a managed exception
+            // to the WinUI dispatcher, which otherwise terminates Hinge.exe.
+            App.LogLifecycle($"device-action-error type={exception.GetType().Name} message={exception.Message}");
+            try { await ShowStatusAsync("连接操作失败", exception.Message); }
+            catch { /* The window may already be closing. */ }
         }
     }
 
@@ -5065,8 +5161,8 @@ public sealed partial class MainWindow : Window
             bleRecovery.Cancellation.Cancel();
         }
         _automaticConnectAttempts.Remove(device.DeviceId);
-        _connectionAttemptGeneration++;
-        CancelHistoricalReconnect();
+        _connectionAttempts.Cancel(device.DeviceId);
+        // Do not cancel the shared reconnect timer: other phones are independent.
 
         var connections = _sessionManager.ActiveConnections
             .Where(connection => string.Equals(
@@ -5135,35 +5231,50 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        if (_connectingDeviceId != null)
+        // The phone may have connected *to* Windows just before the user
+        // clicked. The former silent return left its row stuck at "在线".
+        // Attach its already-established session and refresh the controls.
+        if (_sessionManager.ConnectionForDevice(device.DeviceId) is { } liveSession)
         {
-            if (!automatic) await ShowStatusAsync("正在连接", "正在尝试连接另一台设备，请稍候。");
+            AttachConnection(liveSession);
+            RefreshDeviceList(_registry.GetAllDevices());
+            StatusText.Text = $"已连接到 {device.Name}";
             return;
         }
-
-        _connectingDeviceId = device.DeviceId;
-        var attemptGeneration = ++_connectionAttemptGeneration;
+        if (!_connectionAttempts.TryBegin(device.DeviceId, out var attemptGeneration))
+        {
+            if (!automatic) await ShowStatusAsync("正在连接", "这台设备已经在连接中，请稍候。");
+            return;
+        }
         SessionConnection? connection = null;
         var cts = new CancellationTokenSource();
         Task reverseConnectionWatcher = Task.CompletedTask;
+        Task reverseConnectionRequest = Task.CompletedTask;
         Task directConnectionAttempt = Task.CompletedTask;
         try
         {
             StatusText.Text = automatic
                 ? $"正在自动连接：{device.Name}"
                 : $"正在连接：{device.Name}";
-            HeaderStatusText.Text = automatic ? "自动连接中..." : "连接中...";
+            // Keep showing connected phones while another phone is connecting.
+            if (!GetPhoneTargets(connectedOnly: true).Any())
+                HeaderStatusText.Text = automatic ? "自动连接中..." : "连接中...";
             Exception? lastError = null;
             var addresses = OrderAddresses(device.NetworkAddresses).ToArray();
 
-            // Request the reverse path immediately in the background with multi-burst
-            // instead of waiting for a blocked inbound TCP attempt to time out.
+            // Ask Android to connect back, but STOP asking as soon as a live
+            // session is observed. The former fire-and-forget loop continued
+            // sending requests to all historical IPs even after success,
+            // producing dozens of redundant sockets/WinUI state transitions.
             if (!device.PairingRequired)
             {
-                _ = Task.Run(async () =>
+                reverseConnectionRequest = Task.Run(async () =>
                 {
                     foreach (var address in addresses)
                     {
+                        if (cts.IsCancellationRequested ||
+                            _sessionManager.ConnectionForDevice(device.DeviceId) != null)
+                            break;
                         try
                         {
                             await _discoveryService.RequestReverseConnectionAsync(
@@ -5173,6 +5284,8 @@ public sealed partial class MainWindow : Window
                                 targetDeviceId: device.DeviceId);
                         }
                         catch { }
+                        try { await Task.Delay(350, cts.Token); }
+                        catch (OperationCanceledException) { break; }
                     }
                 });
             }
@@ -5271,7 +5384,8 @@ public sealed partial class MainWindow : Window
                 throw lastError ?? new SocketException((int)SocketError.HostUnreachable);
             }
 
-            HeaderStatusText.Text = "正在确认设备身份";
+            if (!GetPhoneTargets(connectedOnly: true).Any())
+                HeaderStatusText.Text = "正在确认设备身份";
             SessionPeerInfo peer = await WaitForPeerInfoAsync(connection);
             if (!string.Equals(peer.DeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase))
             {
@@ -5281,7 +5395,7 @@ public sealed partial class MainWindow : Window
             await Task.Delay(20);
             connection = _sessionManager.ConnectionForDevice(device.DeviceId) ?? connection;
 
-            if (attemptGeneration != _connectionAttemptGeneration ||
+            if (!_connectionAttempts.IsCurrent(device.DeviceId, attemptGeneration) ||
                 (automatic && IsHistoricalReconnectSuppressed(device.DeviceId)))
             {
                 connection.Dispose();
@@ -5306,7 +5420,13 @@ public sealed partial class MainWindow : Window
             {
                 _remotePairingCodes.Remove(device.DeviceId);
             }
-            HeaderStatusText.Text = "局域网就绪";
+            var connectedPhones = GetPhoneTargets(connectedOnly: true);
+            HeaderStatusText.Text = connectedPhones.Count switch
+            {
+                > 1 => $"已连接 {connectedPhones.Count} 台手机",
+                1 => $"已连接 {connectedPhones[0].Name}",
+                _ => "局域网就绪"
+            };
             if (automatic)
             {
                 StatusText.Text = $"历史设备自动连接失败：{device.Name}";
@@ -5327,7 +5447,7 @@ public sealed partial class MainWindow : Window
             cts.Cancel();
             try
             {
-                await Task.WhenAll(reverseConnectionWatcher, directConnectionAttempt);
+                await Task.WhenAll(reverseConnectionRequest, reverseConnectionWatcher, directConnectionAttempt);
             }
             catch (OperationCanceledException)
             {
@@ -5342,10 +5462,7 @@ public sealed partial class MainWindow : Window
 
             cts.Dispose();
 
-            if (string.Equals(_connectingDeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase))
-            {
-                _connectingDeviceId = null;
-            }
+            _connectionAttempts.End(device.DeviceId, attemptGeneration);
         }
     }
 
@@ -5893,8 +6010,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // An unauthenticated/anonymous socket must never be attributed to the
+        // currently selected phone; it may belong to another handset.
         var disconnectedDeviceId =
-            connection.RemoteDeviceId ?? _activeDevice?.DeviceId ?? string.Empty;
+            connection.RemoteDeviceId ?? connection.EstablishedPeer?.DeviceId ?? string.Empty;
         var replacement = string.IsNullOrWhiteSpace(disconnectedDeviceId)
             ? null
             : _sessionManager.ConnectionForDevice(disconnectedDeviceId);
@@ -5928,6 +6047,19 @@ public sealed partial class MainWindow : Window
                 _activeDevice?.DeviceId,
                 disconnectedDeviceId,
                 StringComparison.OrdinalIgnoreCase);
+        if (!wasActiveConnection)
+        {
+            // Disconnecting phone B must update the count without changing
+            // the selected phone A or its file/notification workspace.
+            var remainingPhones = GetPhoneTargets(connectedOnly: true);
+            HeaderStatusText.Text = remainingPhones.Count switch
+            {
+                > 1 => $"已连接 {remainingPhones.Count} 台手机",
+                1 => $"已连接 {remainingPhones[0].Name}",
+                _ => "局域网就绪"
+            };
+            RefreshFilePhoneSources();
+        }
         if (wasActiveConnection)
         {
             DispatcherQueue.TryEnqueue(() =>
@@ -6667,6 +6799,7 @@ public sealed partial class MainWindow : Window
     private void ConfigureRemoteFileItem(FrameworkElement item, RemoteFileEntry entry)
     {
         item.DoubleTapped += RemoteFileItem_DoubleTapped;
+        item.ContextFlyout = BuildRemoteFileContextMenu(entry);
         if (entry.IsDirectory && _fileCategory == "storage")
         {
             _filePage?.ConfigureFolderDrop(item, entry);
@@ -7664,7 +7797,7 @@ public sealed partial class MainWindow : Window
     private void ApplyLocalPairingCode(string code, bool changed)
     {
         if (!changed) return;
-        _connectionAttemptGeneration++;
+        _connectionAttempts.CancelAll();
         CancelHistoricalReconnect();
         _sessionManager.LocalPairingCode = code;
         _desktopMediaServer?.DisconnectViewer();

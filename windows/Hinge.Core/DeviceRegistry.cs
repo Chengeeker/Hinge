@@ -18,6 +18,21 @@ public class DeviceRegistry
 {
     private readonly ConcurrentDictionary<string, DeviceRecord> _devices = new();
     private readonly object _sync = new();
+    private string? _identityConflictWarning;
+    private DateTime _identityConflictAt;
+
+    /// <summary>Warn when two different Android models announce the same
+    /// restored/cloned DeviceId. They cannot be connected independently until
+    /// the Android installs adopt their own hardware-bound network IDs.</summary>
+    public string? IdentityConflictWarning
+    {
+        get
+        {
+            lock (_sync)
+                return DateTime.UtcNow - _identityConflictAt < TimeSpan.FromMinutes(10)
+                    ? _identityConflictWarning : null;
+        }
+    }
 
     public event EventHandler<IReadOnlyList<Device>>? DevicesChanged;
 
@@ -92,6 +107,20 @@ public class DeviceRegistry
                 {
                     existing.LastSeen = now;
                     var dev = existing.Device;
+                    // A restored identity.json can give two *different*
+                    // physical phones the same DeviceId. Do not silently
+                    // overwrite that evidence: the TCP deduplicator must use
+                    // an actual unique device identity, not the phone name/IP.
+                    if ((BothPresentAndDifferent(dev.Manufacturer, message.Manufacturer) ||
+                         BothPresentAndDifferent(dev.Model, message.Model)) &&
+                        dev.Platform == DevicePlatform.Android &&
+                        string.Equals(message.Platform, "android", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _identityConflictWarning =
+                            $"设备身份冲突：{dev.Name} 与 {DisplayName(message.Name, message.Manufacturer, message.Model)} 共用同一设备 ID，请在两台手机上安装 Android 210 或更新版本。";
+                        _identityConflictAt = now;
+                        isNewOrChanged = true;
+                    }
                     int addressIndex = dev.NetworkAddresses.FindIndex(address =>
                         string.Equals(address, remoteAddress, StringComparison.OrdinalIgnoreCase));
                     if (addressIndex < 0 && !string.IsNullOrWhiteSpace(remoteAddress))
@@ -245,6 +274,10 @@ public class DeviceRegistry
     {
         DevicesChanged?.Invoke(this, GetAllDevices());
     }
+
+    private static bool BothPresentAndDifferent(string? a, string? b) =>
+        !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b) &&
+        !string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static bool IsLiveSession(ConnectionState state) =>
         state is ConnectionState.Connected or ConnectionState.Suspended;

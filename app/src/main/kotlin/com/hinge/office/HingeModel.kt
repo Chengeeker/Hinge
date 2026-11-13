@@ -131,11 +131,9 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
             }
             val hardware=api.call("deviceInfo").asMap()
             identity = withContext(storage) {
-                val file = File(activity.filesDir, "identity.json")
-                val legacy=System.getenv("HOME")?.takeIf{it.isNotBlank()}?.let{File(it,".hinge/identity.json")}
-                val old=listOfNotNull(file,legacy).firstNotNullOfOrNull{candidate->runCatching{JSONObject(atomicRead(candidate)).toMap().takeIf{it.text("deviceId").isNotBlank()}}.getOrNull()}
-                val value=(old?:mapOf("deviceId" to UUID.randomUUID().toString(),"publicKey" to ByteArray(32).also{SecureRandom().nextBytes(it)}.joinToString(""){"%02x".format(it)}))+mapOf("name" to hardware.text("name",old?.text("name",Build.MODEL)?:Build.MODEL),"manufacturer" to hardware.text("manufacturer",Build.MANUFACTURER),"model" to hardware.text("model",Build.MODEL))
-                atomicWrite(file,JSONObject(value).toString());value
+                // A copied/restored identity.json must never make two physical
+                // phones announce the same DeviceId or evict one another.
+                HingeDeviceIdentity.loadOrCreate(activity, hardware)
             }
             try {
                 val saved = withContext(storage) { loadTransferHistory(File(activity.filesDir, "transfer_history.json")) }
@@ -191,7 +189,7 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
     }
     fun connectPeer(peer:Map<String,Any?>,code:String="",automatic:Boolean=false)=run{
         val id=peer.text("deviceId")
-        if(connectingDevice.isNotEmpty()||ready.any{it.text("deviceId")==id})return@run
+        if(connectingDevice.isNotEmpty()||ready.any{sameDeviceId(it.text("deviceId"), id)})return@run
         if (automatic && (isManuallyDisconnected(id) || isCheckingConnection(id))) return@run
         require(code.isEmpty()||code.matches(Regex("[0-9]{6}"))){"配对码必须为 6 位数字"}
         connectingDevice=id
@@ -199,16 +197,16 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
             val addresses=(listOf(peer.text("address"))+(peer["networkAddresses"] as? List<*>).orEmpty().filterIsInstance<String>()).filter{it.isNotBlank()&&it.length<=256}.distinct().take(4)
             if(peer["pairingRequired"]!=true)for(address in addresses){val target=withContext(Dispatchers.IO){InetAddress.getByName(address)};probePeer(target,peer.number("discoveryPort",52830).toInt().takeIf{it in 1..65535}?:52830,reverse=true,automatic=automatic,targetDeviceId=id)}
             outer@for(address in addresses)for(port in listOf(peer.number("port",52831).toInt(),52831).distinct()){
-                if(ready.any{it.text("deviceId")==id}||(automatic&&isManuallyDisconnected(id)))break@outer
+                if(ready.any{sameDeviceId(it.text("deviceId"), id)}||(automatic&&isManuallyDisconnected(id)))break@outer
                 if(port !in 1..65535)continue
                 val connection=UUID.randomUUID().toString();expectedPeers[connection]=id
                 try{
                     api.call("nativeConnect",mapOf("connectionId" to connection,"address" to address,"port" to port,"remotePairingCode" to code,"manualConnect" to !automatic,"expectedDeviceId" to id))
-                    withTimeoutOrNull(2500){while(ready.none{it.text("deviceId")==id}&&(!automatic||!isManuallyDisconnected(id)))delay(50)}
-                    if(ready.none{it.text("deviceId")==id})api.call("nativeDisconnect",mapOf("connectionId" to connection,"manual" to false))
+                    withTimeoutOrNull(2500){while(ready.none{sameDeviceId(it.text("deviceId"), id)}&&(!automatic||!isManuallyDisconnected(id)))delay(50)}
+                    if(ready.none{sameDeviceId(it.text("deviceId"), id)})api.call("nativeDisconnect",mapOf("connectionId" to connection,"manual" to false))
                 }finally{expectedPeers.remove(connection)}
             }
-            if(!automatic&&ready.none{it.text("deviceId")==id})message="无法连接 ${peer.text("name")}，请检查网络和配对码"
+            if(!automatic&&ready.none{sameDeviceId(it.text("deviceId"), id)})message="无法连接 ${peer.text("name")}，请检查网络和配对码"
         }finally{connectingDevice=""}
     }
     fun probeManualIp(host:String)=run{
@@ -240,8 +238,8 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
     }
     suspend fun sendJson(connection: String, type: Int, data: Map<String, Any?>) = sendFrame(connection, type, JSONObject(data).toString().toByteArray())
     suspend fun sendFile(file: Map<String, Any?>, deviceId: String) {
-        if (ready.none { it.text("deviceId") == deviceId } && settings["cloudRelay"].asMap()["enabled"] == true && deviceId.isNotEmpty()) {
-            val trusted = withContext(storage) { readList("trust_store.json").any { it.text("deviceId") == deviceId && it.text("trustState") == "trusted" } }
+        if (ready.none { sameDeviceId(it.text("deviceId"), deviceId) } && settings["cloudRelay"].asMap()["enabled"] == true && deviceId.isNotEmpty()) {
+            val trusted = withContext(storage) { readList("trust_store.json").any { sameDeviceId(it.text("deviceId"), deviceId) && it.text("trustState") == "trusted" } }
             if (trusted) {
                 val source = File(file.text("path"))
                 val id = Relay(settings["cloudRelay"].asMap(), identity).send(source, file.text("name"), file.text("mimeType"), deviceId) { id, bytes, total, stage ->
@@ -289,7 +287,7 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                 val state = HingeForegroundService.current?.connectionBroker()?.connectionState(id)
                 if (state == null && event.text("state") != "disconnected") return
                 val merged = connections[id].orEmpty() + event + ("state" to (state ?: "disconnected"))
-                if(merged.text("state")=="connected"&&expectedPeers[id]?.let{it!=merged.text("deviceId")}==true){run{api.call("nativeDisconnect",mapOf("connectionId" to id,"manual" to true));message="目标设备身份不匹配"};return}
+                if(merged.text("state")=="connected"&&expectedPeers[id]?.let{!sameDeviceId(it, merged.text("deviceId"))}==true){run{api.call("nativeDisconnect",mapOf("connectionId" to id,"manual" to true));message="目标设备身份不匹配"};return}
                 connections=connections+(id to merged)
                 if (state == null) {
                     connections = connections - id
@@ -434,6 +432,12 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                     mapOf("started" to true, "fileName" to data.text("fileName"))
                 }
                 "deleteFiles" -> mapOf("deleted" to api.call(name, data))
+                "copyFile" -> {
+                    require(data.text("uri").isNotBlank() && data.text("fileName").isNotBlank()) {
+                        "请选择要复制的手机文件"
+                    }
+                    api.call("copyPhoneFile", data)
+                }
                 "notificationHistoryAction" -> when (data.text("action", "open")) {
                     "delete" -> mapOf("deleted" to api.call("deleteNotificationHistoryItem", data))
                     "clear" -> mapOf("cleared" to true, "deletedCount" to api.call("clearNotificationHistory"))
@@ -492,9 +496,9 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                     try {
                         val packet = DatagramPacket(buffer, buffer.size); socket.receive(packet)
                         val peer = JSONObject(String(packet.data, 0, packet.length, Charsets.UTF_8)).toMap()
-                        if (peer.text("targetDeviceId").isNotEmpty() && peer.text("targetDeviceId") != identity.text("deviceId")) continue
+                        if (peer.text("targetDeviceId").isNotEmpty() && !sameDeviceId(peer.text("targetDeviceId"), identity.text("deviceId"))) continue
                         val id = peer.text("deviceId")
-                        if (id.isBlank() || id.length > 256 || id == identity.text("deviceId") || peer.text("name").length>256) continue
+                        if (id.isBlank() || id.length > 256 || sameDeviceId(id, identity.text("deviceId")) || peer.text("name").length>256) continue
                         withContext(Dispatchers.Main) {
                             val now=System.currentTimeMillis()
                             seen.filterValues{now-it>=180000}.keys.toList().forEach{known.remove(it);seen.remove(it);replies.remove(it);requests.remove(it)}
@@ -503,7 +507,7 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                             seen[id] = now
 
                             devices = known.values.filter { System.currentTimeMillis() - (seen[it.text("deviceId")] ?: 0) < 180000 }
-                            if(peer["connectionRequested"]==true&&now-(requests[id]?:0)>2000&&ready.none{it.text("deviceId")==id}){
+                            if(peer["connectionRequested"]==true&&now-(requests[id]?:0)>2000&&ready.none{sameDeviceId(it.text("deviceId"), id)}){
                                 requests[id] = now
 
                                 if(peer["automaticReconnect"]!=true||!isManuallyDisconnected(id)){
@@ -511,7 +515,7 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                                     else if(pairingRequest==null)pairingRequest=known[id]
                                 }
                             }
-                            if(foreground&&ready.isEmpty()&&connectingDevice.isEmpty()&&!isManuallyDisconnected(id)&&peer["pairingRequired"]!=true&&recentDevices.any{it.text("deviceId")==id}&&now-(automaticAttempts[id]?:0)>=5000){automaticAttempts[id]=now;connectPeer(known[id].orEmpty(),automatic=true)}
+                            if(foreground&&ready.isEmpty()&&connectingDevice.isEmpty()&&!isManuallyDisconnected(id)&&peer["pairingRequired"]!=true&&recentDevices.any{sameDeviceId(it.text("deviceId"), id)}&&now-(automaticAttempts[id]?:0)>=5000){automaticAttempts[id]=now;connectPeer(known[id].orEmpty(),automatic=true)}
                             if(now-(replies[id]?:0)>5000){replies[id]=now;probePeer(packet.address,peer.number("discoveryPort",52830).toInt().takeIf{it in 1..65535}?:52830)}
                         }
                     } catch (_: java.net.SocketTimeoutException) { }

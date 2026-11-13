@@ -87,7 +87,8 @@ public class MultiPhoneTests
         });
         Assert.Equal(3, targets.Count);
         Assert.Equal(2, targets.Count(d => d.IsConnected));
-        Assert.Equal(2, targets.Where(d => d.IsConnected).Select(d => d.DisplayName).Distinct().Count());
+        Assert.Single(targets.Where(d => d.IsConnected).Select(d => d.DisplayName).Distinct());
+        Assert.Equal(2, targets.Where(d => d.IsConnected).Select(d => d.DeviceId).Distinct().Count());
         Assert.Contains("离线", targets.Single(d => d.DeviceId == "phone-c").DisplayName);
         Assert.DoesNotContain(targets, d => d.Name == "旧名称");
     }

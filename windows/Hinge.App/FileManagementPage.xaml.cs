@@ -74,7 +74,7 @@ public sealed partial class FileManagementPage : Page
                 }
             }
             _rebuildingTabs = true;
-            var tabs = _phones.Select(phone => CreateSourceTab("phone:" + phone.DeviceId, phone.DisplayName, showPhoneLogo: true)).ToList();
+            var tabs = _phones.Select(phone => CreateSourceTab("phone:" + phone.DeviceId, phone.DisplayName)).ToList();
             if (tabs.Count == 0) tabs.Add(CreateSourceTab("phone", "手机（未连接）"));
             tabs.AddRange(state.Profiles.Select(profile => CreateSourceTab(profile.Id, profile.DisplayName)));
             tabs = tabs.OrderBy(tab =>
@@ -92,7 +92,7 @@ public sealed partial class FileManagementPage : Page
         catch (Exception exception) { _rebuildingTabs = false; StatusText.Text = "WebDAV 配置读取失败：" + exception.Message; }
     }
 
-    private TabViewItem CreateSourceTab(string id, string title, bool showPhoneLogo = false)
+    private TabViewItem CreateSourceTab(string id, string title)
     {
         var label = new TextBlock
         {
@@ -111,8 +111,7 @@ public sealed partial class FileManagementPage : Page
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
-        if (showPhoneLogo)
-            row.Children.Add(MainWindow.BuildOfficialBrandLogo(string.Empty, title, 34, 24));
+        // A plain text source tab leaves room for several connected phones.
         row.Children.Add(label);
 
         var indicator = (Border)((DataTemplate)Resources["SourceTabIndicatorTemplate"]).LoadContent();

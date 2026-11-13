@@ -682,6 +682,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "storageDirectory" -> readStorageDirectory(call, result)
             "storageDirectoryPage" -> readStorageDirectoryPage(call, result)
             "deleteFiles" -> deleteFiles(call, result)
+            "copyPhoneFile" -> copyRemoteFile(call, result)
             "loadNotes" -> result.success(readWorkspaceList("notes"))
             "saveNote" -> saveWorkspaceItem("notes", call.arguments, result)
             "deleteNote" -> deleteWorkspaceItem("notes", call.arguments, result)
@@ -836,6 +837,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "notificationPermission" to hasNotificationPermission(),
             "persistentNotification" to persistentNotificationEnabled(),
             "batteryOptimizationIgnored" to batteryOptimizationIgnored,
+            "overlayPermission" to Settings.canDrawOverlays(this),
+            "overlayKeepAliveEnabled" to getSharedPreferences("app_settings", MODE_PRIVATE)
+                .getBoolean("overlay_keep_alive_enabled", false),
             "manufacturer" to Build.MANUFACTURER,
             "model" to Build.MODEL,
             "apiLevel" to Build.VERSION.SDK_INT,
@@ -1631,6 +1635,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "floatingCapsuleNavigation" to preferences.getBoolean("floating_capsule_navigation", false),
             "useLiquidGlass" to preferences.getBoolean("use_liquid_glass", false),
             "translucentNavigationGlass" to preferences.getBoolean("translucent_navigation_glass", false),
+            "overlayKeepAliveEnabled" to preferences.getBoolean("overlay_keep_alive_enabled", false),
             "phoneRemoteControlEnabled" to preferences.getBoolean("phone_remote_control_enabled", false),
             "clipboardSyncEnabled" to ClipboardSyncSettings.enabled(this),
             "imageStoragePath" to preferences.getString("image_storage_path", "").orEmpty(),
@@ -1666,6 +1671,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             .putBoolean("floating_capsule_navigation", values["floatingCapsuleNavigation"] as? Boolean ?: false)
             .putBoolean("use_liquid_glass", values["useLiquidGlass"] as? Boolean ?: false)
             .putBoolean("translucent_navigation_glass", values["translucentNavigationGlass"] as? Boolean ?: false)
+            .putBoolean("overlay_keep_alive_enabled", values["overlayKeepAliveEnabled"] as? Boolean ?: false)
             .putBoolean("phone_remote_control_enabled", values["phoneRemoteControlEnabled"] as? Boolean ?: false)
             .putBoolean(ClipboardSyncSettings.KEY, values["clipboardSyncEnabled"] as? Boolean ?: ClipboardSyncSettings.enabled(this))
             .putString("image_storage_path", values["imageStoragePath"]?.toString() ?: "")
@@ -1680,6 +1686,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 .putString("cloud_relay_encryption_key", cloudRelay["relayEncryptionKey"]?.toString() ?: "")
         }
         editor.apply()
+        HingeForegroundService.current?.refreshOverlayPresence()
         result.success(true)
     }
 
@@ -3836,6 +3843,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         id = id.toString(),
                         name = name,
                         relativePath = relativePath,
+                        absolutePath = sourcePath.takeIf { it.startsWith("/storage/") }.orEmpty(),
                         mimeType = mimeType,
                         sizeBytes = sizeBytes,
                         modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
@@ -4017,6 +4025,24 @@ class MainActivity : androidx.activity.ComponentActivity() {
             "total" to entries.size,
             "scannedCount" to (end - safeOffset),
         )
+    }
+
+    private fun copyRemoteFile(call: NativeCall, result: NativeResult) {
+        val uri = call.argument<String>("uri").orEmpty()
+        val destination = call.argument<String>("destinationPath").orEmpty()
+        val name = call.argument<String>("fileName").orEmpty()
+        contentExecutor.execute {
+            try {
+                val copied = copyPhoneFile(this, uri, destination, name)
+                storageDirectoryCache.clear()
+                mediaTotalCache.clear()
+                runOnUiThread { result.success(copied) }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    result.error("copy_failed", "复制文件失败：${error.message}", null)
+                }
+            }
+        }
     }
 
     private fun deleteFiles(call: NativeCall, result: NativeResult) {
@@ -4240,6 +4266,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         id = id.toString(),
                         name = name,
                         relativePath = relativePath,
+                        absolutePath = sourcePath.takeIf { it.startsWith("/storage/") }.orEmpty(),
                         mimeType = mimeType,
                         sizeBytes = sizeBytes,
                         modifiedAt = if (dateIndex >= 0 && !it.isNull(dateIndex)) {
@@ -4421,11 +4448,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         uri: String,
         isDirectory: Boolean,
         category: String,
+        absolutePath: String = "",
     ): Map<String, Any?> {
         return mapOf(
             "id" to id,
             "name" to name,
             "relativePath" to relativePath,
+            "absolutePath" to absolutePath,
             "mimeType" to mimeType,
             "sizeBytes" to sizeBytes,
             "modifiedAt" to modifiedAt,

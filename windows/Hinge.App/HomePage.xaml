@@ -57,7 +57,7 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel Spacing="2">
                         <TextBlock Text="附近设备" Style="{StaticResource HingeSectionTitleStyle}" />
-                            <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" Style="{StaticResource HingeCaptionStyle}" />
+                            <TextBlock x:Name="DeviceCountText" Text="正在搜索附近设备" TextWrapping="Wrap" Style="{StaticResource HingeCaptionStyle}" />
                         </StackPanel>
                         <local:HandCursorButton
                             x:Name="RefreshButton" AutomationProperties.AutomationId="HomePage.RefreshButton"

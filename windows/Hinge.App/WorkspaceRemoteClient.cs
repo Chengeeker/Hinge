@@ -18,6 +18,11 @@ public sealed class RemoteFileEntry
     [JsonPropertyName("relativePath")]
     public string RelativePath { get; set; } = string.Empty;
 
+    // Authoritative filesystem path when Android MediaStore provides DATA.
+    // This field is absent on Android builds/providers without DATA access.
+    [JsonPropertyName("absolutePath")]
+    public string AbsolutePath { get; set; } = string.Empty;
+
     [JsonPropertyName("mimeType")]
     public string MimeType { get; set; } = "application/octet-stream";
 
@@ -708,6 +713,27 @@ public sealed class WorkspaceRemoteClient
                 ["fileName"] = fileName,
                 ["mimeType"] = mimeType,
             });
+    }
+
+    public async Task<string> CopyPhoneFileAsync(
+        SessionConnection connection,
+        string uri,
+        string fileName,
+        string destinationPath)
+    {
+        var raw = await InvokeAsync(connection, "copyFile",
+            new Dictionary<string, object?>
+            {
+                ["uri"] = uri,
+                ["fileName"] = fileName,
+                ["destinationPath"] = destinationPath
+            });
+        if (raw.ValueKind != JsonValueKind.Object ||
+            !raw.TryGetProperty("copied", out var copied) ||
+            copied.ValueKind != JsonValueKind.True)
+            throw new IOException("手机没有确认复制成功");
+        return raw.TryGetProperty("relativePath", out var relative)
+            ? relative.GetString() ?? string.Empty : string.Empty;
     }
 
     public async Task<int> DeleteFilesAsync(

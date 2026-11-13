@@ -14,6 +14,7 @@ import androidx.core.content.edit
 /** Owns the durable association address and system presence observation. */
 object HingeCompanionManager {
     internal const val BLE_WAKE_REASON = "ble_appeared"
+    internal const val BT_WAKE_REASON = "bt_connected"
     private const val PREFERENCES = "hinge_companion"
     private const val ADDRESS_KEY = "windows_ble_address"
     private const val PAYLOAD_KEY = "windows_ble_payload"
@@ -188,16 +189,32 @@ object HingeCompanionManager {
             ?.takeIf(HingeWakeProtocol::isWakePayload)
     }
 
-    internal fun requestBleWake(context: Context, address: String) {
+    internal fun requestBleWakeForAddress(
+        context: Context,
+        address: String,
+        reason: String = BLE_WAKE_REASON,
+    ) {
         if (address.equals(associationAddress(context), ignoreCase = true)) {
-            requestBleWake(context)
+            requestBleWake(context, reason)
         }
     }
 
-    internal fun requestBleWake(context: Context) {
+    @androidx.annotation.RequiresApi(33)
+    internal fun requestBleWakeForAssociation(context: Context, associationId: Int, reason: String) {
+        if (associationId != selectedAssociationId(context)) {
+            HingeDiagnostics.from(context).log(
+                "companion_presence_ignored",
+                mapOf("reason" to "association_mismatch", "event" to reason),
+            )
+            return
+        }
+        requestBleWake(context, reason)
+    }
+
+    internal fun requestBleWake(context: Context, reason: String = BLE_WAKE_REASON) {
         val now = SystemClock.elapsedRealtime()
         if (lastBleWakeAt?.let { now - it < 8_000L } == true) return
-        if (requestWake(context, BLE_WAKE_REASON)) lastBleWakeAt = now
+        if (requestWake(context, reason)) lastBleWakeAt = now
     }
 
     /** Starts the existing native service; it will immediately retry saved LAN peers. */

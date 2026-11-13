@@ -244,6 +244,8 @@ class HingeNativeConnectionBroker(
     private val bridgeWriteExecutor = Executors.newSingleThreadExecutor()
     private val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(2)
     private val listenerLock = Any()
+    // Serializes duplicate-session elections across TCP listener and connector threads.
+    private val duplicateSessionLock = Any()
     private val started = AtomicBoolean(false)
     private val connections = ConcurrentHashMap<String, NativeConnection>()
     private val peerConfigs = ConcurrentHashMap<String, NativePeerConfig>()
@@ -274,8 +276,7 @@ class HingeNativeConnectionBroker(
     private var physicalNetworkStateKnown = false
     @Volatile
     private var physicalNetworkAvailable = true
-    @Volatile
-    private var lowPowerStandby = false
+    @Volatile private var lowPowerStandby = false
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -352,11 +353,9 @@ class HingeNativeConnectionBroker(
 
     fun hasActiveWork(): Boolean = activeTasks.isNotEmpty() ||
         incomingTransfers.values.any { connections[it.connectionId]?.isReady == true } ||
-        connections.values.any {
-            !it.isClosed && (it.state == "authenticating" || (it.isReady && it.state == "connected"))
-        }
+        connections.values.any { !it.isClosed && it.state == "authenticating" }
 
-    /** Only idle/offline sessions may pause; responsive sessions keep their heartbeats. */
+    /** Idle background sessions keep their socket opportunistically, without heartbeats or power locks. */
     fun enterLowPowerStandby(reason: String = "idle_background") {
         if (lowPowerStandby) return
         lowPowerStandby = true
@@ -925,6 +924,12 @@ class HingeNativeConnectionBroker(
         if (!started.get() || manuallySuppressed || connection.reconnectSuppressed) {
             return
         }
+        // The closed socket may only be the loser in a duplicate handshake.
+        // Do not schedule a new reconnect while another ready session to the
+        // same Windows device is healthy: that creates an endless socket storm.
+        if (deviceId.isNotBlank() && connections.values.any {
+            it.isReady && sameDeviceId(it.peer?.deviceId, deviceId)
+        }) return
         val config = peerConfigs[deviceId] ?: pendingConfig
         // A fresh UI request can probe several historical addresses. Do not
         // turn a failed anonymous probe into its own endless reconnect loop;
@@ -940,16 +945,35 @@ class HingeNativeConnectionBroker(
         remoteDeviceId: String,
     ) {
         if (!identified.isReady) return
-        val duplicates = connections.values.filter {
-            it !== identified && it.isReady && it.peer?.deviceId == remoteDeviceId
+        val losers = synchronized(duplicateSessionLock) {
+            val ready = connections.values.filter {
+                it.isReady && sameDeviceId(it.peer?.deviceId, remoteDeviceId)
+            }
+            if (ready.size <= 1) return@synchronized emptyList<NativeConnection>()
+            val local = identity?.deviceId.orEmpty()
+            val preferOutbound = local.compareTo(remoteDeviceId) < 0
+            // Every racing callback must choose the SAME winner. Previously
+            // each used "identified" as first/fallback and could close the
+            // other's session, leaving no connection at all.
+            val canonical = ready.filter { it.isOutbound == preferOutbound }
+            // Keep an established preferred-direction session; when every
+            // available socket is in the fallback direction, choose the
+            // newest one so a fresh retry can replace a half-dead old TCP
+            // session. Ties are broken by connectionId, not the callback.
+            val keep = if (canonical.isNotEmpty()) {
+                canonical.minWithOrNull(compareBy<NativeConnection>(
+                    { it.createdAt }, { it.connectionId },
+                ))
+            } else {
+                ready.maxWithOrNull(compareBy<NativeConnection>(
+                    { it.createdAt }, { it.connectionId },
+                ))
+            } ?: return@synchronized emptyList<NativeConnection>()
+            ready.filter { it !== keep }.also { discarded ->
+                discarded.forEach { connections.remove(it.connectionId, it) }
+            }
         }
-        if (duplicates.isEmpty()) return
-        val local = identity?.deviceId.orEmpty()
-        val preferOutbound = local.compareTo(remoteDeviceId) < 0
-        val keep = (listOf(identified) + duplicates).firstOrNull {
-            it.isOutbound == preferOutbound
-        } ?: identified
-        (listOf(identified) + duplicates).filter { it !== keep }.forEach {
+        losers.forEach {
             diagnostics.log("duplicate_socket_closed", mapOf("device" to remoteDeviceId))
             it.close(false, "duplicate_socket", reconnect = false)
         }
@@ -1720,14 +1744,15 @@ class HingeNativeConnectionBroker(
     }
 
     private fun readIdentity(): NativeIdentity? {
-        val file = File(appContext.filesDir, "identity.json")
+        // The foreground service may start before the UI/model. Both must
+        // use the same hardware-bound identity, including after data restore.
         return runCatching {
-            val json = JSONObject(file.readText())
+            val data = HingeDeviceIdentity.loadOrCreate(appContext)
             NativeIdentity(
-                deviceId = json.optString("deviceId"),
-                name = json.optString("name", "Android 设备"),
-                manufacturer = json.optString("manufacturer"),
-                model = json.optString("model"),
+                deviceId = data.text("deviceId"),
+                name = data.text("name", "Android 设备"),
+                manufacturer = data.text("manufacturer"),
+                model = data.text("model"),
             )
         }.getOrNull()?.takeIf { it.deviceId.isNotEmpty() }
     }
@@ -1786,7 +1811,7 @@ class HingeNativeConnectionBroker(
         val manualConnect: Boolean = false,
         val expectedDeviceId: String = "",
     ) {
-        private val createdAt = SystemClock.elapsedRealtimeNanos()
+        val createdAt = SystemClock.elapsedRealtimeNanos()
         private var peerManualConnect = false
         var requiredPairingCode = ""
         var registeredPairingGeneration = 0L
@@ -2075,7 +2100,9 @@ class HingeNativeConnectionBroker(
 
         private fun handleFrame(frame: NativeProtocolFrame) {
             synchronized(this) {
-                if (state == "suspended" && !closed && isReady) {
+                val heartbeat = frame.type == HingeProtocol.heartbeatPing ||
+                    frame.type == HingeProtocol.heartbeatPong
+                if (state == "suspended" && !closed && isReady && (!lowPowerStandby || !heartbeat)) {
                     foregroundProbe = null
                     interactiveRecoveryStartedAt = 0L
                     updateState("connected")
@@ -2091,7 +2118,9 @@ class HingeNativeConnectionBroker(
                     }
                     tryCompleteAuthentication()
                 }
-                HingeProtocol.heartbeatPing -> sendFrame(HingeProtocol.heartbeatPong, ByteArray(0))
+                HingeProtocol.heartbeatPing -> if (!lowPowerStandby) {
+                    sendFrame(HingeProtocol.heartbeatPong, ByteArray(0))
+                }
                 HingeProtocol.heartbeatPong -> Unit
                 else -> onFrame(this, frame)
             }
@@ -2101,13 +2130,13 @@ class HingeNativeConnectionBroker(
             val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull() ?: return
             val deviceId = json.optString("deviceId").trim()
             val targetId = json.optString("targetDeviceId").takeUnless { it == "null" }.orEmpty()
-            if ((expectedDeviceId.isNotEmpty() && deviceId != expectedDeviceId) ||
-                (targetId.isNotEmpty() && targetId != identity?.deviceId)) {
+            if ((expectedDeviceId.isNotEmpty() && !sameDeviceId(deviceId, expectedDeviceId)) ||
+                (targetId.isNotEmpty() && !sameDeviceId(targetId, identity?.deviceId))) {
                 close(false, "identity_mismatch", reconnect = false)
                 return
             }
 
-            if (deviceId.isEmpty() || deviceId == identity?.deviceId.orEmpty()) return
+            if (deviceId.isEmpty() || sameDeviceId(deviceId, identity?.deviceId)) return
             peerManualConnect = json.opt("manualConnect") == true
             val capabilities = mutableListOf<String>()
             json.optJSONArray("capabilities")?.let { array ->

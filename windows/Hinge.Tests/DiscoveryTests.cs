@@ -112,6 +112,45 @@ public class DiscoveryTests
     }
 
     [Fact]
+    public void TwoPhysicalPhonesWithClonedIdentityTriggerConflictWarning()
+    {
+        var registry = new DeviceRegistry();
+        registry.UpsertDevice(new DiscoveryMessage {
+            DeviceId = "copied-id", Name = "vivo X300 Pro",
+            Platform = "android", Manufacturer = "vivo", Model = "X300 Pro"
+        }, "192.168.0.13");
+        Assert.Null(registry.IdentityConflictWarning);
+        registry.UpsertDevice(new DiscoveryMessage {
+            DeviceId = "copied-id", Name = "OPPO Find X9s Pro",
+            Platform = "android", Manufacturer = "OPPO", Model = "Find X9s Pro"
+        }, "192.168.0.14");
+        Assert.Contains("身份冲突", registry.IdentityConflictWarning);
+        Assert.Single(registry.GetAllDevices());
+    }
+
+    [Fact]
+    public void TwoDistinctPhoneIdentitiesStayConnectedAndVisibleTogether()
+    {
+        var registry = new DeviceRegistry();
+        registry.UpsertDevice(new DiscoveryMessage {
+            DeviceId = "vivo-unique", Name = "vivo X300 Pro",
+            Platform = "android", Manufacturer = "vivo", Model = "X300 Pro"
+        }, "192.168.0.13");
+        registry.UpsertDevice(new DiscoveryMessage {
+            DeviceId = "oppo-unique", Name = "OPPO Find X9s Pro",
+            Platform = "android", Manufacturer = "OPPO", Model = "Find X9s Pro"
+        }, "192.168.0.14");
+        registry.MarkSessionConnected("vivo-unique");
+        registry.MarkSessionConnected("oppo-unique");
+        var visible = NearbyDeviceSnapshot.Build(registry.GetAllDevices(), Array.Empty<SessionPeerInfo>());
+        Assert.Equal(2, visible.Count);
+        Assert.All(visible, device => Assert.Equal(ConnectionState.Connected, device.ConnectionState));
+        Assert.Null(registry.IdentityConflictWarning);
+        registry.MarkSessionDisconnected("vivo-unique");
+        Assert.Equal(ConnectionState.Connected, registry.GetAllDevices().Single(x => x.DeviceId == "oppo-unique").ConnectionState);
+    }
+
+    [Fact]
     public void DeviceRegistry_Upsert_And_PruneOffline_Works()
     {
         var registry = new DeviceRegistry();

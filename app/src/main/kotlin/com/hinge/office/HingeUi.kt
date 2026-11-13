@@ -42,7 +42,13 @@ fun MainActivity.setComposeContent() = setContent {
     val configuration=androidx.compose.ui.platform.LocalConfiguration.current
     val localized=remember(configuration){android.content.res.Configuration(configuration).apply{setLocale(java.util.Locale.SIMPLIFIED_CHINESE)}}
     val context=remember(localized){createConfigurationContext(localized)}
-    CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides localized,androidx.compose.ui.platform.LocalContext provides context){HingeTheme(model) { HingeApp(model) }}
+    // ConfigurationContext provides localized resources, but it is not an
+    // ActivityResultRegistryOwner. Permission launchers need the real Activity.
+    CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalConfiguration provides localized,
+        androidx.compose.ui.platform.LocalContext provides context,
+        androidx.activity.compose.LocalActivityResultRegistryOwner provides this@setComposeContent,
+    ) { HingeTheme(model) { HingeApp(model) } }
 }
 
 @Composable fun HingeTheme(model: HingeModel, content: @Composable () -> Unit) {

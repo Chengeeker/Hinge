@@ -8,7 +8,7 @@ New-Item -ItemType Directory -Path $cache, $destination -Force | Out-Null
 function Get-VerifiedAsset($name, $url, $sha256) {
     $path = Join-Path $cache $name
     if (-not (Test-Path -LiteralPath $path)) {
-        $localArchive = Join-Path $repoRoot "publish\tools\$name"
+        $localArchive = Join-Path $repoRoot "tmp\screen-tool-legacy-cache\$name"
         if (Test-Path -LiteralPath $localArchive) {
             Copy-Item -LiteralPath $localArchive -Destination $path
         } else {

@@ -1,6 +1,11 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class,androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package com.hinge.office
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -63,6 +69,15 @@ import androidx.compose.ui.unit.sp
 @Composable fun OriginalKeepAlive(model:HingeModel){
     var status by remember{mutableStateOf<Map<String,Any?>>(emptyMap())}
     var revision by remember{mutableIntStateOf(0)};var loading by remember{mutableStateOf(true)}
+    val context=LocalContext.current
+    var awaitingOverlayPermission by remember{mutableStateOf(false)}
+    val overlayPermissionLauncher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){
+        if(awaitingOverlayPermission){
+            awaitingOverlayPermission=false
+            if(Settings.canDrawOverlays(context))model.run{model.saveSetting("overlayKeepAliveEnabled",true);revision++}
+            else model.message="未授予悬浮窗权限，保活增强保持关闭"
+        }
+    }
     LaunchedEffect(model.foreground,revision){model.run{try{status=model.api.call("keepAliveStatus").asMap()}finally{loading=false}}}
     fun invoke(method:String)=model.run{if(model.api.call(method)==false)model.message="当前设备没有可用的设置页面";revision++}
     @Composable fun checklist(title:String,subtitle:String,icon:String,statusText:String,action:String?=null,onClick:()->Unit){
@@ -81,6 +96,12 @@ import androidx.compose.ui.unit.sp
             OriginalRow("常驻通知",icon="Symbols.notifications_active_rounded",startPadding=0.dp,endPadding=0.dp,iconColor=MaterialTheme.colorScheme.primary,trailing={Switch(status["persistentNotification"]!=false,{enabled->model.run{
                 if(enabled&&status["notificationPermission"]!=true&&model.api.call("requestNotificationPermission")!=true){model.message="请先允许通知，常驻通知才能显示"}else model.api.call("setPersistentNotificationEnabled",mapOf("enabled" to enabled));revision++
             }})})
+            OriginalRow("透明悬浮窗（实验性）","仅在后台低功耗待命时显示不可见的 1×1 窗口，可能降低进程被回收概率；不保证阻止厂商冻结。需要系统悬浮窗权限。","Symbols.picture_in_picture_alt_rounded",iconColor=MaterialTheme.colorScheme.primary,trailing={Switch(status["overlayKeepAliveEnabled"]==true,{enabled->
+                if(enabled){
+                    if(Settings.canDrawOverlays(context))model.run{model.saveSetting("overlayKeepAliveEnabled",true);revision++}
+                    else runCatching{awaitingOverlayPermission=true;overlayPermissionLauncher.launch(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${context.packageName}")))}.onFailure{awaitingOverlayPermission=false;model.message="无法打开系统悬浮窗权限页面"}
+                }else model.run{model.saveSetting("overlayKeepAliveEnabled",false);revision++}
+            })},showActionChevron=false)
         }};Spacer(Modifier.height(16.dp))
         HingeSettingsCard {Column(Modifier.padding(16.dp)){
             Text("Windows 自动唤醒（实验性）",style=MaterialTheme.typography.titleMedium);Spacer(Modifier.height(6.dp));Text("绑定后，手机连接中断或在电脑上右键发送文件时，Windows 会尝试通过蓝牙唤醒手机，恢复局域网连接。");Spacer(Modifier.height(10.dp))

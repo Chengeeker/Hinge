@@ -19,6 +19,11 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.content.pm.ServiceInfo
+import android.graphics.PixelFormat
+import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -68,6 +73,8 @@ class HingeForegroundService : Service() {
     private var lowPowerStandby = false
     @Volatile
     private var activeWindowUntilElapsed = 0L
+    private var keepAliveOverlay: View? = null
+    private var keepAliveOverlayManager: WindowManager? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -121,7 +128,9 @@ class HingeForegroundService : Service() {
 
         if (ENABLE_NATIVE_CONNECTION_BROKER && action == ACTION_WAKE) {
             val reason = intent.getStringExtra(EXTRA_WAKE_REASON).orEmpty().ifEmpty { "companion" }
-            val timeoutMs = if (reason == HingeCompanionManager.BLE_WAKE_REASON) BLE_CPU_WAKE_MS else 0L
+            val timeoutMs = if (reason == HingeCompanionManager.BLE_WAKE_REASON ||
+                reason == HingeCompanionManager.BT_WAKE_REASON
+            ) BLE_CPU_WAKE_MS else 0L
             activateConnectionWindow(reason, timeoutMs)
             nativeConnectionBroker.requestWake(reason)
         }
@@ -161,6 +170,7 @@ class HingeForegroundService : Service() {
         HingeDiagnostics.from(this).log("service_on_destroy")
         if (::nativeConnectionBroker.isInitialized) nativeConnectionBroker.stop()
         if (current === this) current = null
+        removeKeepAliveOverlay()
         discoveryBeaconRunnable?.let(discoveryHandler::removeCallbacks)
         discoveryBeaconRunnable = null
         standbyCheckRunnable?.let(standbyHandler::removeCallbacks)
@@ -202,6 +212,11 @@ class HingeForegroundService : Service() {
                 SystemClock.elapsedRealtime() + ACTIVE_WINDOW_MS,
             )
         }
+        updateKeepAliveOverlay()
+    }
+
+    fun refreshOverlayPresence() {
+        standbyHandler.post { updateKeepAliveOverlay() }
     }
 
     private fun publishForegroundNotification() {
@@ -217,7 +232,7 @@ class HingeForegroundService : Service() {
             )
             .setContentText(
                 if (lowPowerStandby) "已绑定的电脑可尝试唤醒；点击通知可立即恢复连接"
-                else "保持已连接设备在线；无连接且空闲后进入低功耗待命",
+                else "活动任务期间保持连接；空闲时降低后台活动",
             )
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(persistentNotificationEnabled())
@@ -243,6 +258,7 @@ class HingeForegroundService : Service() {
         acquireWifiLock()
         if (lowPowerStandby) {
             lowPowerStandby = false
+            updateKeepAliveOverlay()
             nativeConnectionBroker.exitLowPowerStandby(reason)
             HingeDiagnostics.from(this).log(
                 "low_power_standby_exited",
@@ -273,8 +289,6 @@ class HingeForegroundService : Service() {
             return
         }
         if (lowPowerStandby || activityForeground) return
-        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
-        if (powerManager?.isInteractive == true) return
         if (SystemClock.elapsedRealtime() < activeWindowUntilElapsed) return
 
         lowPowerStandby = true
@@ -285,7 +299,68 @@ class HingeForegroundService : Service() {
         releaseMulticastLock()
         releaseWifiLock()
         publishForegroundNotification()
+        updateKeepAliveOverlay()
         HingeDiagnostics.from(this).log("low_power_standby_entered")
+    }
+
+    private fun updateKeepAliveOverlay() {
+        val enabled = getSharedPreferences("app_settings", MODE_PRIVATE)
+            .getBoolean("overlay_keep_alive_enabled", false)
+        if (!shouldShowKeepAliveOverlay(
+                enabled = enabled,
+                permissionGranted = Settings.canDrawOverlays(this),
+                activityForeground = activityForeground,
+                lowPowerStandby = lowPowerStandby,
+            )
+        ) {
+            removeKeepAliveOverlay()
+            return
+        }
+        if (keepAliveOverlay != null) return
+
+        val manager = getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        val params = WindowManager.LayoutParams(
+            1,
+            1,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            alpha = 0f
+        }
+        // The overlay only raises process importance and must never intercept input.
+        val view = View(this).apply {
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        }
+        runCatching { manager.addView(view, params) }
+            .onSuccess {
+                keepAliveOverlayManager = manager
+                keepAliveOverlay = view
+                HingeDiagnostics.from(this).log("keep_alive_overlay_shown")
+            }
+            .onFailure { error ->
+                HingeDiagnostics.from(this).log(
+                    "keep_alive_overlay_failed",
+                    mapOf("reason" to error.javaClass.simpleName),
+                )
+            }
+    }
+
+    private fun removeKeepAliveOverlay() {
+        val view = keepAliveOverlay ?: return
+        runCatching { keepAliveOverlayManager?.removeViewImmediate(view) }
+        keepAliveOverlay = null
+        keepAliveOverlayManager = null
+        HingeDiagnostics.from(this).log("keep_alive_overlay_removed")
     }
 
     private fun createNotificationChannel() {

@@ -1,0 +1,8 @@
+{
+  "zip_entries": 807,
+  "dll_sha256": "d4e08e7997b9424cc146a9e0a1047a05d7d85830c1020f0d720ce7986a990df5",
+  "fixture_absent": true,
+  "single_instance_key": "Hinge.Main",
+  "installer_payload_matches_zip": true,
+  "date_center_tolerance_dip": 0.4
+}

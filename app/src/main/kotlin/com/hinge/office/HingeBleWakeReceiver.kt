@@ -23,17 +23,24 @@ class HingeBleWakeReceiver : BroadcastReceiver() {
             HingeDiagnostics.from(context).log("companion_scan_failed", mapOf("code" to error))
             return
         }
-        val bound = HingeCompanionManager.boundPayload(context) ?: return
         val results = intent.getParcelableArrayListExtra(
             BluetoothLeScanner.EXTRA_LIST_SCAN_RESULT, ScanResult::class.java,
         )
-        if (results.orEmpty().any { result ->
-                val received = result.scanRecord?.getManufacturerSpecificData(HingeWakeProtocol.COMPANY_ID)
-                received != null && HingeWakeProtocol.matchesHost(bound, received)
-            }
-        ) {
-            HingeCompanionManager.requestBleWake(context)
+        val bound = HingeCompanionManager.boundPayload(context)
+        if (bound == null) {
+            HingeDiagnostics.from(context).log("ble_wake_scan_without_binding")
+            return
         }
+        val matched = results.orEmpty().any { result ->
+            val received = result.scanRecord?.getManufacturerSpecificData(HingeWakeProtocol.COMPANY_ID)
+            received != null && HingeWakeProtocol.isActionableWakePayload(received) &&
+                HingeWakeProtocol.matchesHost(bound, received)
+        }
+        HingeDiagnostics.from(context).log(
+            "ble_wake_scan_callback",
+            mapOf("resultCount" to results.orEmpty().size, "matched" to matched),
+        )
+        if (matched) HingeCompanionManager.requestBleWake(context)
     }
 
     companion object {
@@ -49,15 +56,25 @@ class HingeBleWakeReceiver : BroadcastReceiver() {
             if (!hasScanPermission(context)) return
             try {
                 val scanner = scanner(context) ?: return
-                val filter = ScanFilter.Builder()
-                    .setManufacturerData(HingeWakeProtocol.COMPANY_ID, bound, HingeWakeProtocol.HOST_FILTER_MASK)
-                    .build()
+                val filters = listOf(HingeWakeProtocol.KIND_FILE_TRANSFER, HingeWakeProtocol.KIND_RECONNECT)
+                    .mapNotNull { kind ->
+                        HingeWakeProtocol.kindFilterData(bound, kind)?.let { payload ->
+                            ScanFilter.Builder()
+                                .setManufacturerData(
+                                    HingeWakeProtocol.COMPANY_ID,
+                                    payload,
+                                    HingeWakeProtocol.RECONNECT_FILTER_MASK,
+                                )
+                                .build()
+                        }
+                    }
+                if (filters.isEmpty()) return
                 val settings = ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
                     .setCallbackType(ScanSettings.CALLBACK_TYPE_FIRST_MATCH)
                     .build()
                 val callback = callback(context, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
-                val code = scanner.startScan(listOf(filter), settings, callback)
+                val code = scanner.startScan(filters, settings, callback)
                 if (code != ScanCallback.SCAN_FAILED_ALREADY_STARTED) {
                     HingeDiagnostics.from(context).log(
                         if (code == 0) "companion_scan_registered" else "companion_scan_failed",

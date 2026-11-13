@@ -832,22 +832,39 @@ public class SessionManager : IDisposable
         string? remoteId = identifiedConnection.RemoteDeviceId;
         if (string.IsNullOrWhiteSpace(remoteId)) return;
 
-        List<SessionConnection> duplicates;
+        List<SessionConnection> duplicatesToClose;
         lock (_lock)
         {
-            duplicates = _connections
-                .Where(connection => connection.IsSessionReady && connection.RemoteDeviceId == remoteId)
+            // Deduplicate atomically. Two simultaneous PeerIdentified events
+            // previously ran independent elections and could *each* elect
+            // their own newly identified socket as winner, closing BOTH.
+            var ready = _connections
+                .Where(connection => connection.IsSessionReady &&
+                    string.Equals(connection.RemoteDeviceId, remoteId, StringComparison.OrdinalIgnoreCase))
                 .ToList();
-        }
-        if (duplicates.Count <= 1) return;
+            if (ready.Count <= 1) return;
 
-        bool preferOutbound = string.CompareOrdinal(_localIdentity.DeviceId, remoteId) < 0;
-        SessionConnection keep = duplicates.FirstOrDefault(connection => connection.IsOutbound == preferOutbound)
-            ?? identifiedConnection;
-        foreach (var duplicate in duplicates.Where(connection => !ReferenceEquals(connection, keep)))
-        {
-            duplicate.Dispose();
+            bool preferOutbound = string.CompareOrdinal(_localIdentity.DeviceId, remoteId) < 0;
+            // Stable winner independent of the callback: keep the oldest
+            // canonical-direction socket. If no canonical socket exists,
+            // choose the newest registration instead. The previous socket
+            // may still appear "Connected" for a heartbeat interval after
+            // the phone resets or changes pairing code; keeping that stale
+            // socket would reject the user's fresh manual connection.
+            var keep = ready.FirstOrDefault(connection => connection.IsOutbound == preferOutbound)
+                ?? ready[^1];
+            duplicatesToClose = ready
+                .Where(connection => !ReferenceEquals(connection, keep))
+                .ToList();
+            // Remove losers while still under the lock so another callback
+            // cannot consider an already discarded socket a new winner.
+            foreach (var loser in duplicatesToClose)
+                _connections.Remove(loser);
         }
+
+        // Disposal raises StateChanged; do it outside the manager lock.
+        foreach (var duplicate in duplicatesToClose)
+            duplicate.Dispose();
     }
 
     public SessionConnection? ConnectionForDevice(string deviceId)

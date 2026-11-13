@@ -9,6 +9,10 @@ package com.hinge.office
  */
 object HingeWakeProtocol {
     const val COMPANY_ID = 0xFFFE
+    const val KIND_PAIRING = 1
+    const val KIND_FILE_TRANSFER = 2
+    const val KIND_RECONNECT = 3
+    const val KIND_PRESENCE = 4
     private const val KIND_INDEX = 4
     private const val PAYLOAD_LENGTH = 13
 
@@ -30,10 +34,18 @@ object HingeWakeProtocol {
         if (index == KIND_INDEX) 0 else 0xFF.toByte()
     }
 
+    internal val RECONNECT_FILTER_MASK = ByteArray(PAYLOAD_LENGTH) { 0xFF.toByte() }
+
     internal fun isWakePayload(payload: ByteArray): Boolean =
         payload.size == PAYLOAD_LENGTH &&
             FILTER_DATA.indices.all { payload[it] == FILTER_DATA[it] } &&
-            payload[KIND_INDEX] in 1..3
+            payload[KIND_INDEX].toInt() in KIND_PAIRING..KIND_PRESENCE
+
+    internal fun kindFilterData(boundPayload: ByteArray, kind: Int): ByteArray? =
+        boundPayload.takeIf(::isWakePayload)?.clone()?.apply { this[KIND_INDEX] = kind.toByte() }
+
+    internal fun isActionableWakePayload(payload: ByteArray): Boolean =
+        isWakePayload(payload) && payload[KIND_INDEX].toInt() != KIND_PRESENCE
 
     internal fun matchesHost(boundPayload: ByteArray, received: ByteArray): Boolean =
         isWakePayload(boundPayload) && isWakePayload(received) && boundPayload.indices.all { index ->

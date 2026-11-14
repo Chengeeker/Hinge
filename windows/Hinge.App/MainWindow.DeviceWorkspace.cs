@@ -138,11 +138,14 @@ public sealed partial class MainWindow
             var card = new Border
             {
                 CornerRadius = radius,
+                // M3 tonal selection: keep the surface light and use a quiet
+                // outline instead of the previous dark primary-color frame.
                 BorderThickness = current ? new Thickness(1) : new Thickness(0),
-                BorderBrush = ThemeBrushes.Accent(PageRoot),
+                BorderBrush = ThemeBrushes.Border(PageRoot),
                 Padding = new Thickness(16, 14, 16, 14),
-                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[
-                    "HingeM3SurfaceContainerLowBrush"]
+                Background = current
+                    ? ThemeBrushes.MutedSurface(PageRoot)
+                    : ThemeBrushes.SurfaceContainer(PageRoot)
             };
 
             var content = new StackPanel { Spacing = 14 };
@@ -163,8 +166,7 @@ public sealed partial class MainWindow
                 Width = 48,
                 Height = 48,
                 CornerRadius = radius,
-                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[
-                    "HingeM3SurfaceContainerLowestBrush"],
+                Background = ThemeBrushes.SurfaceContainerLowest(PageRoot),
                 Child = logo
             };
             Grid.SetColumn(logoSurface, 0);
@@ -193,13 +195,12 @@ public sealed partial class MainWindow
                 {
                     CornerRadius = radius,
                     Padding = new Thickness(10, 5, 10, 5),
-                    Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[
-                        "HingeM3SurfaceContainerHighBrush"],
+                    Background = ThemeBrushes.PrimaryContainer(PageRoot),
                     Child = new TextBlock
                     {
                         Text = "当前工作设备",
                         FontSize = 12,
-                        Foreground = ThemeBrushes.AccentText(PageRoot)
+                        Foreground = ThemeBrushes.OnPrimaryContainer(PageRoot)
                     },
                     VerticalAlignment = VerticalAlignment.Center
                 };
@@ -236,10 +237,11 @@ public sealed partial class MainWindow
             AutomationProperties.SetName(files, $"浏览 {phone.Name} 的文件");
             files.Click += (_, _) =>
             {
-                // File tabs are page-local. Browsing another phone must not
-                // change which phone receives notes, calendar edits or clips.
-                ShowFileManagement();
-                _filePage?.SelectPhone(phone.DeviceId);
+                // Navigate through the real sidebar selection, not by opening
+                // a file view over Home while the Home item stays selected.
+                // Keep the clicked phone as a page-local file-management target.
+                var targetDeviceId = phone.DeviceId;
+                DispatcherQueue.TryEnqueue(() => OpenPhoneFilesFromHome(targetDeviceId));
             };
             actions.Children.Add(files);
 
@@ -261,6 +263,29 @@ public sealed partial class MainWindow
             card.Child = content;
             panel.Children.Add(card);
         }
+    }
+
+    private void OpenPhoneFilesFromHome(string deviceId)
+    {
+        // Treat a home-card shortcut exactly like choosing Files in the sidebar.
+        // Never change the global working phone just to browse another phone.
+        var filesNavItem = AppNavigation.MenuItems.OfType<NavigationViewItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, "files",
+                StringComparison.Ordinal));
+        if (filesNavItem == null) return;
+
+        if (!ReferenceEquals(AppNavigation.SelectedItem, filesNavItem))
+            AppNavigation.SelectedItem = filesNavItem;
+
+        // Let NavigationView.SelectionChanged complete its normal navigation
+        // before selecting the source tab inside the file-management page.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (ContentFrame.Content is not FileManagementPage)
+                NavigateTo("文件管理", 0);
+            RefreshFilePhoneSources();
+            _filePage?.SelectPhone(deviceId);
+        });
     }
 
     private async Task SendFileToPhoneAsync(string deviceId)

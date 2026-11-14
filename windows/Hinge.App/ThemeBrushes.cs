@@ -115,6 +115,10 @@ internal static class ThemeBrushes
     public static Brush Pressed(FrameworkElement owner) => Resource(owner, "HingeM3StatePressedBrush");
     public static Brush Border(FrameworkElement owner) => Resource(owner, "HingeM3OutlineVariantBrush");
     public static Brush MutedSurface(FrameworkElement owner) => Resource(owner, "HingeM3SurfaceContainerLowBrush");
+    public static Brush SurfaceContainer(FrameworkElement owner) => Resource(owner, "HingeM3SurfaceContainerBrush");
+    public static Brush SurfaceContainerLowest(FrameworkElement owner) => Resource(owner, "HingeM3SurfaceContainerLowestBrush");
+    public static Brush PrimaryContainer(FrameworkElement owner) => Resource(owner, "HingeM3PrimaryContainerBrush");
+    public static Brush OnPrimaryContainer(FrameworkElement owner) => Resource(owner, "HingeM3OnPrimaryContainerBrush");
     public static Brush AccentText(FrameworkElement owner) => Resource(owner, "HingeM3PrimaryBrush");
     public static Brush Accent(FrameworkElement owner) => Resource(owner, "HingeM3PrimaryBrush");
     public static Brush OnAccent(FrameworkElement owner) => Resource(owner, "HingeM3OnPrimaryBrush");

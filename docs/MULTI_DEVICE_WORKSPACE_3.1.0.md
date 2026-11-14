@@ -63,3 +63,12 @@ Android (Gradle 内存提高，避免大型 Compose Debug 测试引发 Kotlin OO
 - 当前工作设备标签、内层设备卡片及 Logo 底板全部从 `HingeCornerRadius` 读取应用统一圆角；移除单独写死的 100/16/12 圆角值。
 - 新增 6 项设备展示层回归测试；Windows 当前共 378 项通过，正式安装包重新构建并覆盖安装到 `D:\Hinge`。
 - 实际 Windows UIA 运行时检查：左右栏标题 Y 坐标一致，传输记录位于设备栏下方，首页有正确的按钮与设备内容。屏幕位图捕获在 WinUI 合成层存在空白限制，UIA 结构与布局检查有效，仍建议使用者肉眼验收最终视觉。
+
+## 首页设备卡片：文件管理跳转与 M3 选中配色（2026-11-14）
+
+- 修复首页已连接手机卡片的“文件管理”按钮：原实现直接调用 `ShowFileManagement()`，导致页面已经切换但左侧 `NavigationView` 仍选中“首页”。
+- 新入口 `OpenPhoneFilesFromHome(deviceId)` 先选中侧边栏 `Tag=files` 对应的导航项，由正常 SelectionChanged 路径打开文件管理，再将该卡片的 `DeviceId` 应用到文件管理的手机标签。不会为首页叠加独立的文件管理页，也不会修改全局当前工作设备。
+- 视觉调整：将已选中设备卡片的深色主强调边框替换为 M3 `OutlineVariant`；按实际明暗主题获取 `SurfaceContainerLow` 与 `SurfaceContainer` 背景，徽标底板使用 `SurfaceContainerLowest`。当前工作设备标签改为 `PrimaryContainer` / `OnPrimaryContainer` 色彩组合，圆角继续使用 `HingeCornerRadius`。
+- Windows 378 项自动化测试通过，正式安装包构建和覆盖安装成功。
+- 实际 Windows UI Automation 验收：点击 OPPO 卡片“文件管理”后，`Navigation.files` 处于已选中状态、`Navigation.home` 未选中，`FileManagementPage` 与对应手机 TabItem 存在；再次选择首页后导航状态正确恢复。
+- 此为 3.1.0 正式版前的本地更新；既有 GitHub `v3.1.0-pre2` 发布文件与标签不在本次改动范围内。

@@ -72,3 +72,24 @@ Android (Gradle 内存提高，避免大型 Compose Debug 测试引发 Kotlin OO
 - Windows 378 项自动化测试通过，正式安装包构建和覆盖安装成功。
 - 实际 Windows UI Automation 验收：点击 OPPO 卡片“文件管理”后，`Navigation.files` 处于已选中状态、`Navigation.home` 未选中，`FileManagementPage` 与对应手机 TabItem 存在；再次选择首页后导航状态正确恢复。
 - 此为 3.1.0 正式版前的本地更新；既有 GitHub `v3.1.0-pre2` 发布文件与标签不在本次改动范围内。
+
+## 最近文件的 OPPO/vivo 厂商缓存过滤（2026-11-14）
+
+基于 OPPO Find X9s Pro 与 vivo X300 Pro 实机近期文件抽样、路径复核，新增以下高置信度生成目录的过滤规则。**仅应用于「文件管理 → 最近的文件」；正常的「手机存储」目录浏览、下载、复制、删除不受影响，也不删除手机上的任何文件。**
+
+| 厂商 | 目录或精确路径 | 依据 |
+|---|---|---|
+| OPPO | `oua_classifier/` | `.cache.bin`、`aiboost_gpu_cache_*.bin` |
+| OPPO | `Download/.content_portal/` | `.portal_background*.png` 系统资源 |
+| OPPO | `Download/.OplusDragAndDrop/` | `OPLUSDRAG_*.png` 跨应用拖拽中间文件 |
+| OPPO | `.MediaTrash/` | 媒体回收站副本，应通过回收站恢复而非作为普通最近文件 |
+| vivo | `.yuetu_unlock/` | `PictureUnlock_*.pictureunlock.jpg` 和 `vivo_ad/real/*.0` |
+| vivo | `.vivoBrowser/img/` | 浏览器内部哈希图片资源 |
+| vivo | `Download/.TempDragFile/` | vivo 临时拖拽资源（即使扩展名为 PNG） |
+| vivo | `Download/vivo办公套件/log.txt` | 特定办公套件诊断日志，其他 `log.txt` 仍保留 |
+
+规则严格匹配目录段，不依赖泛化文件名，支持全路径、相对路径、正反斜线与大小写规范化。Windows `RecentFileFilterRules` 和 Android `RecentGeneratedPaths` 保持同一组规则；高置信度路径不受公用目录、已知 MIME 类型的扣分影响。Android 在查询结果整理阶段先筛，Windows 在收到结果后复核。
+
+**明确不排除**：`Download/阅读备份/backup.zip`、`Documents/YiYuJiZhang/*.penny`、`Pictures/.2041841469/sample_0_20.webp`、用途未确认的 `privacy.db`、普通 APK/ZIP、用户照片、相似但不完全相同的目录名。这些文件可能具有价值或用途未证实，先不纳入排除名单。
+
+此筛选只提升最近文件的信噪比；系统缓存的实际磁盘占用不会因隐藏而改变。安装包和原有 `v3.1.0-pre2` 预发行版互不覆盖。

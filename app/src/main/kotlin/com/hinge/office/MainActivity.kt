@@ -4508,11 +4508,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         val strongCachePath = segments.any {
             it in RECENT_STRONG_CACHE_DIRECTORIES
         }
+        val confirmedVendorNoise = RecentGeneratedPaths.isGenerated(name, relativePath)
         val temporaryName = hasRecentTemporaryNameMarker(originalFileName)
         val definitiveName = fileName == ".nomedia" || fileName == "cache" ||
             fileName.startsWith(".thumbdata")
         var score = 0
         if (strongCachePath) score += 100
+        if (confirmedVendorNoise) score += 100
         if (segments.any { it == "tmp" || it == "temp" }) score += 80
         if (segments.any { it == "logs" || it == "log" }) score += 40
         if (segments.any { it == "databases" || it == "shared_prefs" || it == "no_backup" }) score += 40
@@ -4558,7 +4560,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
         // Explicit temp markers, cache paths, and bookkeeping files are decisive;
         // a MIME type or public parent folder must not cancel them.
-        if (strongCachePath || definitiveName || temporaryName) score = maxOf(score, 80)
+        if (strongCachePath || confirmedVendorNoise || definitiveName || temporaryName) score = maxOf(score, 80)
         return score
     }
 

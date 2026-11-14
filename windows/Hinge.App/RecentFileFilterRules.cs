@@ -43,7 +43,9 @@ internal static class RecentFileFilterRules
         var score = 0;
 
         var strongCachePath = directories.Any(StrongCacheDirectories.Contains);
+        var confirmedVendorNoise = IsConfirmedGeneratedPath(directories, lowerName);
         if (strongCachePath) score += 100;
+        if (confirmedVendorNoise) score += 100;
         if (directories.Any(segment => segment is "tmp" or "temp")) score += 80;
         if (directories.Any(segment => segment is "logs" or "log")) score += 40;
         if (directories.Any(segment => segment is "databases" or "shared_prefs" or "no_backup")) score += 40;
@@ -89,11 +91,42 @@ internal static class RecentFileFilterRules
 
         // Explicit temp markers, cache paths, and bookkeeping files are decisive;
         // a MIME type or public parent folder must not cancel them.
-        if (strongCachePath || definitiveName || temporaryName)
+        if (strongCachePath || confirmedVendorNoise || definitiveName || temporaryName)
         {
             score = Math.Max(score, HideThreshold);
         }
         return score;
+    }
+
+    // Path evidence confirmed on real OPPO and vivo devices. Never use a
+    // filename/extension alone to exclude ordinary downloads or backups.
+    // Callers invoke this rule exclusively for the "recent" category: normal
+    // storage browsing must keep every directory accessible.
+    private static bool IsConfirmedGeneratedPath(
+        IReadOnlyList<string> directories, string fileName)
+    {
+        if (directories.Any(segment =>
+                segment is "oua_classifier" or ".yuetu_unlock" or ".mediatrash"))
+        {
+            return true;
+        }
+
+        if (ContainsAdjacentSegments(directories, ".vivobrowser", "img") ||
+            ContainsAdjacentSegments(directories, "download", ".content_portal") ||
+            ContainsAdjacentSegments(directories, "download", ".oplusdraganddrop") ||
+            ContainsAdjacentSegments(directories, "download", ".tempdragfile") ||
+            ContainsAdjacentSegments(directories, "downloads", ".content_portal") ||
+            ContainsAdjacentSegments(directories, "downloads", ".oplusdraganddrop") ||
+            ContainsAdjacentSegments(directories, "downloads", ".tempdragfile"))
+        {
+            return true;
+        }
+
+        // Exclude the office-suite diagnostic log only; "log.txt" in a user
+        // project or the rest of the Download folder is not automatically junk.
+        return fileName == "log.txt" &&
+            (ContainsAdjacentSegments(directories, "download", "vivo办公套件") ||
+             ContainsAdjacentSegments(directories, "downloads", "vivo办公套件"));
     }
 
     private static string GetFileName(string? name)

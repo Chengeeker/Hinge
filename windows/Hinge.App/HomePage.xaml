@@ -9,9 +9,8 @@
     <ScrollViewer x:Name="HomeScrollViewer" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" SizeChanged="HomeScrollViewer_SizeChanged">
         <Grid x:Name="HomePageContentRoot" HorizontalAlignment="Stretch">
         <StackPanel x:Name="HomeContentStack" Style="{StaticResource HingePageStackStyle}" HorizontalAlignment="Stretch" MaxWidth="1120">
-            <Grid x:Name="HomeSummaryGrid" ColumnSpacing="16" RowSpacing="16" SizeChanged="HomeSummaryGrid_SizeChanged">
+            <Grid x:Name="HomeSummaryGrid" ColumnSpacing="16" RowSpacing="0" SizeChanged="HomeSummaryGrid_SizeChanged">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
@@ -19,36 +18,7 @@
                     <ColumnDefinition Width="1.2*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border x:Name="IdentityCard" Style="{StaticResource HingeContentCardStyle}" Grid.Row="0" Grid.Column="0" Visibility="Collapsed">
-                    <Grid ColumnSpacing="18">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <!-- Brand artwork is often transparent. Keep a neutral
-                             white backing so every vendor logo has the same
-                             readable treatment. -->
-                        <Border Width="48" Height="48" CornerRadius="{StaticResource HingeCornerRadius}" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}">
-                            <ContentControl x:Name="HeroDeviceLogo" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-                        </Border>
-                        <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                            <TextBlock x:Name="HeroDeviceName" Style="{StaticResource HingeM3TitleMediumStyle}" FontSize="18" />
-                            <TextBlock x:Name="HeroDeviceDetail" Style="{StaticResource HingeCaptionStyle}" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <local:HandCursorButton x:Name="SendFileButton" AutomationProperties.AutomationId="HomePage.SendFileButton" Content="发送文件" Style="{StaticResource HingeM3FilledButtonStyle}" />
-                        </StackPanel>
-                    </Grid>
-                </Border>
-                <Border x:Name="ServiceCard" Grid.Row="1" Grid.Column="0" Style="{StaticResource HingeContentCardStyle}" Visibility="Collapsed">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="本机服务" FontWeight="SemiBold" />
-                        <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource HingeCaptionStyle}" />
-                        <TextBlock Text="UDP 52830 · TCP 52831" Style="{StaticResource HingeCaptionStyle}" />
-                    </StackPanel>
-                </Border>
-                <Border x:Name="NearbyDevicesCard" Grid.Row="0" Grid.Column="1" Grid.RowSpan="2" Style="{StaticResource HingeContentCardStyle}">
+                <Border x:Name="NearbyDevicesCard" Grid.Row="0" Grid.Column="1" Style="{StaticResource HingeContentCardStyle}">
                     <StackPanel Spacing="12">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -97,7 +67,7 @@
                     </ListView>
                 </StackPanel>
                 </Border>
-                <Border x:Name="ConnectedDeviceCardsContainer" Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
+                <Border x:Name="ConnectedDeviceCardsContainer" Grid.Row="0" Grid.Column="0"
                         Style="{StaticResource HingeContentCardStyle}">
                     <StackPanel Spacing="14">
                         <StackPanel Spacing="3">
@@ -111,6 +81,41 @@
                                    Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap"
                                    Margin="4,14,4,14" />
                         <StackPanel x:Name="ConnectedDeviceCards" Spacing="12" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Legacy named controls are retained for older callbacks,
+                 outside the visible device layout. They must not create rows,
+                 overlap cards, or participate in measurement. -->
+            <Grid Width="0" Height="0" Visibility="Collapsed" IsHitTestVisible="False">
+                <Border x:Name="IdentityCard" Style="{StaticResource HingeContentCardStyle}" Grid.Row="0" Grid.Column="0" Visibility="Collapsed">
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <!-- Brand artwork is often transparent. Keep a neutral
+                             white backing so every vendor logo has the same
+                             readable treatment. -->
+                        <Border Width="48" Height="48" CornerRadius="{StaticResource HingeCornerRadius}" Background="{ThemeResource HingeM3SurfaceContainerLowestBrush}">
+                            <ContentControl x:Name="HeroDeviceLogo" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                            <TextBlock x:Name="HeroDeviceName" Style="{StaticResource HingeM3TitleMediumStyle}" FontSize="18" />
+                            <TextBlock x:Name="HeroDeviceDetail" Style="{StaticResource HingeCaptionStyle}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <local:HandCursorButton x:Name="SendFileButton" AutomationProperties.AutomationId="HomePage.SendFileButton" Content="发送文件" Style="{StaticResource HingeM3FilledButtonStyle}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <Border x:Name="ServiceCard" Grid.Row="1" Grid.Column="0" Style="{StaticResource HingeContentCardStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="本机服务" FontWeight="SemiBold" />
+                        <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource HingeCaptionStyle}" />
+                        <TextBlock Text="UDP 52830 · TCP 52831" Style="{StaticResource HingeCaptionStyle}" />
                     </StackPanel>
                 </Border>
             </Grid>

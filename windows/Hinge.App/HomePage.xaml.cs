@@ -78,14 +78,17 @@ public sealed partial class HomePage : Page
         // Two aligned M3 surfaces on desktop; vertically stacked on narrow panes.
         // Legacy hero/service fields remain collapsed for existing lifecycle code.
         var compact = e.NewSize.Width < 850;
+        // Row 1 is intentionally empty in two-column mode; do not reserve
+        // phantom row spacing below the cards before transfer history.
+        HomeSummaryGrid.RowSpacing = compact ? 16 : 0;
         Grid.SetColumn(ConnectedDeviceCardsContainer, 0);
         Grid.SetRow(ConnectedDeviceCardsContainer, 0);
         Grid.SetColumnSpan(ConnectedDeviceCardsContainer, compact ? 2 : 1);
-        Grid.SetRowSpan(ConnectedDeviceCardsContainer, compact ? 1 : 2);
+        Grid.SetRowSpan(ConnectedDeviceCardsContainer, 1);
         Grid.SetColumn(NearbyDevicesCard, compact ? 0 : 1);
         Grid.SetRow(NearbyDevicesCard, compact ? 1 : 0);
         Grid.SetColumnSpan(NearbyDevicesCard, compact ? 2 : 1);
-        Grid.SetRowSpan(NearbyDevicesCard, compact ? 1 : 2);
+        Grid.SetRowSpan(NearbyDevicesCard, 1);
         QueueTransferHistoryHeightUpdate();
     }
     public void SetTransferHistory(IReadOnlyList<TransferHistoryRecord> records)

@@ -134,9 +134,10 @@ public sealed partial class MainWindow
         {
             var current = string.Equals(phone.DeviceId, selected,
                 StringComparison.OrdinalIgnoreCase);
+            var radius = (CornerRadius)Application.Current.Resources["HingeCornerRadius"];
             var card = new Border
             {
-                CornerRadius = new CornerRadius(16),
+                CornerRadius = radius,
                 BorderThickness = current ? new Thickness(1) : new Thickness(0),
                 BorderBrush = ThemeBrushes.Accent(PageRoot),
                 Padding = new Thickness(16, 14, 16, 14),
@@ -161,7 +162,7 @@ public sealed partial class MainWindow
             {
                 Width = 48,
                 Height = 48,
-                CornerRadius = new CornerRadius(12),
+                CornerRadius = radius,
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[
                     "HingeM3SurfaceContainerLowestBrush"],
                 Child = logo
@@ -190,7 +191,7 @@ public sealed partial class MainWindow
             {
                 var selectedLabel = new Border
                 {
-                    CornerRadius = new CornerRadius(100),
+                    CornerRadius = radius,
                     Padding = new Thickness(10, 5, 10, 5),
                     Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[
                         "HingeM3SurfaceContainerHighBrush"],

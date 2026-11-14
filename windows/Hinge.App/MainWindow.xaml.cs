@@ -1343,6 +1343,7 @@ public sealed partial class MainWindow : Window
 
     private void ConfigureTransferSettingsPage(TransferSettingsPage page)
     {
+        page.LocalServiceInfo.Text = $"设备名称：{_localIdentity.Name}\n本机 ID：{ShortId(_localIdentity.DeviceId)}";
         if (!_configuredPages.Add(page)) return;
         page.BackToSettings.Click += HeaderBackButton_Click;
         page.StoragePath.Text = _receiveDirectory;
@@ -3304,8 +3305,15 @@ public sealed partial class MainWindow : Window
 
     private void PageRoot_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateIntegratedTitleBar();
 
-    private void PageRoot_ActualThemeChanged(FrameworkElement sender, object args) =>
+    private void PageRoot_ActualThemeChanged(FrameworkElement sender, object args)
+    {
         ApplyAppWindowTitleBarTheme(LoadWindowTheme());
+        // Home device cards are constructed in code; refresh their M3 theme
+        // resources when light/dark or dynamic accent colors change.
+        _homeDeviceCardsFingerprint = string.Empty;
+        if (_homePage != null && _sessionManager != null)
+            DispatcherQueue.TryEnqueue(RefreshWorkspaceSelectorAndCards);
+    }
 
     private void IntegratedTitleBar_PaletteChanged() => ApplyAppWindowTitleBarTheme(LoadWindowTheme());
 
@@ -4901,10 +4909,12 @@ public sealed partial class MainWindow : Window
     private void RefreshDeviceList(IReadOnlyList<Device> devices)
     {
         RefreshFilePhoneSources();
-        var visibleDevices = NearbyDeviceSnapshot.Build(devices,
-            _sessionManager.ActiveConnections
-                .Where(connection => connection.IsSessionReady && connection.PeerInfo != null)
-                .Select(connection => connection.PeerInfo!));
+        var visibleDevices = NearbyDevicePresentation.Visible(
+            NearbyDeviceSnapshot.Build(devices,
+                _sessionManager.ActiveConnections
+                    .Where(connection => connection.IsSessionReady && connection.PeerInfo != null)
+                    .Select(connection => connection.PeerInfo!)),
+            _localIdentity.DeviceId);
         var connectedCount = visibleDevices.Count(IsDeviceSessionConnected);
         // Once two distinct identities have live sessions, the old copied-ID
         // warning is no longer relevant to the current device list.
@@ -4990,11 +5000,11 @@ public sealed partial class MainWindow : Window
             {
                 existingTitle.Text = device.Name;
                 existingState.Text = suspended
-                    ? $"后台休眠 · {string.Join(", ", device.NetworkAddresses)}"
+                    ? $"后台休眠 · {NearbyDevicePresentation.DisplayAddresses(device.NetworkAddresses)}"
                     : connected
-                        ? $"已连接 · {string.Join(", ", device.NetworkAddresses)}"
+                        ? $"已连接 · {NearbyDevicePresentation.DisplayAddresses(device.NetworkAddresses)}"
                         : online
-                            ? $"在线 · {string.Join(", ", device.NetworkAddresses)}"
+                            ? $"在线 · {NearbyDevicePresentation.DisplayAddresses(device.NetworkAddresses)}"
                             : "离线";
                 existingState.Foreground = online
                     ? ThemeBrushes.AccentText(PageRoot)
@@ -5045,11 +5055,11 @@ public sealed partial class MainWindow : Window
             details.Children.Add(ThemeBrushes.Text(new TextBlock
             {
                 Text = suspended
-                    ? $"后台休眠 · {string.Join(", ", device.NetworkAddresses)}"
+                    ? $"后台休眠 · {NearbyDevicePresentation.DisplayAddresses(device.NetworkAddresses)}"
                     : connected
-                    ? $"已连接 · {string.Join(", ", device.NetworkAddresses)}"
+                    ? $"已连接 · {NearbyDevicePresentation.DisplayAddresses(device.NetworkAddresses)}"
                     : online
-                        ? $"在线 · {string.Join(", ", device.NetworkAddresses)}"
+                        ? $"在线 · {NearbyDevicePresentation.DisplayAddresses(device.NetworkAddresses)}"
                     : "离线",
                 FontSize = 14,
                 TextWrapping = TextWrapping.Wrap,

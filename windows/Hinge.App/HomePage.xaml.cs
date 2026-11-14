@@ -19,6 +19,8 @@ public sealed partial class HomePage : Page
     public Button ClearTransferHistory => ClearTransferHistoryButton;
     public StackPanel DeviceCardsPanel => ConnectedDeviceCards;
     public Border DeviceCardsContainer => ConnectedDeviceCardsContainer;
+    public TextBlock ConnectedDeviceCountLabel => ConnectedDevicesCount;
+    public TextBlock EmptyConnectedDeviceHint => EmptyConnectedDevicesMessage;
 
     public event EventHandler<TransferHistoryRecord>? TransferCancelRequested;
     public event EventHandler<TransferHistoryRecord>? TransferHistoryDeleteRequested;
@@ -73,20 +75,19 @@ public sealed partial class HomePage : Page
 
     private void HomeSummaryGrid_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        var compact = e.NewSize.Width < 900;
-        Grid.SetColumn(IdentityCard, 0);
-        Grid.SetRow(IdentityCard, 0);
-        Grid.SetColumnSpan(IdentityCard, compact ? 2 : 1);
-        Grid.SetColumn(ServiceCard, 0);
-        Grid.SetRow(ServiceCard, 1);
-        Grid.SetColumnSpan(ServiceCard, compact ? 2 : 1);
+        // Two aligned M3 surfaces on desktop; vertically stacked on narrow panes.
+        // Legacy hero/service fields remain collapsed for existing lifecycle code.
+        var compact = e.NewSize.Width < 850;
+        Grid.SetColumn(ConnectedDeviceCardsContainer, 0);
+        Grid.SetRow(ConnectedDeviceCardsContainer, 0);
+        Grid.SetColumnSpan(ConnectedDeviceCardsContainer, compact ? 2 : 1);
+        Grid.SetRowSpan(ConnectedDeviceCardsContainer, compact ? 1 : 2);
         Grid.SetColumn(NearbyDevicesCard, compact ? 0 : 1);
-        Grid.SetRow(NearbyDevicesCard, compact ? 2 : 0);
+        Grid.SetRow(NearbyDevicesCard, compact ? 1 : 0);
         Grid.SetColumnSpan(NearbyDevicesCard, compact ? 2 : 1);
         Grid.SetRowSpan(NearbyDevicesCard, compact ? 1 : 2);
         QueueTransferHistoryHeightUpdate();
     }
-
     public void SetTransferHistory(IReadOnlyList<TransferHistoryRecord> records)
     {
         ClearTransferHistoryButton.IsEnabled = records.Any(record => record.CanDelete);

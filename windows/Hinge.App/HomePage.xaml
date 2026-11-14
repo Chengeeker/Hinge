@@ -19,7 +19,7 @@
                     <ColumnDefinition Width="1.2*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border x:Name="IdentityCard" Style="{StaticResource HingeContentCardStyle}" Grid.Row="0" Grid.Column="0">
+                <Border x:Name="IdentityCard" Style="{StaticResource HingeContentCardStyle}" Grid.Row="0" Grid.Column="0" Visibility="Collapsed">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -41,7 +41,7 @@
                         </StackPanel>
                     </Grid>
                 </Border>
-                <Border x:Name="ServiceCard" Grid.Row="1" Grid.Column="0" Style="{StaticResource HingeContentCardStyle}">
+                <Border x:Name="ServiceCard" Grid.Row="1" Grid.Column="0" Style="{StaticResource HingeContentCardStyle}" Visibility="Collapsed">
                     <StackPanel Spacing="8">
                         <TextBlock Text="本机服务" FontWeight="SemiBold" />
                         <TextBlock x:Name="LocalDeviceInfo" Style="{StaticResource HingeCaptionStyle}" />
@@ -97,13 +97,20 @@
                     </ListView>
                 </StackPanel>
                 </Border>
-                <Border x:Name="ConnectedDeviceCardsContainer" Grid.Row="2" Grid.ColumnSpan="2"
-                        Style="{StaticResource HingeContentCardStyle}" Visibility="Collapsed">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="已连接设备" Style="{StaticResource HingeSectionTitleStyle}" />
-                        <TextBlock Text="各手机保持独立连接；选择工作设备不会断开另一台。"
-                                   Style="{StaticResource HingeCaptionStyle}" TextWrapping="Wrap"/>
-                        <StackPanel x:Name="ConnectedDeviceCards" Spacing="8" />
+                <Border x:Name="ConnectedDeviceCardsContainer" Grid.Row="0" Grid.Column="0" Grid.RowSpan="2"
+                        Style="{StaticResource HingeContentCardStyle}">
+                    <StackPanel Spacing="14">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="我的设备" Style="{StaticResource HingeSectionTitleStyle}" />
+                            <TextBlock x:Name="ConnectedDevicesCount"
+                                       Text="设备连接后，可直接向对应手机发送文件"
+                                       Style="{StaticResource HingeCaptionStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <TextBlock x:Name="EmptyConnectedDevicesMessage"
+                                   Text="尚无已连接的手机。请在右侧附近设备中连接，或打开手机端 Hinge。"
+                                   Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap"
+                                   Margin="4,14,4,14" />
+                        <StackPanel x:Name="ConnectedDeviceCards" Spacing="12" />
                     </StackPanel>
                 </Border>
             </Grid>

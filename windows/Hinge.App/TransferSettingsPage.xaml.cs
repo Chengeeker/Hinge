@@ -34,6 +34,7 @@ public sealed partial class TransferSettingsPage : Page
     public TextBlock WirelessAdbStatus => WirelessAdbStatusText;
     public TextBlock WirelessAdbClipboardStatus => WirelessAdbClipboardStatusText;
     public TextBlock Status => TransferSettingsStatusText;
+    public TextBlock LocalServiceInfo => LocalServiceInfoText;
 
     public TransferSettingsPage()
     {

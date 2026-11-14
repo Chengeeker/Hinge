@@ -275,6 +275,18 @@
                 </Border>
             </StackPanel>
 
+            <StackPanel Spacing="10">
+                <TextBlock Text="本机服务" Style="{StaticResource HingeM3SectionHeaderStyle}" Margin="4,0,0,0" />
+                <Border Style="{StaticResource HingeCardStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Windows 本机服务" Style="{StaticResource HingeM3TitleMediumStyle}" />
+                        <TextBlock x:Name="LocalServiceInfoText"
+                                   Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <TextBlock Text="局域网发现 UDP 52830 · 设备连接 TCP 52831"
+                                   Style="{StaticResource HingeM3CaptionStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
             <TextBlock
                 x:Name="TransferSettingsStatusText"
                 Text="传输与连接设置会立即保存。"

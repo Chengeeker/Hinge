@@ -153,6 +153,9 @@ public sealed class RemotePhotoAlbum
 
 public sealed class RemotePhotoItem
 {
+    [JsonIgnore]
+    public string SourceDeviceId { get; set; } = string.Empty;
+
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
@@ -198,6 +201,12 @@ public sealed class RemoteNotificationHistoryApplication
 
 public sealed class RemoteNotificationHistoryItem
 {
+    [JsonIgnore]
+    public string SourceDeviceId { get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public string SourceDeviceName { get; set; } = string.Empty;
+
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
@@ -537,14 +546,23 @@ public sealed class WorkspaceRemoteClient
     public Task<IReadOnlyList<RemotePhotoAlbum>> LoadPhotoAlbumsAsync(SessionConnection connection) =>
         InvokeListAsync<RemotePhotoAlbum>(connection, "photoAlbums", null);
 
-    public Task<IReadOnlyList<RemotePhotoItem>> LoadPhotosAsync(
+    public async Task<IReadOnlyList<RemotePhotoItem>> LoadPhotosAsync(
         SessionConnection connection,
         string? albumId = null)
     {
         IReadOnlyDictionary<string, object?>? payload = string.IsNullOrWhiteSpace(albumId)
             ? null
             : new Dictionary<string, object?> { ["albumId"] = albumId };
-        return InvokeListAsync<RemotePhotoItem>(connection, "photos", payload);
+        var items = await InvokeListAsync<RemotePhotoItem>(connection, "photos", payload);
+        return StampPhotoSource(items, connection);
+    }
+
+    private static IReadOnlyList<RemotePhotoItem> StampPhotoSource(
+        IReadOnlyList<RemotePhotoItem> items, SessionConnection connection)
+    {
+        foreach (var item in items)
+            item.SourceDeviceId = connection.RemoteDeviceId ?? string.Empty;
+        return items;
     }
 
     public async Task<RemotePhotoPage> LoadPhotoPageAsync(
@@ -588,7 +606,7 @@ public sealed class WorkspaceRemoteClient
             var all = DeserializePhotoItems(raw);
             return new RemotePhotoPage
             {
-                Items = all,
+                Items = StampPhotoSource(all, connection),
                 Total = all.Count,
             };
         }
@@ -606,7 +624,7 @@ public sealed class WorkspaceRemoteClient
             rawTotal.TryGetInt32(out var count)
             ? count
             : items.Count;
-        return new RemotePhotoPage { Items = items, Total = total };
+        return new RemotePhotoPage { Items = StampPhotoSource(items, connection), Total = total };
     }
 
     private static IReadOnlyList<RemotePhotoItem> DeserializePhotoItems(JsonElement raw)

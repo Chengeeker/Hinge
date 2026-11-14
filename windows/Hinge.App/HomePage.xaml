@@ -97,6 +97,15 @@
                     </ListView>
                 </StackPanel>
                 </Border>
+                <Border x:Name="ConnectedDeviceCardsContainer" Grid.Row="2" Grid.ColumnSpan="2"
+                        Style="{StaticResource HingeContentCardStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="已连接设备" Style="{StaticResource HingeSectionTitleStyle}" />
+                        <TextBlock Text="各手机保持独立连接；选择工作设备不会断开另一台。"
+                                   Style="{StaticResource HingeCaptionStyle}" TextWrapping="Wrap"/>
+                        <StackPanel x:Name="ConnectedDeviceCards" Spacing="8" />
+                    </StackPanel>
+                </Border>
             </Grid>
 
             <Border x:Name="TransferHistoryCard" Style="{StaticResource HingeContentCardStyle}">

@@ -51,8 +51,12 @@ public sealed partial class NotificationHistoryPage : Page
         Func<RemoteNotificationHistoryItem, Task<bool>> openItem,
         Func<RemoteNotificationHistoryItem, Task<bool>> deleteItem,
         Func<RemoteNotificationHistoryItem, Task<bool>> copyVerificationCode,
-        Func<Task<bool>> clearItems)
+        Func<Task<bool>> clearItems,
+        Func<IReadOnlyList<SessionConnection>>? allSessions = null,
+        Func<string, string>? deviceName = null)
     {
+        _allSessionsProvider = allSessions;
+        _deviceNameProvider = deviceName;
         _client = client;
         _connectionProvider = connectionProvider;
         _openItem = openItem;
@@ -69,6 +73,11 @@ public sealed partial class NotificationHistoryPage : Page
 
     private async Task LoadPageAsync(bool reset)
     {
+        if (_allSessionsProvider != null)
+        {
+            await LoadMultiDevicePageAsync(reset);
+            return;
+        }
         if (_loading)
         {
             if (reset)
@@ -79,7 +88,7 @@ public sealed partial class NotificationHistoryPage : Page
             return;
         }
         if (!reset && _nextOffset >= _total) return;
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         _connection = connection;
         var version = reset ? ++_loadVersion : _loadVersion;
         if (_client == null || connection?.IsSessionReady != true)
@@ -276,7 +285,8 @@ public sealed partial class NotificationHistoryPage : Page
         });
         details.Children.Add(ThemeBrushes.Text(new TextBlock
         {
-            Text = FormatTime(item.Timestamp) +
+            Text = (string.IsNullOrWhiteSpace(item.SourceDeviceName) ? string.Empty :
+                item.SourceDeviceName + " · ") + FormatTime(item.Timestamp) +
                 (item.Ongoing ? " · 持续通知" : string.Empty),
             Foreground = ThemeBrushes.Secondary(this),
         }, "HingeM3CaptionStyle"));
@@ -404,7 +414,9 @@ public sealed partial class NotificationHistoryPage : Page
         {
             XamlRoot = XamlRoot,
             Title = "清空通知历史？",
-            Content = "所有已保存的通知记录都会被删除，且无法恢复。",
+            Content = SelectedPhoneFilterId == null
+                ? "这将清空所有当前已连接手机的通知历史，涉及多台手机且不可恢复。请确认后继续。"
+                : "这将只清空当前筛选手机的通知历史，且无法恢复。",
             PrimaryButtonText = "清空",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close,

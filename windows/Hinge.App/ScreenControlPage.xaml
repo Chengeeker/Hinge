@@ -20,6 +20,7 @@
                     <StackPanel Spacing="12">
                         <TextBlock Text="电脑控制手机" Style="{StaticResource HingeM3TitleMediumStyle}" />
                         <TextBlock Text="开启手机无线调试并完成配对，即可投屏或控制。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="SelectedPhoneLabel" Text="目标手机：尚未选择" Style="{StaticResource HingeM3TitleMediumStyle}" />
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <local:HandCursorButton x:Name="MirrorButton" Content="仅投屏" AutomationProperties.AutomationId="ScreenControlPage.MirrorButton" Style="{StaticResource HingeM3TonalButtonStyle}" />
                             <local:HandCursorButton x:Name="ControlButton" Content="投屏并控制" AutomationProperties.AutomationId="ScreenControlPage.ControlButton" Style="{StaticResource HingeM3FilledButtonStyle}" />

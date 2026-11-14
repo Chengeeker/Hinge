@@ -812,7 +812,7 @@ public sealed partial class CalendarPage : Page
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        await LoadAsync(_connectionProvider?.Invoke() ?? _connection);
+        await LoadAsync((_connectionProvider is null ? _connection : _connectionProvider()));
     }
 
     private void TodayButton_Click(object sender, RoutedEventArgs e)
@@ -931,7 +931,7 @@ public sealed partial class CalendarPage : Page
                 : LocalDateTime(selectedDate, endPicker.Time);
             if (end <= start) end = start.AddHours(1);
 
-            var connection = _connectionProvider?.Invoke() ?? _connection;
+            var connection = (_connectionProvider is null ? _connection : _connectionProvider());
             if (_client == null || connection?.IsSessionReady != true)
             {
                 await ShowMessageAsync("无法创建日程", "请先在首页连接 Android 手机。", false);

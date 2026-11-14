@@ -99,7 +99,11 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _fileThumbnailGate = new(GetFileThumbnailConcurrency());
     private readonly SemaphoreSlim _wirelessAdbClipboardSyncGate = new(1, 1);
     private WirelessAdbConnectionManager? _wirelessAdbConnectionManager;
-    private CancellationTokenSource? _screenCancellation;
+    // Screen sessions are per phone; the current screen page only displays
+    // the session belonging to the selected Hinge DeviceId.
+    private CancellationTokenSource? _screenCancellation =>
+        _deviceWorkspace.SelectedDeviceId is { } id &&
+        _screenSessions.TryGetValue(id, out var session) ? session : null;
     private bool _wirelessAdbBusy;
     private string _screenStatus = "投屏尚未启动。";
     private string _screenFrameRate = "实时渲染帧率：未运行";
@@ -497,6 +501,7 @@ public sealed partial class MainWindow : Window
         _previewCache = new PreviewCache();
         _cloudRelayClient = new CloudRelayClient();
         _cloudRelayTransferService = new CloudRelayTransferService(_cloudRelayClient);
+        RestoreDeviceWorkspace();
         App.LogLifecycle("main-window-services-created");
 
         SetHeroDevice(null);
@@ -517,8 +522,13 @@ public sealed partial class MainWindow : Window
         if (WirelessAdbClient.IsPaired(savedAdbHost, savedAdbPort))
         {
             StartWirelessAdbConnectionManager();
-            if (LoadWirelessAdbClipboardSync())
-                _ = ConfigureWirelessAdbClipboardSyncAsync(true, savedAdbHost, savedAdbPort);
+            if (_deviceWorkspace.SelectedDeviceId is { } id &&
+                IsDeviceClipboardEnabled(id))
+            {
+                var endpoint = GetDeviceAdbEndpoint(id);
+                _ = ConfigureWirelessAdbClipboardSyncAsync(true, endpoint.Host,
+                    endpoint.Port, id);
+            }
         }
 
         try
@@ -665,27 +675,27 @@ public sealed partial class MainWindow : Window
             case NotesPage notes:
                 _notesPage = notes;
                 ConfigureNotesPage(notes);
-                _ = notes.LoadAsync(GetConnectedConnection());
+                _ = notes.LoadAsync(SelectedWorkspaceConnection());
                 break;
             case TodoPage todo:
                 _todoPage = todo;
                 ConfigureTodoPage(todo);
-                _ = todo.LoadAsync(GetConnectedConnection());
+                _ = todo.LoadAsync(SelectedWorkspaceConnection());
                 break;
             case CalendarPage calendar:
                 _calendarPage = calendar;
                 ConfigureCalendarPage(calendar);
-                _ = calendar.LoadAsync(GetConnectedConnection());
+                _ = calendar.LoadAsync(SelectedWorkspaceConnection());
                 break;
             case PhotosPage photos:
                 _photosPage = photos;
                 ConfigurePhotosPage(photos);
-                _ = photos.LoadAsync(GetConnectedConnection());
+                _ = photos.LoadAsync(SelectedWorkspaceConnection());
                 break;
             case NotificationHistoryPage notificationHistory:
                 _notificationHistoryPage = notificationHistory;
                 ConfigureNotificationHistoryPage(notificationHistory);
-                _ = notificationHistory.LoadAsync(GetConnectedConnection());
+                _ = notificationHistory.LoadAsync(SelectedWorkspaceConnection());
                 break;
             case FeaturePage feature:
                 ConfigureFeaturePage(feature);
@@ -1015,20 +1025,12 @@ public sealed partial class MainWindow : Window
                 Interlocked.Increment(ref _fileLoadGeneration);
                 _fileLoadingCancellation?.Cancel();
                 ClearFileItemViews();
-                if (id != null && _sessionManager.ConnectionForDevice(id) is { } connection)
-                {
-                    _activeConnection = connection;
-                    _activeDevice = FindDeviceForConnection(connection);
-                }
+                // Browsing another phone is page-local, not a global workspace change.
             }
             finally { _restoringFilePhone = false; }
         }
-        if (id != null && _sessionManager.ConnectionForDevice(id) is { } selectedConnection)
-        {
-            _activeConnection = selectedConnection;
-            _activeDevice = FindDeviceForConnection(selectedConnection);
-            SetHeroDevice(_activeDevice);
-        }
+        // The files page retains its own selected phone and must not silently
+        // redirect notes, calendar, notifications or outgoing transfers.
         QueueFileManagementRefresh();
     }
 
@@ -1357,7 +1359,7 @@ public sealed partial class MainWindow : Window
         page.CleanDeviceHistory.Click += CleanDeviceHistory_Click;
         page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
         page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
-        page.WirelessAdbClipboardSync.IsOn = LoadWirelessAdbClipboardSync();
+        RefreshScopedWirelessAdbSettings();
         page.SetWirelessAdbStatus(_wirelessAdbConnectionStatus);
         page.SetWirelessAdbClipboardStatus(_wirelessAdbClipboardStatus);
         page.WirelessAdbClipboardSync.Toggled += WirelessAdbClipboardSync_Toggled;
@@ -1426,57 +1428,13 @@ public sealed partial class MainWindow : Window
         catch (ArgumentException exception) { UpdateScreenStatus(exception.Message); }
     }
 
-    private async Task StartScreenAsync(bool control)
-    {
-        if (_screenControlPage is not { } page || _screenCancellation != null || _wirelessAdbBusy) return;
-        SaveScreenOptions();
-        using var cancellation = new CancellationTokenSource();
-        _screenCancellation = cancellation;
-        _screenFrameRate = "实时渲染帧率：等待统计…";
-        UpdateScreenStatus("正在验证已配对的无线 ADB 手机…");
-        try
-        {
-            var executable = ScrcpyLauncher.FindExecutable();
-            var options = page.Options;
-            var host = ReadUserSetting(WirelessAdbHostSettingName) as string ?? string.Empty;
-            var port = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? string.Empty;
-            if (!WirelessAdbClient.IsPaired(host, port))
-                throw new InvalidOperationException("请先打开本页的无线调试配对设置，完成手机配对和连接。");
-            string transport;
-            using (var connectionTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token))
-            {
-                connectionTimeout.CancelAfter(TimeSpan.FromSeconds(30));
-                transport = await WirelessAdbClient.ConnectAsync(host, port, connectionTimeout.Token,
-                    GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId());
-                await WirelessAdbClient.ValidateScreenTransportAsync(transport, connectionTimeout.Token);
-            }
-            await ScrcpyLauncher.RunAsync(ScrcpyLauncher.CreateStartInfo(executable, transport, control, options),
-                () => UpdateScreenStatus($"已启动{(control ? "投屏并控制" : "仅投屏")}：{options.VideoCodec.ToUpperInvariant()}，上限 {options.MaxFps} FPS，{options.BitRateMbps} Mbps。关闭窗口或点击停止即可结束。"),
-                cancellation.Token, sample => DispatcherQueue.TryEnqueue(() =>
-                {
-                    if (!ReferenceEquals(_screenCancellation, cancellation) || cancellation.IsCancellationRequested) return;
-                    _screenFrameRate = $"实时渲染帧率：{sample.RenderedFps} FPS；本秒跳过 {sample.SkippedFrames} 帧";
-                    if (_screenControlPage != null) _screenControlPage.FrameRate.Text = _screenFrameRate;
-                }));
-            UpdateScreenStatus("投屏已结束。");
-        }
-        catch (OperationCanceledException)
-        {
-            UpdateScreenStatus(cancellation.IsCancellationRequested ? "投屏已停止。" : "无线 ADB 连接超时，请检查手机无线调试和网络后重试。");
-        }
-        catch (Exception exception) { UpdateScreenStatus($"投屏启动或运行失败：{exception.Message}"); }
-        finally
-        {
-            _screenCancellation = null;
-            _screenFrameRate = "实时渲染帧率：未运行";
-            UpdateScreenStatus(_screenStatus);
-        }
-    }
+    private Task StartScreenAsync(bool control) => StartScreenForDeviceAsync(control);
 
     private void UpdateScreenStatus(string message)
     {
         _screenStatus = message;
-        if (_remoteSettingsPage != null) _remoteSettingsPage.PhoneStatus.Text = _screenCancellation != null ? "正在投屏" : "未运行";
+        if (_remoteSettingsPage != null) _remoteSettingsPage.PhoneStatus.Text =
+            _screenSessions.Count > 0 ? $"有 {_screenSessions.Count} 台手机正在投屏" : "未运行";
         var running = _screenCancellation != null;
         if (_transferSettingsPage is { } diagnostics)
         {
@@ -1485,6 +1443,7 @@ public sealed partial class MainWindow : Window
             diagnostics.WirelessAdbConnect.IsEnabled = !running && !_wirelessAdbBusy;
         }
         if (_screenControlPage is not { } page) return;
+        RefreshScreenTargetLabel();
         page.Status.Text = message;
         page.FrameRate.Text = _screenFrameRate;
         page.Mirror.IsEnabled = !running && !_wirelessAdbBusy;
@@ -1650,6 +1609,7 @@ public sealed partial class MainWindow : Window
                 GetWirelessAdbTrustedHosts(), WirelessAdbClient.LoadHingeDeviceId(), reconnectExisting: true);
             page.WirelessAdbHost.Text = ReadUserSetting(WirelessAdbHostSettingName) as string ?? host;
             page.WirelessAdbConnectPort.Text = ReadUserSetting(WirelessAdbConnectPortSettingName) as string ?? port;
+            SaveWirelessAdbEndpoint(page.WirelessAdbHost.Text, page.WirelessAdbConnectPort.Text);
             SetWirelessAdbConnectionStatus("无线 ADB 已连接；主机密钥由 Android Platform-Tools 保存。");
             StartWirelessAdbConnectionManager();
             _wirelessAdbConnectionManager?.NotifyNetworkChanged();
@@ -1694,7 +1654,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static void SaveWirelessAdbEndpoint(string host, string port)
+    private void SaveWirelessAdbEndpoint(string host, string port)
     {
         if (string.IsNullOrWhiteSpace(host) && string.IsNullOrWhiteSpace(port)) return;
         try
@@ -1710,6 +1670,7 @@ public sealed partial class MainWindow : Window
         }
         if (!string.IsNullOrWhiteSpace(host)) WriteUserSetting(WirelessAdbHostSettingName, host);
         if (!string.IsNullOrWhiteSpace(port)) WriteUserSetting(WirelessAdbConnectPortSettingName, port);
+        RememberDeviceAdbEndpoint(host, port);
     }
 
     private async void WirelessAdbCommandRun_Click(object sender, RoutedEventArgs e)
@@ -1756,39 +1717,51 @@ public sealed partial class MainWindow : Window
 
     private async void WirelessAdbClipboardSync_Toggled(object sender, RoutedEventArgs e)
     {
-        if (sender is not ToggleSwitch toggle || _transferSettingsPage is not { } page) return;
-        var enabled = toggle.IsOn;
-        var host = page.WirelessAdbHost.Text.Trim();
-        var port = page.WirelessAdbConnectPort.Text.Trim();
-        if (enabled && !WirelessAdbClient.IsPaired(host, port))
+        if (_updatingDeviceClipboardSettings ||
+            sender is not ToggleSwitch toggle ||
+            _transferSettingsPage is not { } page) return;
+        var deviceId = _deviceWorkspace.SelectedDeviceId;
+        if (string.IsNullOrWhiteSpace(deviceId))
         {
-            toggle.IsOn = false;
-            SetWirelessAdbClipboardStatus("请先完成无线 ADB 配对，再开启剪贴板同步。");
+            _updatingDeviceClipboardSettings = true;
+            try { toggle.IsOn = false; }
+            finally { _updatingDeviceClipboardSettings = false; }
+            SetWirelessAdbClipboardStatus("请先选择目标手机。");
             return;
         }
 
-        SaveWirelessAdbClipboardSync(enabled);
+        var enabled = toggle.IsOn;
+        var host = page.WirelessAdbHost.Text.Trim();
+        var port = page.WirelessAdbConnectPort.Text.Trim();
+        // Enabling is an explicit, per-device opt-in. Transport verification
+        // happens before any clipboard data is forwarded.
+        SetDeviceClipboardEnabled(deviceId, enabled);
         if (enabled) SaveWirelessAdbEndpoint(host, port);
-        await ConfigureWirelessAdbClipboardSyncAsync(enabled, host, port);
+        await ConfigureWirelessAdbClipboardSyncAsync(enabled, host, port, deviceId);
     }
 
-    private async Task ConfigureWirelessAdbClipboardSyncAsync(bool enabled, string host, string port)
+    private async Task ConfigureWirelessAdbClipboardSyncAsync(
+        bool enabled, string host, string port, string? deviceId = null)
     {
+        deviceId ??= _deviceWorkspace.SelectedDeviceId ??
+            WirelessAdbClient.LoadHingeDeviceId();
         await _wirelessAdbClipboardSyncGate.WaitAsync();
         try
         {
             await StopWirelessAdbClipboardSyncAsync();
-            if (!enabled)
+            if (!enabled || string.IsNullOrWhiteSpace(deviceId))
             {
-                SetWirelessAdbClipboardStatus("无线 ADB 剪贴板同步已关闭。");
+                SetWirelessAdbClipboardStatus("当前工作设备的剪贴板同步已关闭。");
                 return;
             }
 
+            _clipboardBridgeDeviceId = deviceId;
             var cancellation = new CancellationTokenSource();
             _wirelessAdbClipboardSyncCancellation = cancellation;
             Clipboard.ContentChanged += DesktopClipboard_ContentChanged;
             SetWirelessAdbClipboardStatus("等待无线 ADB 连接后启动剪贴板桥…");
-            _wirelessAdbClipboardSyncTask = RunWirelessAdbClipboardSyncAsync(host, port, cancellation.Token);
+            _wirelessAdbClipboardSyncTask = RunWirelessAdbClipboardSyncAsync(
+                host, port, deviceId, cancellation.Token);
         }
         finally
         {
@@ -1805,6 +1778,7 @@ public sealed partial class MainWindow : Window
         var syncTask = _wirelessAdbClipboardSyncTask;
         _wirelessAdbClipboardSyncCancellation = null;
         _wirelessAdbClipboardSyncTask = null;
+        _clipboardBridgeDeviceId = null;
         cancellation?.Cancel();
         _wirelessAdbClipboardBridge?.Dispose();
         _wirelessAdbClipboardBridge = null;
@@ -1816,21 +1790,24 @@ public sealed partial class MainWindow : Window
         cancellation?.Dispose();
     }
 
-    private async Task RunWirelessAdbClipboardSyncAsync(string host, string port, CancellationToken cancellationToken)
+    private async Task RunWirelessAdbClipboardSyncAsync(
+        string host, string port, string deviceId, CancellationToken cancellationToken)
     {
         var bridgeFailures = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                var manager = _wirelessAdbConnectionManager;
-                if (manager == null)
+                // Never use the globally last-paired transport for a different
+                // phone. Require the exact Hinge DeviceId over ADB first.
+                var transport = await WirelessAdbClient.FindTransportForHingeDeviceAsync(
+                    deviceId, cancellationToken, host, port);
+                if (transport == null)
                 {
-                    SetWirelessAdbClipboardStatus("等待无线 ADB 自动连接管理器启动…");
-                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                    SetWirelessAdbClipboardStatus("等待当前工作手机的无线 ADB 身份验证…");
+                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
                     continue;
                 }
-                var transport = await manager.WaitForTransportAsync(cancellationToken);
                 var generation = Interlocked.Increment(ref _wirelessAdbClipboardGeneration);
                 var bridge = await WirelessAdbClient.StartClipboardBridgeAsync(
                     transport,
@@ -2377,13 +2354,13 @@ public sealed partial class MainWindow : Window
     }
 
     private void ConfigureNotesPage(NotesPage page) =>
-        page.Configure(_workspaceRemoteClient, GetConnectedConnection);
+        page.Configure(_workspaceRemoteClient, SelectedWorkspaceConnection);
 
     private void ConfigureTodoPage(TodoPage page) =>
-        page.Configure(_workspaceRemoteClient, GetConnectedConnection);
+        page.Configure(_workspaceRemoteClient, SelectedWorkspaceConnection);
 
     private void ConfigureCalendarPage(CalendarPage page) =>
-        page.Configure(_workspaceRemoteClient, GetConnectedConnection);
+        page.Configure(_workspaceRemoteClient, SelectedWorkspaceConnection);
 
     private void ConfigurePhotosPage(PhotosPage page)
     {
@@ -2399,7 +2376,7 @@ public sealed partial class MainWindow : Window
 
         page.Configure(
             _workspaceRemoteClient,
-            GetConnectedConnection,
+            SelectedWorkspaceConnection,
             OpenRemotePhotoWithDefaultAppAsync);
     }
 
@@ -2408,11 +2385,17 @@ public sealed partial class MainWindow : Window
         if (!_configuredPages.Add(page)) return;
         page.Configure(
             _workspaceRemoteClient,
-            GetConnectedConnection,
+            SelectedWorkspaceConnection,
             OpenRemoteNotificationAsync,
             DeleteRemoteNotificationAsync,
             CopyNotificationVerificationCodeAsync,
-            ClearRemoteNotificationHistoryAsync);
+            ClearRemoteNotificationHistoryAsync,
+            () => _sessionManager.ActiveConnections.Where(c =>
+                c.IsSessionReady && c.RemoteDeviceId != null &&
+                string.Equals(c.PeerInfo?.Platform, "android", StringComparison.OrdinalIgnoreCase)).ToArray(),
+            id => GetPhoneTargets().FirstOrDefault(phone =>
+                string.Equals(phone.DeviceId, id, StringComparison.OrdinalIgnoreCase))?.Name ??
+                "Android 手机");
     }
 
     private async Task<bool> CopyNotificationVerificationCodeAsync(RemoteNotificationHistoryItem item)
@@ -2438,7 +2421,9 @@ public sealed partial class MainWindow : Window
             return TryWakeOrStartDesktopChatApp(item.PackageName);
         }
 
-        var connection = GetConnectedConnection();
+        var connection = string.IsNullOrWhiteSpace(item.SourceDeviceId)
+            ? SelectedWorkspaceConnection()
+            : _sessionManager.ConnectionForDevice(item.SourceDeviceId);
         if (connection != null)
         {
             try
@@ -2461,16 +2446,36 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> DeleteRemoteNotificationAsync(RemoteNotificationHistoryItem item)
     {
-        var connection = GetConnectedConnection();
+        var connection = string.IsNullOrWhiteSpace(item.SourceDeviceId)
+            ? SelectedWorkspaceConnection()
+            : _sessionManager.ConnectionForDevice(item.SourceDeviceId);
         if (connection == null) return false;
         return await _workspaceRemoteClient.DeleteNotificationHistoryItemAsync(connection, item.Id);
     }
 
     private async Task<bool> ClearRemoteNotificationHistoryAsync()
     {
-        var connection = GetConnectedConnection();
-        if (connection == null) return false;
-        return await _workspaceRemoteClient.ClearNotificationHistoryAsync(connection);
+        // Null filter means the user explicitly confirmed clearing ALL connected
+        // phones in the notification history dialog. Never use the first socket.
+        var filter = _notificationHistoryPage?.SelectedPhoneFilterId;
+        var targets = _sessionManager.ActiveConnections.Where(c =>
+            c.IsSessionReady && c.RemoteDeviceId != null &&
+            (filter == null || string.Equals(c.RemoteDeviceId, filter,
+                StringComparison.OrdinalIgnoreCase)))
+            .GroupBy(c => c.RemoteDeviceId!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First()).ToArray();
+        if (targets.Length == 0) return false;
+        var allSucceeded = true;
+        foreach (var target in targets)
+        {
+            try
+            {
+                if (!await _workspaceRemoteClient.ClearNotificationHistoryAsync(target))
+                    allSucceeded = false;
+            }
+            catch { allSucceeded = false; }
+        }
+        return allSucceeded;
     }
 
     private static bool IsDesktopChatPackage(string packageName) =>
@@ -3217,7 +3222,8 @@ public sealed partial class MainWindow : Window
             SizeBytes = photo.SizeBytes,
             ModifiedAt = photo.TakenAt,
             MimeType = mimeType,
-            Category = "images"
+            Category = "images",
+            SourceDeviceId = photo.SourceDeviceId
         };
     }
 
@@ -3239,9 +3245,11 @@ public sealed partial class MainWindow : Window
             ModifiedAt = photo.TakenAt,
             MimeType = extension is ".jpg" or ".jpeg" or ".jpe" or ".jfif" ? "image/jpeg" : $"image/{extension[1..]}"
         };
-        var connection = GetConnectedConnection();
+        var connection = !string.IsNullOrWhiteSpace(photo.SourceDeviceId)
+            ? _sessionManager.ConnectionForDevice(photo.SourceDeviceId)
+            : SelectedWorkspaceConnection();
         if (connection?.IsSessionReady != true || string.IsNullOrEmpty(connection.RemoteDeviceId))
-            throw new InvalidOperationException("设备会话已断开，请重新连接手机。");
+            throw new InvalidOperationException("照片所属手机已经断开，请重新连接该手机。");
         entry.SourceDeviceId = connection.RemoteDeviceId;
 
         var receivedPath = await ReceiveRemotePreviewFileAsync(entry, "正在读取图片预览…", readPhotoDirectly: true);
@@ -4836,6 +4844,10 @@ public sealed partial class MainWindow : Window
             string.Equals(notification.Source, "mms", StringComparison.OrdinalIgnoreCase);
         var useTrayNotification = isSmsNotification ||
             !_notificationPresenter.IsSystemNotificationAvailable;
+        var originLabel = string.IsNullOrWhiteSpace(notification.SourceDeviceName)
+            ? string.Empty : notification.SourceDeviceName + " · ";
+        var presenterTitle = originLabel +
+            (string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName);
 
         // SMS/MMS always uses the tray balloon so it is useful while Hinge is
         // minimized. Only a recognized SMS/MMS verification code gets a
@@ -4853,7 +4865,7 @@ public sealed partial class MainWindow : Window
             if (hasVerificationCode)
             {
                 _trayManager.ShowNotification(
-                    string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName,
+                    presenterTitle,
                     fallbackText,
                     () =>
                     {
@@ -4866,7 +4878,7 @@ public sealed partial class MainWindow : Window
             else
             {
                 _trayManager.ShowNotification(
-                    string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName,
+                    presenterTitle,
                     fallbackText);
             }
         }
@@ -4910,6 +4922,7 @@ public sealed partial class MainWindow : Window
 
         if (visibleDevices.Count == 0)
         {
+            RefreshWorkspaceSelectorAndCards();
             _nearbyDeviceRows.Clear();
             _nearbyDeviceFingerprints.Clear();
             DeviceListView.Items.Clear();
@@ -5107,6 +5120,7 @@ public sealed partial class MainWindow : Window
             }
             _nearbyDeviceFingerprints[device.DeviceId] = fingerprint;
         }
+        RefreshWorkspaceSelectorAndCards();
     }
 
     private bool IsDeviceSessionConnected(Device device)
@@ -5878,7 +5892,10 @@ public sealed partial class MainWindow : Window
             device.TrustState = TrustState.Trusted;
             device.PairingRequired = peer.PairingRequired;
 
-            if (_activeConnection?.IsSessionReady != true || ReferenceEquals(_activeConnection, connection))
+            // A newly connected phone does not steal focus from a user's
+            // selected workspace. First connection is the initial default.
+            _deviceWorkspace.AdoptFirstConnected(peer.DeviceId);
+            if (_deviceWorkspace.IsSelected(peer.DeviceId))
             {
                 _activeConnection = connection;
                 SetActiveDevice(device);
@@ -5893,7 +5910,10 @@ public sealed partial class MainWindow : Window
             ActivityInfoBar.Severity = InfoBarSeverity.Success;
             Home.ApplyThemePalette();
             RefreshExplorerSendMenu();
-            if (ReferenceEquals(_activeConnection, connection)) RefreshCurrentWorkspacePage(connection);
+            if (ReferenceEquals(_activeConnection, connection))
+                RefreshCurrentWorkspacePage(connection);
+            else if (ContentFrame.Content is NotificationHistoryPage notificationHistory)
+                _ = notificationHistory.LoadAsync(SelectedWorkspaceConnection());
             _ = ProcessPendingShellSendsAsync();
         });
 
@@ -6059,6 +6079,8 @@ public sealed partial class MainWindow : Window
                 _ => "局域网就绪"
             };
             RefreshFilePhoneSources();
+            if (ContentFrame.Content is NotificationHistoryPage notificationHistory)
+                _ = notificationHistory.LoadAsync(SelectedWorkspaceConnection());
         }
         if (wasActiveConnection)
         {
@@ -6070,12 +6092,12 @@ public sealed partial class MainWindow : Window
                 if (_activeConnection != null && !ReferenceEquals(_activeConnection, connection)) return;
                 _activeConnection = null;
                 _activeDevice = null;
-                var remainingConnection = _sessionManager.ActiveConnections.FirstOrDefault(c => c.IsSessionReady);
-                if (remainingConnection != null)
-                {
-                    _activeConnection = remainingConnection;
-                    _activeDevice = FindDeviceForConnection(remainingConnection);
-                }
+                // Keep the user's selected phone even when it goes offline.
+                // Auto-switching to any remaining connection risks writing
+                // the user's notes/tasks to the wrong physical device.
+                if (!string.IsNullOrWhiteSpace(_deviceWorkspace.SelectedDeviceId) &&
+                    _registry.TryGetDevice(_deviceWorkspace.SelectedDeviceId, out var chosen))
+                    _activeDevice = chosen;
                 SetHeroDevice(_activeDevice);
                 var connectedCount = GetPhoneTargets().Count(phone => phone.IsConnected);
                 HeaderStatusText.Text = connectedCount > 0 ? $"已连接 {connectedCount} 台手机" : "局域网就绪";
@@ -6142,6 +6164,9 @@ public sealed partial class MainWindow : Window
             case PhotosPage photos:
                 _ = photos.LoadAsync(connection);
                 break;
+            case NotificationHistoryPage notifications:
+                _ = notifications.LoadAsync(SelectedWorkspaceConnection());
+                break;
         }
     }
 
@@ -6178,6 +6203,7 @@ public sealed partial class MainWindow : Window
     private void SetHeroDevice(Device? device)
     {
         RefreshFilePhoneSources();
+        RefreshWorkspaceSelectorAndCards();
         UpdateHomeSendFileAvailability();
         if (device == null)
         {
@@ -7929,12 +7955,8 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowQuickTransferAsync()
     {
-        var connection = GetConnectedConnection();
-        if (connection == null)
-        {
-            await ShowDialogAsync("无法发送", "请先在“附近设备”中连接一台设备。", false);
-            return;
-        }
+        var targets = await SelectTargetSessionsAsync("发送文字或链接");
+        if (targets.Count == 0) return;
 
         var input = new TextBox
         {
@@ -7956,8 +7978,14 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                await _transferManager.SendTextAsync(connection, input.Text.Trim());
-                StatusText.Text = "文字或链接已发送";
+                var sent = 0;
+                foreach (var target in targets)
+                {
+                    if (!target.IsSessionReady) continue;
+                    await _transferManager.SendTextAsync(target, input.Text.Trim());
+                    sent++;
+                }
+                StatusText.Text = $"文字或链接已发送至 {sent} 台手机";
             }
             catch (Exception exception)
             {
@@ -7968,9 +7996,10 @@ public sealed partial class MainWindow : Window
 
     private async Task PickAndSendFileAsync()
     {
-        if (GetConnectedConnection() is not { State: SessionState.Connected } connection)
+        if (!_sessionManager.ActiveConnections.Any(c => c.State == SessionState.Connected &&
+                !string.IsNullOrWhiteSpace(c.RemoteDeviceId)))
         {
-            await ShowDialogAsync("无法发送文件", "请先连接设备。", false);
+            await ShowDialogAsync("无法发送文件", "请先连接至少一台手机。", false);
             return;
         }
 
@@ -7979,28 +8008,26 @@ public sealed partial class MainWindow : Window
         InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
         var file = await picker.PickSingleFileAsync();
         if (file == null) return;
-        if (connection.State != SessionState.Connected)
-        {
-            await ShowDialogAsync("无法发送文件", "连接已断开，请重新连接设备后重试。", false);
-            return;
-        }
+        var targets = await SelectTargetSessionsAsync("发送文件");
+        if (targets.Count == 0) return;
 
         try
         {
-            var result = await SendFilesToConnectionAsync(
-                    connection,
+            var successes = 0;
+            foreach (var target in targets)
+            {
+                if (target.State != SessionState.Connected) continue;
+                var result = await SendFilesToConnectionAsync(
+                    target,
                     new[] { file.Path },
                     string.Empty,
                     CancellationToken.None,
                     showFailureDialog: true);
-            if (result is { Completed: > 0 })
-            {
-                StatusText.Text = $"文件已发送：{file.Name}";
+                if (result is { Completed: > 0 }) successes++;
             }
-            else if (result == null)
-            {
-                await ShowDialogAsync("无法发送文件", "连接已不可用，请重新连接设备后重试。", false);
-            }
+            StatusText.Text = $"文件 {file.Name} 已发送至 {successes}/{targets.Count} 台手机";
+            if (successes == 0)
+                await ShowDialogAsync("发送失败", "目标手机已断开或传输失败，请重试。", false);
         }
         catch (Exception exception)
         {
@@ -8676,7 +8703,10 @@ public sealed partial class MainWindow : Window
             {
                 Id = Guid.NewGuid().ToString("N"),
                 DeviceId = connection.RemoteDeviceId ?? string.Empty,
-                DeviceName = _activeDevice?.Name ?? connection.PeerInfo?.Name ?? "Android 设备",
+                DeviceName = GetPhoneTargets().FirstOrDefault(phone =>
+                    string.Equals(phone.DeviceId, connection.RemoteDeviceId,
+                        StringComparison.OrdinalIgnoreCase))?.Name ??
+                    connection.PeerInfo?.Name ?? "Android 设备",
                 FileName = fileInfo.Name,
                 FilePath = path,
                 PendingId = pendingId ?? string.Empty,
@@ -8984,30 +9014,12 @@ public sealed partial class MainWindow : Window
 
     private SessionConnection? GetConnectedConnection()
     {
-        // An offline selected phone must never silently route operations to another phone.
+        // Device selection is an explicit route, never 'whichever socket was
+        // first'. An offline chosen phone must not cause a write to another.
         if (ContentFrame.Content is FileManagementPage { IsPhoneSelected: true } files)
-            return files.SelectedPhoneDeviceId is { } id ? _sessionManager.ConnectionForDevice(id) : null;
-        if (_activeConnection?.IsSessionReady == true &&
-            !string.IsNullOrWhiteSpace(_activeConnection.RemoteDeviceId))
-        {
-            return _activeConnection;
-        }
-
-        var connection = _sessionManager.ActiveConnections.FirstOrDefault(
-            candidate => candidate.IsSessionReady &&
-                !string.IsNullOrWhiteSpace(candidate.RemoteDeviceId));
-        // The identity handshake is the source of truth for a usable session.
-        // A fast reconnect can briefly publish the peer before the UI receives
-        // the corresponding StateChanged event; do not make every workspace
-        // page wait forever on that transient ordering window.
-        connection ??= _sessionManager.ActiveConnections.FirstOrDefault(
-            candidate => candidate.PeerInfo != null &&
-                !string.IsNullOrWhiteSpace(candidate.RemoteDeviceId));
-        if (connection != null)
-        {
-            _activeConnection = connection;
-        }
-        return connection;
+            return files.SelectedPhoneDeviceId is { } id
+                ? _sessionManager.ConnectionForDevice(id) : null;
+        return SelectedWorkspaceConnection();
     }
 
     private SessionConnection? GetFileConnection(RemoteFileEntry entry) =>
@@ -9117,7 +9129,8 @@ public sealed partial class MainWindow : Window
     private void StopAdbWork()
     {
         if (_wirelessAdbRecoveryCancellation is { } recovery) _ = recovery.CancelAsync();
-        if (_screenCancellation is { } screen) _ = screen.CancelAsync();
+        foreach (var screen in _screenSessions.Values)
+            screen.Cancel();
         if (_wirelessAdbClipboardSyncCancellation is { } clipboard) _ = clipboard.CancelAsync();
         if (_adbConsoleCancellation is { } console) _ = console.CancelAsync();
         if (_wirelessAdbQrCancellation is { } qr) _ = qr.CancelAsync();

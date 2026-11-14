@@ -42,7 +42,7 @@ public sealed partial class MainWindow
             _copiedPhoneFile = entry;
             _copiedPhoneFileDeviceId = source.RemoteDeviceId;
             if (_filePage != null)
-                _filePage.StatusText.Text = $"已复制 {entry.Name}，可在同一台手机的存储文件夹中粘贴";
+                _filePage.StatusText.Text = $"已复制 {entry.Name}，可粘贴到这台或其他已连接手机的文件夹";
         };
         menu.Items.Add(copy);
 
@@ -101,8 +101,8 @@ public sealed partial class MainWindow
             !string.IsNullOrWhiteSpace(source.Uri) &&
             !string.IsNullOrWhiteSpace(sourceDevice) &&
             !string.IsNullOrWhiteSpace(targetDevice) &&
-            string.Equals(sourceDevice, targetDevice, StringComparison.OrdinalIgnoreCase) &&
-            _sessionManager.ConnectionForDevice(sourceDevice)?.IsSessionReady == true;
+            _sessionManager.ConnectionForDevice(sourceDevice)?.IsSessionReady == true &&
+            _sessionManager.ConnectionForDevice(targetDevice)?.IsSessionReady == true;
     }
 
     private async Task PasteRemotePhoneFileAsync(string destinationRelativePath)
@@ -110,7 +110,16 @@ public sealed partial class MainWindow
         var source = _copiedPhoneFile;
         if (source == null || _fileCategory != "storage" || !CanPasteRemotePhoneFile())
         {
-            await ShowDialogAsync("无法粘贴", "请在同一台已连接手机中复制文件，然后进入“手机存储”的目标文件夹。", false);
+            await ShowDialogAsync("无法粘贴", "请先在已连接手机上复制文件，然后进入目标手机的“手机存储”文件夹。", false);
+            return;
+        }
+
+        var targetId = _filePage?.SelectedPhoneDeviceId;
+        if (string.IsNullOrWhiteSpace(targetId)) return;
+        if (!string.Equals(targetId, _copiedPhoneFileDeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            await PasteAcrossPhonesAsync(source, _copiedPhoneFileDeviceId!, targetId,
+                destinationRelativePath);
             return;
         }
 

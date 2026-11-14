@@ -8,7 +8,7 @@ using Microsoft.Win32;
 
 namespace Hinge.App;
 
-internal static class WirelessAdbClient
+internal static partial class WirelessAdbClient
 {
     private const string HingeAdbServerPort = "5038";
     private const string DiagnosticsProvider = "content://com.hinge.office.diagnostics";

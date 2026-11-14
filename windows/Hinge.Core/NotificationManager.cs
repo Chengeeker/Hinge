@@ -9,6 +9,8 @@ public class NotificationManager : IDisposable
     private readonly NotificationFilter _filter;
     private readonly List<SessionConnection> _connections = new();
     private readonly object _connLock = new();
+    private readonly Dictionary<string, (string DeviceId, string OriginalId)> _notificationOrigins =
+        new(StringComparer.Ordinal);
     private bool _disposed;
 
     public NotificationFilter Filter => _filter;
@@ -71,6 +73,29 @@ public class NotificationManager : IDisposable
             var notif = NotificationEventMessage.FromJson(json);
             if (notif == null) return false;
 
+            // The wire carries an unscoped Android notificationId. Namespace
+            // the presenter-facing ID with its authenticated TCP peer so two
+            // phones cannot overwrite each other's toast or action mapping.
+            if (conn?.RemoteDeviceId is { Length: > 0 } sourceId)
+            {
+                notif.SourceDeviceId = sourceId;
+                notif.SourceDeviceName = _trustStore.GetAllTrustedDevices()
+                    .FirstOrDefault(d => string.Equals(d.DeviceId, sourceId,
+                        StringComparison.OrdinalIgnoreCase))?.Name ?? string.Empty;
+                var originalId = notif.NotificationId;
+                notif.NotificationId = DeviceWorkspaceManager.CacheKey(sourceId, originalId);
+                lock (_connLock)
+                {
+                    _notificationOrigins[notif.NotificationId] = (sourceId, originalId);
+                    if (_notificationOrigins.Count > 1000)
+                    {
+                        // Avoid unbounded retention on long-running systems.
+                        var oldest = _notificationOrigins.Keys.First();
+                        _notificationOrigins.Remove(oldest);
+                    }
+                }
+            }
+
             if (!_filter.ShouldAllow(notif))
             {
                 return false; // Filtered or deduplicated
@@ -106,13 +131,35 @@ public class NotificationManager : IDisposable
     public async Task SendActionToPeersAsync(NotificationActionMessage action)
     {
         if (action == null) return;
-        byte[] payloadBytes = Encoding.UTF8.GetBytes(action.ToJson());
-
         List<SessionConnection> targets;
+        string? origin = action.SourceDeviceId;
+        string originalNotificationId = action.NotificationId;
         lock (_connLock)
         {
-            targets = _connections.Where(c => c.IsSessionReady).ToList();
+            if (_notificationOrigins.TryGetValue(action.NotificationId, out var recorded))
+            {
+                origin = recorded.DeviceId;
+                originalNotificationId = recorded.OriginalId;
+            }
+            var ready = _connections.Where(c => c.IsSessionReady &&
+                !string.IsNullOrWhiteSpace(c.RemoteDeviceId)).ToArray();
+            var targetIds = NotificationRoutingPolicy.TargetIds(
+                ready.Select(c => c.RemoteDeviceId), origin)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            targets = ready.Where(c => c.RemoteDeviceId != null &&
+                targetIds.Contains(c.RemoteDeviceId))
+                .GroupBy(c => c.RemoteDeviceId!, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First()).ToList();
         }
+        if (targets.Count == 0) return;
+        var outgoing = new NotificationActionMessage
+        {
+            NotificationId = originalNotificationId,
+            ActionKey = action.ActionKey,
+            ReplyText = action.ReplyText,
+            Timestamp = action.Timestamp
+        };
+        byte[] payloadBytes = Encoding.UTF8.GetBytes(outgoing.ToJson());
 
         foreach (var conn in targets)
         {

@@ -164,9 +164,10 @@ public class Win32NotificationPresenter : INotificationPresenter
             {
                 var builder = new AppNotificationBuilder()
                     .AddArgument("notificationId", notification.NotificationId)
-                    .AddText(string.IsNullOrWhiteSpace(notification.AppName)
-                        ? "Hinge"
-                        : notification.AppName)
+                    .AddText(string.IsNullOrWhiteSpace(notification.SourceDeviceName)
+                        ? (string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName)
+                        : notification.SourceDeviceName + " · " +
+                            (string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName))
                     .AddText(string.IsNullOrWhiteSpace(notification.Title)
                         ? "新通知"
                         : notification.Title)
@@ -203,7 +204,9 @@ public class Win32NotificationPresenter : INotificationPresenter
         var xml = new XmlDocument();
         xml.LoadXml(
             $"<toast><visual><binding template=\"ToastGeneric\">" +
-            $"<text>{EscapeXml(string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName)}</text>" +
+            $"<text>{EscapeXml((string.IsNullOrWhiteSpace(notification.SourceDeviceName) ? "" :
+                notification.SourceDeviceName + " · ") +
+                (string.IsNullOrWhiteSpace(notification.AppName) ? "Hinge" : notification.AppName))}</text>" +
             $"<text>{EscapeXml(string.IsNullOrWhiteSpace(notification.Title) ? "收到新通知" : notification.Title)}</text>" +
             $"<text>{EscapeXml(notification.Content)}</text>" +
             "</binding></visual></toast>");

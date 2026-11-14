@@ -5,6 +5,12 @@ namespace Hinge.Core;
 
 public class NotificationEventMessage
 {
+    [JsonIgnore]
+    public string SourceDeviceId { get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public string SourceDeviceName { get; set; } = string.Empty;
+
     [JsonPropertyName("notificationId")]
     public string NotificationId { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -56,6 +62,9 @@ public class NotificationEventMessage
 
 public class NotificationActionMessage
 {
+    [JsonIgnore]
+    public string SourceDeviceId { get; set; } = string.Empty;
+
     [JsonPropertyName("notificationId")]
     public string NotificationId { get; set; } = string.Empty;
 
@@ -107,7 +116,7 @@ public class NotificationFilter
         // 3. Debounce deduplication check (pkg + title + content)
         lock (_lock)
         {
-            string key = $"{msg.PackageName}:{msg.Title}:{msg.Content}";
+            string key = $"{msg.SourceDeviceId}:{msg.PackageName}:{msg.Title}:{msg.Content}";
             DateTime now = DateTime.UtcNow;
 
             // Prune expired entries

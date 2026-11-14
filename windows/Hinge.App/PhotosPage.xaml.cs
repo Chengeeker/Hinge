@@ -206,7 +206,7 @@ public sealed partial class PhotosPage : Page
         PageHeading.Text = "相册集";
         PageDescription.Text = "先显示相册集，封面使用该相册最新一张图片；进入相册后再读取图片缩略图。";
 
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         _connection = connection;
         if (_client == null || connection?.IsSessionReady != true)
         {
@@ -352,7 +352,7 @@ public sealed partial class PhotosPage : Page
 
     private async Task LoadTimelineAsync()
     {
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         _connection = connection;
         _timelineMode = true;
         _currentAlbum = null;
@@ -386,7 +386,7 @@ public sealed partial class PhotosPage : Page
 
     private async Task LoadAlbumAsync(RemotePhotoAlbum album)
     {
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         _connection = connection;
         if (_client == null || connection?.IsSessionReady != true)
         {
@@ -420,7 +420,7 @@ public sealed partial class PhotosPage : Page
         string emptyMessage,
         string completedTitle)
     {
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         _connection = connection;
         if (_client == null || connection?.IsSessionReady != true)
         {
@@ -491,7 +491,7 @@ public sealed partial class PhotosPage : Page
             return;
         }
 
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         if (connection?.IsSessionReady != true) return;
 
         var cancellation = _photoLoadingCancellation;
@@ -584,7 +584,7 @@ public sealed partial class PhotosPage : Page
     private async Task ShowPhotoPreviewAsync(RemotePhotoItem photo)
     {
         if (IsPhotoSelectionMode || _photoOpening) return;
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法预览图片", "设备会话已断开。", InfoBarSeverity.Error);
@@ -1042,7 +1042,7 @@ public sealed partial class PhotosPage : Page
         item.CanDrag = true;
         item.DragStarting += (_, args) =>
         {
-            var connection = _connectionProvider?.Invoke() ?? _connection;
+            var connection = (_connectionProvider is null ? _connection : _connectionProvider());
             if (_client == null || connection?.IsSessionReady != true ||
                 string.IsNullOrWhiteSpace(photo.Uri))
             {
@@ -1203,7 +1203,7 @@ public sealed partial class PhotosPage : Page
     private async Task LoadIntoImageAsync(Image image, string uri, bool thumbnail, int version)
     {
         if (_client == null || version != _loadVersion) return;
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         if (connection?.IsSessionReady != true || string.IsNullOrWhiteSpace(uri)) return;
         await _thumbnailGate.WaitAsync();
         try

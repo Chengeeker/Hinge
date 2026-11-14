@@ -73,6 +73,18 @@
                 </local:HandCursorNavigationViewItem>
             </NavigationView.MenuItems>
 
+            <NavigationView.PaneFooter>
+                <StackPanel Spacing="6" Padding="12,4,12,10">
+                    <TextBlock Text="当前工作设备" Style="{StaticResource HingeCaptionStyle}" />
+                    <ComboBox x:Name="WorkspaceDeviceSelector"
+                        AutomationProperties.AutomationId="MainWindow.WorkspaceDeviceSelector"
+                        AutomationProperties.Name="选择工作设备"
+                        PlaceholderText="选择手机"
+                        MinWidth="0"
+                        HorizontalAlignment="Stretch"
+                        SelectionChanged="WorkspaceDeviceSelector_SelectionChanged" />
+                </StackPanel>
+            </NavigationView.PaneFooter>
             <NavigationView.FooterMenuItems>
                 <local:HandCursorNavigationViewItem Content="设置" AutomationProperties.AutomationId="Navigation.settings" Tag="settings">
                     <local:HandCursorNavigationViewItem.Icon><SymbolIcon Symbol="Setting" /></local:HandCursorNavigationViewItem.Icon>

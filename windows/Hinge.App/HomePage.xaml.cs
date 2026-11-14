@@ -17,6 +17,8 @@ public sealed partial class HomePage : Page
     public Button Refresh => RefreshButton;
     public Button SendFile => SendFileButton;
     public Button ClearTransferHistory => ClearTransferHistoryButton;
+    public StackPanel DeviceCardsPanel => ConnectedDeviceCards;
+    public Border DeviceCardsContainer => ConnectedDeviceCardsContainer;
 
     public event EventHandler<TransferHistoryRecord>? TransferCancelRequested;
     public event EventHandler<TransferHistoryRecord>? TransferHistoryDeleteRequested;

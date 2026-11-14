@@ -10,6 +10,7 @@ public sealed partial class ScreenControlPage : Page
     public Button Stop => StopButton;
     public Button Pairing => PairingButton;
     public TextBlock Status => StatusText;
+    public TextBlock TargetDevice => SelectedPhoneLabel;
     public TextBlock FrameRate => FrameRateText;
     public ComboBox Codec => CodecOptions;
     public Slider MaxFps => MaxFpsBox;

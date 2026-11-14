@@ -29,18 +29,27 @@ class HingeDiagnosticsProvider : ContentProvider() {
     }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
-        if (mode != "r" || uri.lastPathSegment != "connection") {
+        if (mode != "r" || uri.lastPathSegment !in setOf("connection", "identity")) {
             throw FileNotFoundException("Unsupported diagnostics path")
         }
 
         val appContext = context?.applicationContext
             ?: throw FileNotFoundException("Application context unavailable")
+        val path = uri.lastPathSegment
         val (reader, writer) = ParcelFileDescriptor.createPipe()
         thread(name = "hinge-diagnostics-export", isDaemon = true) {
             ParcelFileDescriptor.AutoCloseOutputStream(writer).use { output: OutputStream ->
-                val log = HingeForegroundService.current?.connectionBroker()?.readDiagnostics()
-                    ?: HingeDiagnostics.from(appContext).read()
-                output.write(log.toByteArray(StandardCharsets.UTF_8))
+                // Manifest requires DUMP permission. ADB shell may discover
+                // only the pseudonymous Hinge DeviceId, never ANDROID_ID or
+                // the pairing key. This lets a Windows host distinguish two
+                // simultaneously paired wireless-ADB transports safely.
+                val result = if (path == "identity") {
+                    HingeDeviceIdentity.loadOrCreate(appContext)["deviceId"]?.toString().orEmpty()
+                } else {
+                    HingeForegroundService.current?.connectionBroker()?.readDiagnostics()
+                        ?: HingeDiagnostics.from(appContext).read()
+                }
+                output.write(result.toByteArray(StandardCharsets.UTF_8))
             }
         }
         return reader

@@ -138,7 +138,7 @@ public sealed partial class NotesPage : Page
         };
         if (await MainWindow.ShowM3ContentDialogAsync(dialog) != ContentDialogResult.Primary) return;
 
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法删除", "设备会话已断开。", InfoBarSeverity.Error);
@@ -195,7 +195,7 @@ public sealed partial class NotesPage : Page
             return;
         }
 
-        var connection = _connectionProvider?.Invoke() ?? _connection;
+        var connection = (_connectionProvider is null ? _connection : _connectionProvider());
         if (_client == null || connection?.IsSessionReady != true)
         {
             SetStatus("无法保存", "设备会话已断开。", InfoBarSeverity.Error);
@@ -220,7 +220,7 @@ public sealed partial class NotesPage : Page
         }
     }
 
-    private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await LoadAsync(_connectionProvider?.Invoke() ?? _connection);
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await LoadAsync((_connectionProvider is null ? _connection : _connectionProvider()));
 
     private void SetStatus(string title, string message, InfoBarSeverity severity)
     {

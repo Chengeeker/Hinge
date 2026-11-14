@@ -26,6 +26,52 @@ public sealed partial class MainWindow
         _deviceWorkspace.RestoreSelection(stored);
     }
 
+    private void UpdateWorkspaceDeviceFooterLayout()
+    {
+        if (AppNavigation == null || ExpandedWorkspaceDeviceSelector == null ||
+            CompactWorkspaceDeviceButton == null) return;
+
+        // NavigationView's compact pane is only 72 px wide. Do not let the
+        // full device label/ComboBox participate in its layout measurements.
+        var compact = !AppNavigation.IsPaneOpen;
+        ExpandedWorkspaceDeviceSelector.Visibility = compact
+            ? Visibility.Collapsed : Visibility.Visible;
+        CompactWorkspaceDeviceButton.Visibility = compact
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void CompactWorkspaceDeviceButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Re-query live connections on every click rather than reusing a stale
+        // flyout. Two phones with the same model still have distinct DeviceIds.
+        var targets = GetPhoneTargets();
+        var selected = _deviceWorkspace.SelectedDeviceId;
+        var choices = WorkspaceDeviceChoices.ForSelector(targets, selected);
+        var menu = new MenuFlyout();
+        if (choices.Count == 0)
+        {
+            menu.Items.Add(new MenuFlyoutItem
+            {
+                Text = "暂无可选择的手机",
+                IsEnabled = false
+            });
+        }
+        foreach (var phone in choices)
+        {
+            var deviceId = phone.DeviceId;
+            var current = string.Equals(deviceId, selected,
+                StringComparison.OrdinalIgnoreCase);
+            var item = new MenuFlyoutItem
+            {
+                Text = phone.Name + (phone.IsConnected ? " · 已连接" : " · 离线"),
+                Icon = current ? new SymbolIcon { Symbol = Symbol.Accept } : null
+            };
+            item.Click += (_, _) => SelectWorkspaceDevice(deviceId);
+            menu.Items.Add(item);
+        }
+        menu.ShowAt(CompactWorkspaceDeviceButton);
+    }
+
     private void WorkspaceDeviceSelector_SelectionChanged(object sender,
         SelectionChangedEventArgs e)
     {
@@ -81,6 +127,16 @@ public sealed partial class MainWindow
         // Trusted history includes old installs with changed Android identities.
         // Do not show those 40+ offline ghosts in the active-workspace dropdown.
         var choices = WorkspaceDeviceChoices.ForSelector(targets, selected);
+        var currentChoice = choices.FirstOrDefault(phone =>
+            string.Equals(phone.DeviceId, selected, StringComparison.OrdinalIgnoreCase));
+        var compactLabel = currentChoice == null
+            ? "暂无当前工作设备"
+            : "当前工作设备：" + currentChoice.Name +
+              (currentChoice.IsConnected ? "（已连接）" : "（离线）");
+        CompactWorkspaceDeviceButton.IsEnabled = choices.Count > 0;
+        ToolTipService.SetToolTip(CompactWorkspaceDeviceButton, compactLabel);
+        AutomationProperties.SetName(CompactWorkspaceDeviceButton, compactLabel + "，点击切换");
+
         var fingerprint = string.Join("|", choices.Select(t =>
             t.DeviceId + ":" + t.Name + ":" + t.IsConnected)) + "|" + selected;
         if (_workspaceSelectorFingerprint != fingerprint)

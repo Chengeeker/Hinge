@@ -3368,6 +3368,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePaneResizeHandle()
     {
+        UpdateWorkspaceDeviceFooterLayout();
         PaneResizeHandle.Value = AppNavigation.OpenPaneLength;
         PaneResizeHandle.Height = PaneResizeCanvas.ActualHeight;
         var canResize = AppNavigation.IsPaneOpen && AppNavigation.DisplayMode == NavigationViewDisplayMode.Expanded;

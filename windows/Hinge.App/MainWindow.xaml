@@ -74,16 +74,34 @@
             </NavigationView.MenuItems>
 
             <NavigationView.PaneFooter>
-                <StackPanel Spacing="6" Padding="12,4,12,10">
-                    <TextBlock Text="当前工作设备" Style="{StaticResource HingeCaptionStyle}" />
-                    <ComboBox x:Name="WorkspaceDeviceSelector"
-                        AutomationProperties.AutomationId="MainWindow.WorkspaceDeviceSelector"
-                        AutomationProperties.Name="选择工作设备"
-                        PlaceholderText="选择手机"
-                        MinWidth="0"
-                        HorizontalAlignment="Stretch"
-                        SelectionChanged="WorkspaceDeviceSelector_SelectionChanged" />
-                </StackPanel>
+                <Grid x:Name="WorkspaceDeviceFooter" Padding="12,4,12,10">
+                    <!-- Expanded navigation: show the full device name and selector. -->
+                    <StackPanel x:Name="ExpandedWorkspaceDeviceSelector" Spacing="6">
+                        <TextBlock Text="当前工作设备" Style="{StaticResource HingeCaptionStyle}" />
+                        <ComboBox x:Name="WorkspaceDeviceSelector"
+                            AutomationProperties.AutomationId="MainWindow.WorkspaceDeviceSelector"
+                            AutomationProperties.Name="选择工作设备"
+                            PlaceholderText="选择手机"
+                            MinWidth="0"
+                            HorizontalAlignment="Stretch"
+                            SelectionChanged="WorkspaceDeviceSelector_SelectionChanged" />
+                    </StackPanel>
+                    <!-- Compact navigation: a single icon aligned with navigation items.
+                         Never measure or clip the expanded ComboBox in the 72 px pane. -->
+                    <local:HandCursorButton x:Name="CompactWorkspaceDeviceButton"
+                        AutomationProperties.AutomationId="MainWindow.CompactWorkspaceDeviceButton"
+                        AutomationProperties.Name="切换当前工作设备"
+                        Width="48" Height="48"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed"
+                        CornerRadius="{StaticResource HingeCornerRadius}"
+                        Background="{ThemeResource HingeM3PrimaryContainerBrush}"
+                        Click="CompactWorkspaceDeviceButton_Click">
+                        <FontIcon Glyph="&#xE8EA;" FontSize="20"
+                            Foreground="{ThemeResource HingeM3OnPrimaryContainerBrush}" />
+                    </local:HandCursorButton>
+                </Grid>
             </NavigationView.PaneFooter>
             <NavigationView.FooterMenuItems>
                 <local:HandCursorNavigationViewItem Content="设置" AutomationProperties.AutomationId="Navigation.settings" Tag="settings">

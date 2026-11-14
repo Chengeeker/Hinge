@@ -93,3 +93,13 @@ Android (Gradle 内存提高，避免大型 Compose Debug 测试引发 Kotlin OO
 **明确不排除**：`Download/阅读备份/backup.zip`、`Documents/YiYuJiZhang/*.penny`、`Pictures/.2041841469/sample_0_20.webp`、用途未确认的 `privacy.db`、普通 APK/ZIP、用户照片、相似但不完全相同的目录名。这些文件可能具有价值或用途未证实，先不纳入排除名单。
 
 此筛选只提升最近文件的信噪比；系统缓存的实际磁盘占用不会因隐藏而改变。安装包和原有 `v3.1.0-pre2` 预发行版互不覆盖。
+
+## 侧边栏收起时的当前工作设备选择器（2026-11-14）
+
+- 修复 `NavigationView` 收起状态下，`PaneFooter` 的“当前工作设备”标题被强制断行、`ComboBox` 被裁切的问题。
+- 展开态继续使用原机型列表；收起态完全隐藏文字/下拉框，以 `48×48` 的手机图标按钮代替，与侧边栏图标水平居中对齐，并使用 `HingeCornerRadius`（12）、`HingeM3PrimaryContainerBrush` / `HingeM3OnPrimaryContainerBrush`。
+- 点击图标动态从 `GetPhoneTargets()` 生成 `MenuFlyout`：按唯一 `DeviceId` 展示当前可选设备及连接状态，当前选中项打勾；菜单切换复用 `SelectWorkspaceDevice` 的原路由及持久化逻辑，不创建另一份选择状态。
+- 折叠按钮的工具提示及无障碍名称显示实际当前机型及在线/离线状态；在窗口初始化、PaneOpened、PaneClosed、DisplayModeChanged 时切换两套 Footer 的 `Visibility`，避免在窄侧栏测量完整下拉框。
+- Windows 原有 398 项测试全部通过，WinUI 客户端构建为 0 错误；安装包和便携版已重新构建并安装在 `D:\Hinge`。
+- 真实 Windows UI Automation 检查：收起按钮中心 X 与首页导航图标中心 X 的偏差为 **0 px**；实际点击手机按钮出现对应 OPPO 机型菜单且能选中；打开导航后紧凑图标隐藏、完整 ComboBox 显示，重新收起后状态正确恢复。
+- 只改 Windows 界面，Android 仍是 **3.1.0（214）**；GitHub 已存在的 `v3.1.0-pre2` Release 不被修改。

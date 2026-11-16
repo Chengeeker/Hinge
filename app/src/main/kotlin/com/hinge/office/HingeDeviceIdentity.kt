@@ -21,6 +21,19 @@ import java.util.UUID
 internal fun sameDeviceId(left: String?, right: String?): Boolean =
     !left.isNullOrBlank() && !right.isNullOrBlank() && left.equals(right, ignoreCase = true)
 
+internal fun identityMismatchField(
+    expectedDeviceId: String?,
+    actualDeviceId: String?,
+    targetDeviceId: String?,
+    localDeviceId: String?,
+): String? = when {
+    !expectedDeviceId.isNullOrEmpty() && !sameDeviceId(expectedDeviceId, actualDeviceId) ->
+        "expectedDeviceId"
+    !targetDeviceId.isNullOrEmpty() && !sameDeviceId(targetDeviceId, localDeviceId) ->
+        "targetDeviceId"
+    else -> null
+}
+
 internal object HingeDeviceIdentity {
     private const val NAMESPACE = "com.hinge.office/android-physical-device/v1/"
 

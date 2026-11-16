@@ -2130,8 +2130,14 @@ class HingeNativeConnectionBroker(
             val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull() ?: return
             val deviceId = json.optString("deviceId").trim()
             val targetId = json.optString("targetDeviceId").takeUnless { it == "null" }.orEmpty()
-            if ((expectedDeviceId.isNotEmpty() && !sameDeviceId(deviceId, expectedDeviceId)) ||
-                (targetId.isNotEmpty() && !sameDeviceId(targetId, identity?.deviceId))) {
+            val mismatchField = identityMismatchField(
+                expectedDeviceId,
+                deviceId,
+                targetId,
+                identity?.deviceId,
+            )
+            if (mismatchField != null) {
+                diagnostics.log("identity_mismatch_rejected", mapOf("field" to mismatchField))
                 close(false, "identity_mismatch", reconnect = false)
                 return
             }

@@ -287,7 +287,27 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                 val state = HingeForegroundService.current?.connectionBroker()?.connectionState(id)
                 if (state == null && event.text("state") != "disconnected") return
                 val merged = connections[id].orEmpty() + event + ("state" to (state ?: "disconnected"))
-                if(merged.text("state")=="connected"&&expectedPeers[id]?.let{!sameDeviceId(it, merged.text("deviceId"))}==true){run{api.call("nativeDisconnect",mapOf("connectionId" to id,"manual" to true));message="目标设备身份不匹配"};return}
+                val expectedDeviceId = expectedPeers[id]
+                val actualDeviceId = merged.text("deviceId")
+                if (merged.text("state") == "connected" && expectedDeviceId != null &&
+                    !sameDeviceId(expectedDeviceId, actualDeviceId)
+                ) {
+                    HingeDiagnostics.from(activity).log(
+                        "ui_identity_mismatch_guard",
+                        mapOf(
+                            "connectionId" to id,
+                            "expectedDeviceId" to expectedDeviceId,
+                            "actualDeviceId" to actualDeviceId,
+                            "remoteAddress" to merged.text("remoteAddress"),
+                        ),
+                    )
+                    run {
+                        // A safety cleanup is not a user disconnect and must not suppress discovery recovery.
+                        api.call("nativeDisconnect", mapOf("connectionId" to id, "manual" to false))
+                        message = "目标设备身份不匹配"
+                    }
+                    return
+                }
                 connections=connections+(id to merged)
                 if (state == null) {
                     connections = connections - id

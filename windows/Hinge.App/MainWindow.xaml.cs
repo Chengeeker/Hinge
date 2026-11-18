@@ -5840,7 +5840,12 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(() => OnPeerIdentified(sender, peer));
             return;
         }
-        if (sender is not SessionConnection connection || !connection.IsSessionReady) return;
+        if (_allowClose || sender is not SessionConnection connection || !connection.IsSessionReady) return;
+        // Handshakes can complete in parallel after a BLE wake and shell send.
+        // Only the session selected by the manager may update WinUI; stale
+        // duplicate callbacks must not mutate a disappearing device card.
+        if (_sessionManager.ConnectionForDevice(peer.DeviceId) is { } selected &&
+            !ReferenceEquals(selected, connection)) return;
 
         // Direct TCP can arrive without the UDP reverse-request marker. Do
         // the same process-lifetime manual-disconnect check here so an
@@ -5879,7 +5884,10 @@ public sealed partial class MainWindow : Window
 
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!connection.IsSessionReady) return;
+            if (_allowClose || !connection.IsSessionReady) return;
+            // The queued work may run after another socket won the race.
+            if (_sessionManager.ConnectionForDevice(peer.DeviceId) is { } selected &&
+                !ReferenceEquals(selected, connection)) return;
             Device? device = FindDeviceForConnection(connection);
             if (device == null)
             {
@@ -5995,11 +6003,16 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (_allowClose) return;
         // Queued notifications may describe a state the connection has already left.
         state = connection.State;
+        var deviceId = connection.RemoteDeviceId ?? string.Empty;
+        if ((state is SessionState.Connected or SessionState.Suspended) &&
+            !string.IsNullOrWhiteSpace(deviceId) &&
+            _sessionManager.ConnectionForDevice(deviceId) is { } selected &&
+            !ReferenceEquals(selected, connection)) return;
 
         DispatcherQueue.TryEnqueue(() => UpdateHomeSendFileAvailability());
-        var deviceId = connection.RemoteDeviceId ?? string.Empty;
         if (state == SessionState.Suspended)
         {
             _registry.MarkSessionSuspended(deviceId);

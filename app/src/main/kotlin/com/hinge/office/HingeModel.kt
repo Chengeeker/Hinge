@@ -289,8 +289,8 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                 val merged = connections[id].orEmpty() + event + ("state" to (state ?: "disconnected"))
                 val expectedDeviceId = expectedPeers[id]
                 val actualDeviceId = merged.text("deviceId")
-                if (merged.text("state") == "connected" && expectedDeviceId != null &&
-                    !sameDeviceId(expectedDeviceId, actualDeviceId)
+                if (merged.text("state") == "connected" &&
+                    shouldRejectConnectedUiPeer(expectedDeviceId, actualDeviceId)
                 ) {
                     HingeDiagnostics.from(activity).log(
                         "ui_identity_mismatch_guard",
@@ -313,7 +313,8 @@ class HingeModel(val activity: MainActivity, val api: NativeApi) : Closeable {
                     connections = connections - id
                     remote?.takeIf { it.peer.text("connectionId")==id }?.connectionLost()
                 }
-                if (event.text("state") == "connected" && state == "connected") {
+                if (state == "connected" && merged.text("deviceId").isNotBlank() &&
+                    (event.text("state") == "connected" || event.text("event") == "peer")) {
                     if (foreground && remote?.let { it.isClosed && it.peer.text("connectionId") == id } == true) {
                         remoteRevision++
                     }

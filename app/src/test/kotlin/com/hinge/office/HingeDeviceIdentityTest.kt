@@ -34,4 +34,15 @@ class HingeDeviceIdentityTest {
         assertNull(identityMismatchField("WINDOWS-A", "windows-a", "ANDROID-A", "android-a"))
         assertNull(identityMismatchField("", "legacy-peer", "", "android-a"))
     }
+
+    @Test fun uiDoesNotTreatUndeliveredPeerIdentityAsMismatch() {
+        assertTrue(!shouldRejectConnectedUiPeer("windows-a", ""))
+        assertTrue(!shouldRejectConnectedUiPeer("windows-a", null))
+        assertTrue(!shouldRejectConnectedUiPeer("windows-a", "WINDOWS-A"))
+        assertTrue(!shouldRejectConnectedUiPeer(null, "windows-b"))
+        assertTrue(shouldRejectConnectedUiPeer("windows-a", "windows-b"))
+        // Protocol validation remains strict: a missing authenticated ID is
+        // still rejected during the handshake itself.
+        assertEquals("expectedDeviceId", identityMismatchField("windows-a", "", "", "android-a"))
+    }
 }

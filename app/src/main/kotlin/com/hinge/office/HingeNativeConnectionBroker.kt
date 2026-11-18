@@ -955,7 +955,14 @@ class HingeNativeConnectionBroker(
             // Every racing callback must choose the SAME winner. Previously
             // each used "identified" as first/fallback and could close the
             // other's session, leaving no connection at all.
-            val canonical = ready.filter { it.isOutbound == preferOutbound }
+            // A foreground probe deliberately suspends an old socket. A new
+            // authenticated, connected socket is healthier than that stale
+            // session even if the old one had the preferred direction. The
+            // previous ordering discarded the fresh connection, then timed out
+            // the old one and interrupted queued file transfers.
+            val responsive = ready.filter { it.state == "connected" }
+            val candidates = responsive.ifEmpty { ready }
+            val canonical = candidates.filter { it.isOutbound == preferOutbound }
             // Keep an established preferred-direction session; when every
             // available socket is in the fallback direction, choose the
             // newest one so a fresh retry can replace a half-dead old TCP
@@ -965,7 +972,7 @@ class HingeNativeConnectionBroker(
                     { it.createdAt }, { it.connectionId },
                 ))
             } else {
-                ready.maxWithOrNull(compareBy<NativeConnection>(
+                candidates.maxWithOrNull(compareBy<NativeConnection>(
                     { it.createdAt }, { it.connectionId },
                 ))
             } ?: return@synchronized emptyList<NativeConnection>()
@@ -2092,6 +2099,9 @@ class HingeNativeConnectionBroker(
                     "event" to "state",
                     "connectionId" to connectionId,
                     "state" to value,
+                    // State events may arrive before the peer callback is delivered.
+                    // Preserve the authenticated identity on every state snapshot.
+                    "deviceId" to peer?.deviceId,
                     "remoteAddress" to address,
                     "pairingError" to pairingError.ifEmpty { null },
                 ),

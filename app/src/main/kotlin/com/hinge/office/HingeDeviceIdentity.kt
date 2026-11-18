@@ -21,6 +21,12 @@ import java.util.UUID
 internal fun sameDeviceId(left: String?, right: String?): Boolean =
     !left.isNullOrBlank() && !right.isNullOrBlank() && left.equals(right, ignoreCase = true)
 
+/** UI snapshots may arrive before the native peer event. Missing identity is
+ * not evidence of a mismatch; the native handshake validates every real ID. */
+internal fun shouldRejectConnectedUiPeer(expectedDeviceId: String?, actualDeviceId: String?): Boolean =
+    !expectedDeviceId.isNullOrBlank() && !actualDeviceId.isNullOrBlank() &&
+        !sameDeviceId(expectedDeviceId, actualDeviceId)
+
 internal fun identityMismatchField(
     expectedDeviceId: String?,
     actualDeviceId: String?,

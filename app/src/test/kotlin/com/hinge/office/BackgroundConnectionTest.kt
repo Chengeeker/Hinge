@@ -154,6 +154,22 @@ class BackgroundConnectionTest {
         assertNull(broker.connectionState("test-0"))
     }
 
+    @Test fun newConnectedSessionReplacesOldSuspendedDuplicate() {
+        val old = connection()
+        val fresh = connection()
+        val type = Class.forName("com.hinge.office.NativePeer")
+        val peer = type.declaredConstructors.single().apply { isAccessible = true }
+            .newInstance("windows-peer", "Windows", "", "", "windows", emptyList<String>(), false, 16_777_216)
+        set(old, "peer", peer)
+        set(fresh, "peer", peer)
+        set(old, "state", "suspended")
+        broker.javaClass.getDeclaredMethod("removeDuplicateConnections", fresh.javaClass, String::class.java)
+            .apply { isAccessible = true }.invoke(broker, fresh, "windows-peer")
+        assertTrue(get<Boolean>(old, "closed"))
+        assertFalse(get<Boolean>(fresh, "closed"))
+        assertEquals("connected", broker.connectionState("test-1"))
+    }
+
     @Test fun ordinaryAppCannotRequestShellWake() {
         val provider = Robolectric.buildContentProvider(HingeDiagnosticsProvider::class.java).create().get()
         assertThrows(SecurityException::class.java) { provider.call("adb_wake", "invalid", null) }

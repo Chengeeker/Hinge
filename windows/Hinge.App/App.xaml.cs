@@ -172,6 +172,10 @@ public partial class App : Application
 
     private void OnProcessExit(object? sender, EventArgs e)
     {
+        // Fallback if Windows exits the process before the main window receives
+        // WM_ENDSESSION (or if Hinge is terminated without a visible window).
+        AdbProcessGate.Shared.SessionEnding = true;
+        AdbProcessGate.TryStopPrivateServer();
         LogLifecycle("process-exit");
     }
 

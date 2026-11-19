@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Hinge.App;
 
 namespace Hinge.Tests;
@@ -25,5 +28,31 @@ public sealed class AdbProcessGateTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await process.WaitForExitAsync(timeout.Token);
         Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
+    public async Task ShutdownSendsProtocolKillOnlyToSelectedAdbPort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var accepted = listener.AcceptTcpClientAsync();
+
+        Assert.True(AdbProcessGate.TryStopPrivateServer(port));
+
+        using var client = await accepted.WaitAsync(TimeSpan.FromSeconds(5));
+        var request = new byte[13];
+        await client.GetStream().ReadExactlyAsync(request);
+        Assert.Equal("0009host:kill", Encoding.ASCII.GetString(request));
+    }
+
+    [Fact]
+    public void MissingServerDoesNotStartAnotherAdbProcess()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        Assert.False(AdbProcessGate.TryStopPrivateServer(port));
     }
 }

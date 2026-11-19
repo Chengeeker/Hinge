@@ -3619,6 +3619,9 @@ public sealed partial class MainWindow : Window
         {
             AdbProcessGate.Shared.SessionEnding = true;
             _bleRecovery?.Cancellation.Cancel();
+            // Stop the persistent server before Windows starts tearing down
+            // networking. This does not launch adb.exe or affect port 5037.
+            AdbProcessGate.TryStopPrivateServer();
             return new IntPtr(1);
         }
         if (message == WmEndSession)
@@ -3630,6 +3633,7 @@ public sealed partial class MainWindow : Window
                 _allowClose = true;
                 _bleRecovery?.Cancellation.Cancel();
                 StopAdbWork();
+                AdbProcessGate.TryStopPrivateServer();
             }
             else
             {
@@ -9168,6 +9172,7 @@ public sealed partial class MainWindow : Window
         AdbProcessGate.Shared.SessionEnding = true;
         _bleRecovery?.Cancellation.Cancel();
         StopAdbWork();
+        AdbProcessGate.TryStopPrivateServer();
         _desktopSharingClosed = true;
         _ = StopDesktopSharingAsync();
         ThemeBrushes.PaletteChanged -= IntegratedTitleBar_PaletteChanged;

@@ -25,6 +25,7 @@ public sealed partial class TransferSettingsPage : Page
     public Button WirelessAdbPair => WirelessAdbPairButton;
     public Button WirelessAdbQrPair => WirelessAdbQrPairButton;
     public Button WirelessAdbConnect => WirelessAdbConnectButton;
+    public Button WirelessAdbRefreshDevices => WirelessAdbRefreshDevicesButton;
     public Button WirelessAdbPullLogs => WirelessAdbPullLogsButton;
     public TextBox WirelessAdbCommand => WirelessAdbCommandTextBox;
     public Button WirelessAdbCommandRun => WirelessAdbCommandRunButton;
@@ -59,6 +60,72 @@ public sealed partial class TransferSettingsPage : Page
     }
 
     public void SetWirelessAdbClipboardStatus(string message) => WirelessAdbClipboardStatusText.Text = message;
+    public void SetWirelessAdbPairResult(string message) => WirelessAdbPairResultText.Text = message;
+
+    public void SetWirelessAdbDevicesError(string message) => WirelessAdbDevicesSummaryText.Text = message;
+
+    internal void SetWirelessAdbDevices(IReadOnlyList<WirelessAdbDeviceInfo> devices)
+    {
+        var connected = devices.Count(device => device.Connected);
+        var pending = devices.Count - connected;
+        WirelessAdbDevicesSummaryText.Text =
+            $"{connected} 台已连接" + (pending == 0 ? "" : $" · {pending} 条待连接 / 离线") +
+            " · Hinge 专用 ADB 端口 5038 · 自动刷新";
+        WirelessAdbDevicesPanel.Children.Clear();
+        if (devices.Count == 0)
+        {
+            WirelessAdbDevicesPanel.Children.Add(new TextBlock
+            {
+                Text = "暂无设备。打开手机或平板的无线调试后，点击刷新。",
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap
+            });
+            return;
+        }
+
+        foreach (var device in devices)
+        {
+            var heading = new Grid { ColumnSpacing = 12 };
+            heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+            heading.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+            var name = new TextBlock
+            {
+                Text = device.Name,
+                TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center
+            };
+            var status = new TextBlock
+            {
+                Text = device.Status,
+                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center
+            };
+            Grid.SetColumn(status, 1);
+            heading.Children.Add(name);
+            heading.Children.Add(status);
+            var details = new TextBlock
+            {
+                Text = device.Details,
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                Opacity = 0.75,
+                FontSize = 12
+            };
+            var contents = new StackPanel { Spacing = 5 };
+            contents.Children.Add(heading);
+            contents.Children.Add(details);
+            WirelessAdbDevicesPanel.Children.Add(new Border
+            {
+                Padding = new Microsoft.UI.Xaml.Thickness(12, 10, 12, 10),
+                CornerRadius = new Microsoft.UI.Xaml.CornerRadius(12),
+                BorderThickness = new Microsoft.UI.Xaml.Thickness(1),
+                BorderBrush = (Microsoft.UI.Xaml.Media.Brush)ResourcesOrTheme("HingeM3OutlineVariantBrush"),
+                Child = contents
+            });
+        }
+    }
+
+    private object ResourcesOrTheme(string key) =>
+        Microsoft.UI.Xaml.Application.Current.Resources.TryGetValue(key, out var brush)
+            ? brush : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray);
 
     private void ApplyWirelessAdbStatusStyle()
     {

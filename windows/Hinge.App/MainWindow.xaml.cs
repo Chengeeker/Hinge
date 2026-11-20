@@ -1369,6 +1369,7 @@ public sealed partial class MainWindow : Window
         page.WirelessAdbPair.Click += WirelessAdbPair_Click;
         page.WirelessAdbQrPair.Click += WirelessAdbQrPair_Click;
         page.WirelessAdbConnect.Click += WirelessAdbConnect_Click;
+        ConfigureWirelessAdbInventory(page);
         page.WirelessAdbPullLogs.Click += WirelessAdbPullLogs_Click;
         page.WirelessAdbCommandRun.Click += WirelessAdbCommandRun_Click;
         page.WirelessAdbCommandStop.Click += (_, _) => _adbConsoleCancellation?.Cancel();
@@ -1467,6 +1468,7 @@ public sealed partial class MainWindow : Window
         var connectPort = page.WirelessAdbConnectPort.Text.Trim();
         var code = page.WirelessAdbPairingCode.Password;
         page.WirelessAdbPairingCode.Password = string.Empty;
+        page.SetWirelessAdbPairResult("正在验证六位配对码，请保持平板上的配对弹窗开启…");
         SetWirelessAdbBusy(page, true);
         try
         {
@@ -1480,6 +1482,7 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             SetWirelessAdbConnectionStatus($"无线 ADB 配对失败：{exception.Message}");
+            page.SetWirelessAdbPairResult($"配对阶段失败：{exception.Message}");
         }
         finally
         {
@@ -1492,6 +1495,7 @@ public sealed partial class MainWindow : Window
         if (_transferSettingsPage is not { } page || _wirelessAdbBusy || AdbProcessGate.Shared.SessionEnding) return;
         using var cancellation = new CancellationTokenSource();
         _wirelessAdbQrCancellation = cancellation;
+        page.SetWirelessAdbPairResult("正在等待平板扫码及广播配对服务…");
         SetWirelessAdbBusy(page, true);
         Task? pairingTask = null;
         try
@@ -1563,12 +1567,14 @@ public sealed partial class MainWindow : Window
                     image.Visibility = Visibility.Collapsed;
                     status.Text = message;
                     SetWirelessAdbConnectionStatus(message);
+                    page.SetWirelessAdbPairResult(message);
                 }
             }
         }
         catch (Exception exception)
         {
             SetWirelessAdbConnectionStatus($"无法显示配对二维码：{exception.Message}");
+            page.SetWirelessAdbPairResult($"二维码创建失败：{exception.Message}");
         }
         finally
         {
@@ -1582,18 +1588,32 @@ public sealed partial class MainWindow : Window
     private async Task CompleteWirelessAdbPairingAsync(
         TransferSettingsPage page, WirelessAdbPairingResult pairing, string connectPort)
     {
+        // Pairing saves a key; it does not guarantee that ADB connected.
+        // Verify the new target independently, leaving the previous phone's
+        // background connection and clipboard session untouched.
         page.WirelessAdbHost.Text = pairing.Host;
-        SaveWirelessAdbEndpoint(pairing.Host, connectPort);
-        if (FindTrustedAndroidDeviceId(pairing.Host) is { } hingeDeviceId)
-            WirelessAdbClient.SaveHingeDeviceId(hingeDeviceId);
-        _wirelessAdbRecoveryCancellation?.Cancel();
-        var previous = _wirelessAdbConnectionManager;
-        _wirelessAdbConnectionManager = null;
-        if (previous != null) await previous.DisposeAsync();
-        SetWirelessAdbConnectionStatus("无线 ADB 已配对，正在自动连接手机…");
+        var result = await WirelessAdbClient.ConnectNewlyPairedDeviceAsync(
+            pairing, CancellationToken.None);
+        if (result.Connected)
+        {
+            if (FindTrustedAndroidDeviceId(pairing.Host) is { } hingeDeviceId)
+            {
+                RememberDeviceAdbEndpoint(pairing.Host, string.Empty);
+                if (_deviceWorkspace.IsSelected(hingeDeviceId) &&
+                    page.WirelessAdbClipboardSync.IsOn &&
+                    !AdbProcessGate.Shared.SessionEnding)
+                    _ = RebindClipboardToSelectedPhoneAsync();
+            }
+            page.SetWirelessAdbPairResult($"配对成功且已连接：{result.Transport}");
+        }
+        else
+        {
+            page.SetWirelessAdbPairResult(result.Message);
+        }
         StartWirelessAdbConnectionManager();
-        if (page.WirelessAdbClipboardSync.IsOn && !AdbProcessGate.Shared.SessionEnding)
-            await ConfigureWirelessAdbClipboardSyncAsync(true, pairing.Host, connectPort);
+        SetWirelessAdbConnectionStatus(result.Connected
+            ? "无线 ADB 配对和连接成功。" : "无线 ADB 配对成功；设备尚未建立连接。");
+        _ = RefreshWirelessAdbInventoryAsync();
     }
 
     private async void WirelessAdbConnect_Click(object sender, RoutedEventArgs e)
@@ -9172,6 +9192,7 @@ public sealed partial class MainWindow : Window
         AdbProcessGate.Shared.SessionEnding = true;
         _bleRecovery?.Cancellation.Cancel();
         StopAdbWork();
+        StopWirelessAdbInventory();
         AdbProcessGate.TryStopPrivateServer();
         _desktopSharingClosed = true;
         _ = StopDesktopSharingAsync();

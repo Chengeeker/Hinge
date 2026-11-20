@@ -31,7 +31,9 @@ internal static partial class WirelessAdbClient
 
     internal static (string Instance, string Secret, string Payload) CreateQrPairing()
     {
-        var instance = "hinge-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+        // Android Studio uses a studio-* mDNS instance for QR pairing.
+        // Match that convention for compatibility with OEM QR scanners.
+        var instance = "studio-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(5)).ToLowerInvariant();
         var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         return (instance, secret, $"WIFI:T:ADB;S:{instance};P:{secret};;");
     }
@@ -51,32 +53,46 @@ internal static partial class WirelessAdbClient
         }
     }
 
+    internal static string[] BuildPairCommand(string host, int port, string secret) =>
+        ["pair", Endpoint(host, port.ToString()), secret];
+
     private static async Task<WirelessAdbPairingResult> PairEndpointAsync(
         string host, int port, string secret, bool resetConnectionEndpoint, CancellationToken cancellationToken)
     {
         await ConnectionGate.WaitAsync(cancellationToken);
         try
         {
-            var result = await RunWithInputAsync(cancellationToken, secret, ["pair", Endpoint(host, port.ToString())]);
+            // adb pair supports a noninteractive pairing-code argument. Using
+            // the documented CLI form avoids OEM/ADB stdin prompt differences.
+            // ADB is launched without a shell; the code is never persisted.
+            var result = await RunAsync(cancellationToken, BuildPairCommand(host, port, secret));
             if (!IsSuccessfulPairingResult(result.ExitCode, result.Output))
-                throw new InvalidOperationException("ADB 未确认配对成功。请保持手机的无线调试配对页面开启后重试。");
-            var pairingGuid = ParsePairingGuid(result.Output);
-            if (resetConnectionEndpoint && string.IsNullOrWhiteSpace(pairingGuid))
-                throw new InvalidOperationException("ADB 未返回设备身份。请更新 Android Platform-Tools 后重新配对。");
-            using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
-            var previousGuid = key?.GetValue(PairingGuidSetting) as string;
-            if (!string.IsNullOrWhiteSpace(pairingGuid) && !string.Equals(previousGuid, pairingGuid, StringComparison.OrdinalIgnoreCase))
             {
-                key?.DeleteValue(VerifiedIdentitySetting, throwOnMissingValue: false);
-                key?.DeleteValue(HingeDeviceIdSetting, throwOnMissingValue: false);
+                // Preserve the actual ADB failure for diagnosis without ever
+                // writing the temporary QR secret or six-digit code to logs.
+                var detail = JoinDetails(result.Output, result.Error)
+                    .Replace(secret, "[redacted]", StringComparison.Ordinal);
+                throw new InvalidOperationException("ADB 配对失败：" +
+                    (string.IsNullOrWhiteSpace(detail)
+                        ? "未收到成功反馈；请检查目标 IP 与配对端口（不是连接端口）以及系统弹窗是否仍有效。"
+                        : detail));
             }
-            if (resetConnectionEndpoint)
+            // Some OEM/platform-tools builds confirm pairing without a GUID.
+            // Do not report a successful pairing as failed: the subsequent
+            // connection step checks the target's live ADB identity.
+            var pairingGuid = ParsePairingGuid(result.Output);
+            using var key = Registry.CurrentUser.CreateSubKey(@"Software\Hinge");
+            // The platform ADB keystore already supports multiple paired
+            // phones. Preserve the prior Hinge device association instead of
+            // replacing it when a second phone or tablet is paired.
+            var hasLegacyPairing = !string.IsNullOrWhiteSpace(
+                key?.GetValue(PairingGuidSetting) as string);
+            RememberPairedGuid(key, pairingGuid);
+            if (resetConnectionEndpoint && !hasLegacyPairing)
             {
                 key?.SetValue("WirelessAdbHost", host);
                 key?.DeleteValue("WirelessAdbConnectPort", throwOnMissingValue: false);
             }
-            key?.SetValue(PairedSetting, 1);
-            if (!string.IsNullOrWhiteSpace(pairingGuid)) key?.SetValue(PairingGuidSetting, pairingGuid);
             return new WirelessAdbPairingResult(host, port, pairingGuid);
         }
         finally

@@ -137,7 +137,7 @@ public class WirelessAdbDiscoveryTests
         var first = WirelessAdbClient.CreateQrPairing();
         var next = WirelessAdbClient.CreateQrPairing();
 
-        Assert.Matches("^hinge-[0-9a-f]{16}$", first.Instance);
+        Assert.Matches("^studio-[0-9a-f]{10}$", first.Instance);
         Assert.Matches("^[0-9A-F]{32}$", first.Secret);
         Assert.Equal($"WIFI:T:ADB;S:{first.Instance};P:{first.Secret};;", first.Payload);
         Assert.NotEqual(first.Instance, next.Instance);
@@ -147,15 +147,15 @@ public class WirelessAdbDiscoveryTests
     [Fact]
     public void QrPairingIgnoresOtherPhonesAndConnectionServices()
     {
-        const string instance = "hinge-abcd";
-        var output = "hinge-abcd._adb-tls-pairing._tcp. _adb-tls-pairing._tcp. 192.168.1.4:42100\n" +
-            "hinge-abcd _adb-tls-pairing._tcp 192.168.1.4:42100\n" +
-            "hinge-abcd _adb-tls-connect._tcp 192.168.1.4:42200\n" +
-            "hinge-abcd-2 _adb-tls-pairing._tcp 192.168.1.5:42101\n" +
+        const string instance = "studio-abcd";
+        var output = "studio-abcd._adb-tls-pairing._tcp. _adb-tls-pairing._tcp. 192.168.1.4:42100\n" +
+            "studio-abcd _adb-tls-pairing._tcp 192.168.1.4:42100\n" +
+            "studio-abcd _adb-tls-connect._tcp 192.168.1.4:42200\n" +
+            "studio-abcd-2 _adb-tls-pairing._tcp 192.168.1.5:42101\n" +
             "adb-phone _adb-tls-pairing._tcp 192.168.1.6:42102\n";
 
         Assert.Equal(new[] { "192.168.1.4:42100" }, WirelessAdbClient.ParseQrPairingEndpoints(output, instance));
-        Assert.Empty(WirelessAdbClient.ParseQrPairingEndpoints(output, "hinge-unknown"));
+        Assert.Empty(WirelessAdbClient.ParseQrPairingEndpoints(output, "studio-unknown"));
     }
 
     [Fact]

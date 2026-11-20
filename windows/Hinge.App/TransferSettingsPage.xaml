@@ -169,6 +169,32 @@
                         </StackPanel>
                         <Border Grid.Row="1" Background="{ThemeResource HingeM3OutlineVariantBrush}" Opacity="0.65" />
                         <StackPanel Grid.Row="2" Spacing="12" HorizontalAlignment="Stretch">
+                            <Border BorderBrush="{ThemeResource HingeM3OutlineVariantBrush}"
+                                    BorderThickness="1" CornerRadius="16" Padding="16">
+                                <StackPanel Spacing="10">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="当前无线 ADB 设备"
+                                                       Style="{StaticResource HingeM3TitleMediumStyle}" />
+                                            <TextBlock x:Name="WirelessAdbDevicesSummaryText"
+                                                       Text="正在读取连接列表…"
+                                                       Style="{StaticResource HingeM3BodyVariantStyle}"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <local:HandCursorButton
+                                            x:Name="WirelessAdbRefreshDevicesButton"
+                                            AutomationProperties.AutomationId="TransferSettingsPage.WirelessAdbRefreshDevicesButton"
+                                            Grid.Column="1" Content="刷新"
+                                            Style="{StaticResource HingeM3OutlinedButtonStyle}"
+                                            VerticalAlignment="Center" />
+                                    </Grid>
+                                    <StackPanel x:Name="WirelessAdbDevicesPanel" Spacing="8" />
+                                </StackPanel>
+                            </Border>
                                 <TextBlock Text="手机需开启无线调试；电脑端已内置连接与投屏组件，无需单独下载安装。ADB 主机密钥会复用；连接端口可能在手机重启后变化。" Style="{StaticResource HingeM3BodyVariantStyle}" />
                                 <ToggleSwitch
                                     x:Name="WirelessAdbClipboardSyncToggle"
@@ -216,9 +242,14 @@
                                             Content="提取 Hinge 日志" />
                                     </StackPanel>
                                 </local:HingeWrapPanel>
+                                <TextBlock
+                                    x:Name="WirelessAdbPairResultText"
+                                    Text="配对结果会显示在这里。"
+                                    Style="{StaticResource HingeM3BodyVariantStyle}"
+                                    TextWrapping="Wrap" />
                                 <StackPanel Spacing="10" HorizontalAlignment="Stretch">
                                         <TextBlock Text="目标 IP 和端口" Style="{StaticResource HingeM3TitleMediumStyle}" />
-                                        <TextBlock Text="扫码会自动发现手机。使用六位配对码时，如果网络不支持 mDNS，可填写手机 IP 与系统显示的端口。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
+                                        <TextBlock Text="配对新设备时请填写平板当前的 IP 和配对弹窗显示的端口（不是连接端口）；别沿用上次手机的 IP。扫码模式不需要填 IP。" Style="{StaticResource HingeM3BodyVariantStyle}" TextWrapping="Wrap" />
                                         <TextBox
                                             x:Name="WirelessAdbHostTextBox"
                                             AutomationProperties.Name="手机 IP 地址"

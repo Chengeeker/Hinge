@@ -288,7 +288,9 @@ public sealed partial class MainWindow
                 Content = "文件管理",
                 MinHeight = 36,
                 Padding = new Thickness(12, 7, 12, 7),
-                Style = (Style)Application.Current.Resources["HingeM3OutlinedButtonStyle"]
+                Style = (Style)Application.Current.Resources["HingeM3OutlinedButtonStyle"],
+                BorderThickness = new Thickness(1.5),
+                UseLayoutRounding = true
             };
             AutomationProperties.SetName(files, $"浏览 {phone.Name} 的文件");
             files.Click += (_, _) =>
@@ -382,3 +384,4 @@ public sealed partial class MainWindow
         }
     }
 }
+

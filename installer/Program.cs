@@ -584,19 +584,9 @@ internal static class Program
             }
 
             var certificate = new X509Certificate2(certificatePath);
-            var maySkipRegistration = false;
-            using (var previousSnapshot = Registry.CurrentUser.OpenSubKey(ExplorerSnapshotPath))
-            {
-                maySkipRegistration = previousSnapshot?.GetValue("ModernMenuRegistered") is int registered && registered == 1 &&
-                    string.Equals(
-                        previousSnapshot.GetValue("CertificateThumbprint") as string,
-                        certificate.Thumbprint,
-                        StringComparison.OrdinalIgnoreCase);
-            }
-
             EnsureMachineCertificateTrusted(certificatePath, certificate.Thumbprint);
 
-            var packageUpdated = RegisterSparseIdentity(packagePath, installPath, maySkipRegistration);
+            var packageUpdated = RegisterSparseIdentity(packagePath, installPath);
 
             if (packageUpdated) NotifyShellAssociationChanged();
 
@@ -623,7 +613,7 @@ internal static class Program
         }
     }
 
-    private static bool RegisterSparseIdentity(string packagePath, string installPath, bool maySkipRegistration)
+    private static bool RegisterSparseIdentity(string packagePath, string installPath)
     {
         using var archive = ZipFile.OpenRead(packagePath);
         using var manifestStream = (archive.GetEntry("AppxManifest.xml")
@@ -644,11 +634,9 @@ internal static class Program
             Path.GetFullPath(installPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         var publisherLiteral = QuotePowerShellLiteral(publisher);
         var fingerprintLiteral = QuotePowerShellLiteral(manifestFingerprint);
-        var allowSkip = maySkipRegistration ? "$true" : "$false";
         var command = $$"""
             $ErrorActionPreference='Stop'
-            if ({{allowSkip}}) {
-                try {
+            try {
                     $registered = @(Get-AppxPackage -Name '{{SparsePackageName}}' -ErrorAction SilentlyContinue |
                         Where-Object { $_.Status -eq 'Ok' -and $_.Publisher -eq {{publisherLiteral}} } |
                         Select-Object -First 1)
@@ -680,9 +668,8 @@ internal static class Program
                             }
                         }
                     }
-                } catch {
-                    # If health or location cannot be confirmed, repair the registration.
-                }
+            } catch {
+                # If health or location cannot be confirmed, repair the registration.
             }
             Add-AppxPackage -Path {{package}} -ExternalLocation {{externalLocation}} -ForceApplicationShutdown -ForceUpdateFromAnyVersion
             $registered = @(Get-AppxPackage -Name '{{SparsePackageName}}' -ErrorAction SilentlyContinue)
@@ -1287,3 +1274,4 @@ internal static class Program
         }
     }
 }
+

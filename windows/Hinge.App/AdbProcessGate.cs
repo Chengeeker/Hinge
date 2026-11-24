@@ -8,19 +8,23 @@ internal sealed class AdbProcessGate
 {
     internal static AdbProcessGate Shared { get; } = new();
 
-    private volatile bool _sessionEnding;
+    private readonly object _lock = new();
+    private bool _sessionEnding;
     internal bool SessionEnding
     {
-        get => _sessionEnding;
-        set => _sessionEnding = value;
+        get { lock (_lock) return _sessionEnding; }
+        set { lock (_lock) _sessionEnding = value; }
     }
 
     internal void Start(Process process, CancellationToken cancellationToken, string failureMessage)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (SessionEnding)
-            throw new OperationCanceledException("Windows 正在结束会话，已暂停启动 ADB 和投屏。");
-        if (!process.Start()) throw new InvalidOperationException(failureMessage);
+        lock (_lock)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_sessionEnding)
+                throw new OperationCanceledException("Windows 正在结束会话，已暂停启动 ADB 和投屏。");
+            if (!process.Start()) throw new InvalidOperationException(failureMessage);
+        }
     }
 
     // The standalone ADB server outlives the adb client that starts it. When
@@ -46,3 +50,4 @@ internal sealed class AdbProcessGate
         catch (ObjectDisposedException) { return false; }
     }
 }
+
